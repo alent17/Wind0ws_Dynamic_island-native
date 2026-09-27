@@ -16,7 +16,7 @@ use windows::{
     },
 };
 pub struct Renderer {
-    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [f32; 3])>,
+    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
@@ -27,7 +27,7 @@ pub struct Renderer {
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
     brush: ID2D1SolidColorBrush,
-    formats: HashMap<u32, IDWriteTextFormat>,
+    formats: HashMap<(u32, i32), IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub title_overflow: bool,
@@ -46,60 +46,11 @@ fn rect(r: Rect) -> D2D_RECT_F {
         bottom: r.y + r.h,
     }
 }
-fn cover_accent(cover: &isle_core::Cover) -> [f32; 3] {
-    let mut counts = HashMap::<(u8, u8, u8), usize>::new();
-    for pixel in cover
-        .pixels
-        .chunks_exact(4)
-        .take((cover.width as usize).saturating_mul(cover.height as usize))
-    {
-        let alpha = pixel[3] as u32;
-        if alpha < 128 {
-            continue;
-        }
-        let unpremultiply = |channel: u8| ((channel as u32 * 255 / alpha).min(255)) as u8;
-        let b = unpremultiply(pixel[0]);
-        let g = unpremultiply(pixel[1]);
-        let r = unpremultiply(pixel[2]);
-        if (r == 0 && g == 0 && b == 0) || (r == 255 && g == 255 && b == 255) {
-            continue;
-        }
-        *counts
-            .entry((r / 12 * 12, g / 12 * 12, b / 12 * 12))
-            .or_default() += 1;
-    }
-    let saturation = |(r, g, b): (u8, u8, u8)| {
-        let (r, g, b) = (r as f32 / 255., g as f32 / 255., b as f32 / 255.);
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let lightness = (max + min) / 2.;
-        if max == min {
-            0.
-        } else if lightness > 0.5 {
-            (max - min) / (2. - max - min)
-        } else {
-            (max - min) / (max + min)
-        }
-    };
-    counts
-        .into_iter()
-        .max_by(|(color_a, count_a), (color_b, count_b)| {
-            let score_a = saturation(*color_a) * (*count_a as f32).ln();
-            let score_b = saturation(*color_b) * (*count_b as f32).ln();
-            score_a
-                .total_cmp(&score_b)
-                .then_with(|| count_a.cmp(count_b))
-        })
-        .map(|((r, g, b), _)| {
-            [
-                r.saturating_add(12),
-                g.saturating_add(12),
-                b.saturating_add(12),
-            ]
-            .map(|channel| channel as f32 / 255.)
-        })
-        .unwrap_or([60. / 255., 80. / 255., 100. / 255.])
+fn format_media_time(milliseconds: u64) -> String {
+    let seconds = milliseconds / 1_000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
+
 impl Renderer {
     pub fn cover_alive(&self) -> bool {
         self.cover.is_some()
@@ -209,31 +160,52 @@ impl Renderer {
         self.ctx
             .DrawLine(point(a.x, a.y), point(b.x, b.y), &self.brush, width, None);
     }
-    unsafe fn format(&mut self, size: u32) -> Result<IDWriteTextFormat> {
-        if let Some(f) = self.formats.get(&size) {
+    unsafe fn format_with_weight(
+        &mut self,
+        size: u32,
+        weight: DWRITE_FONT_WEIGHT,
+    ) -> Result<IDWriteTextFormat> {
+        if let Some(f) = self.formats.get(&(size, weight.0)) {
             return Ok(f.clone());
         }
         let f = self.write.CreateTextFormat(
             &HSTRING::from(self.font_family),
             self.fonts.as_ref(),
-            if size >= 26 {
-                DWRITE_FONT_WEIGHT_BOLD
-            } else if size == 13 {
-                DWRITE_FONT_WEIGHT_MEDIUM
-            } else {
-                DWRITE_FONT_WEIGHT_NORMAL
-            },
+            weight,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             size as f32,
             w!("zh-CN"),
         )?;
         f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
-        self.formats.insert(size, f.clone());
+        self.formats.insert((size, weight.0), f.clone());
         Ok(f)
     }
+    unsafe fn format(&mut self, size: u32) -> Result<IDWriteTextFormat> {
+        let weight = if size >= 26 || size == 13 {
+            DWRITE_FONT_WEIGHT_BOLD
+        } else {
+            DWRITE_FONT_WEIGHT_NORMAL
+        };
+        self.format_with_weight(size, weight)
+    }
     unsafe fn text(&mut self, text: &str, r: Rect, size: u32, c: D2D1_COLOR_F) -> Result<()> {
-        let f = self.format(size)?;
+        let weight = if size >= 26 || size == 13 {
+            DWRITE_FONT_WEIGHT_BOLD
+        } else {
+            DWRITE_FONT_WEIGHT_NORMAL
+        };
+        self.text_with_weight(text, r, size, weight, c)
+    }
+    unsafe fn text_with_weight(
+        &mut self,
+        text: &str,
+        r: Rect,
+        size: u32,
+        weight: DWRITE_FONT_WEIGHT,
+        c: D2D1_COLOR_F,
+    ) -> Result<()> {
+        let f = self.format_with_weight(size, weight)?;
         let wide: Vec<u16> = text.encode_utf16().collect();
         self.ink(c);
         self.ctx.DrawText(
@@ -386,7 +358,7 @@ impl Renderer {
             if self
                 .cover
                 .as_ref()
-                .is_none_or(|(old, _, _)| !std::sync::Arc::ptr_eq(old, cover))
+                .is_none_or(|(old, _)| !std::sync::Arc::ptr_eq(old, cover))
             {
                 let bitmap = self.ctx.CreateBitmap(
                     D2D_SIZE_U {
@@ -404,19 +376,14 @@ impl Renderer {
                         dpiY: 96.,
                     },
                 )?;
-                self.cover = Some((cover.clone(), bitmap, cover_accent(cover)));
+                self.cover = Some((cover.clone(), bitmap));
             }
         } else {
             self.cover = None;
         }
-        let background = if m.use_album_color {
-            self.cover
-                .as_ref()
-                .map(|(_, _, accent)| *accent)
-                .unwrap_or(m.background_color)
-        } else {
-            m.background_color
-        };
+        // The existing Isle island keeps a black surface. Cover color belongs
+        // to the separate floating player, so artwork stays in the cover only.
+        let background = [0., 0., 0.];
         let background_color = color(background[0], background[1], background[2], 1.);
         let p = m.outline();
         let shape = self.factory.CreatePathGeometry()?;
@@ -526,8 +493,8 @@ impl Renderer {
                         Rect {
                             x: c.x,
                             y: c.y + 4.,
-                            w: 54.,
-                            h: 54.,
+                            w: 52.,
+                            h: 52.,
                         },
                         12.,
                         color(0.14, 0.22, 0.3, 1.),
@@ -559,8 +526,8 @@ impl Renderer {
                             Rect {
                                 x: c.x,
                                 y: c.y + 4.,
-                                w: 54.,
-                                h: 54.,
+                                w: 52.,
+                                h: 52.,
                             },
                             12.,
                             background_color,
@@ -571,14 +538,30 @@ impl Renderer {
                             Some(&rect(Rect {
                                 x: c.x,
                                 y: c.y + 4.,
-                                w: 54.,
-                                h: 54.,
+                                w: 52.,
+                                h: 52.,
                             })),
                             1.,
                             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                             None,
                         );
                     }
+                    self.ink(color(1., 1., 1., 0.1));
+                    self.ctx.DrawRoundedRectangle(
+                        &D2D1_ROUNDED_RECT {
+                            rect: rect(Rect {
+                                x: c.x - 0.5,
+                                y: c.y + 3.5,
+                                w: 53.,
+                                h: 53.,
+                            }),
+                            radiusX: 12.,
+                            radiusY: 12.,
+                        },
+                        &self.brush,
+                        1.,
+                        None,
+                    );
                     let title = if let Some(media) = &m.media {
                         if media.title.is_empty() {
                             "暂无媒体"
@@ -651,7 +634,7 @@ impl Renderer {
                             );
                         }
                     }
-                    self.text(
+                    self.text_with_weight(
                         m.media
                             .as_ref()
                             .map(|media| {
@@ -670,39 +653,80 @@ impl Renderer {
                             w: c.w - 100.,
                             h: 18.,
                         },
-                        10,
-                        gray,
+                        11,
+                        DWRITE_FONT_WEIGHT_MEDIUM,
+                        color(0.68, 0.68, 0.68, 1.),
                     )?;
                     self.spectrum(c.x + c.w - 28., c.y + 30., m);
-                    self.fill(
+                    let (elapsed_ms, duration_ms) = m
+                        .media
+                        .as_ref()
+                        .map(|media| {
+                            (
+                                media.timeline.position(m.now, media.playing),
+                                media.timeline.duration_ms,
+                            )
+                        })
+                        .unwrap_or((0, 0));
+                    let progress = if duration_ms == 0 {
+                        if m.media.is_none() {
+                            0.46
+                        } else {
+                            0.
+                        }
+                    } else {
+                        (elapsed_ms as f32 / duration_ms as f32).clamp(0., 1.)
+                    };
+                    let progress_y = c.y + 68.;
+                    let progress_x = c.x + 34.;
+                    let progress_width = (c.w - 76.).max(24.);
+                    let progress_color = color(1., 1., 1., 0.19);
+                    let time_color = color(0.55, 0.55, 0.55, 1.);
+                    self.text_with_weight(
+                        &format_media_time(elapsed_ms),
                         Rect {
                             x: c.x,
-                            y: c.y + 68.,
-                            w: c.w,
-                            h: 3.,
+                            y: progress_y - 5.,
+                            w: 26.,
+                            h: 16.,
                         },
-                        1.5,
-                        color(1., 1., 1., 0.15),
+                        11,
+                        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                        time_color,
+                    )?;
+                    self.text_with_weight(
+                        &format!(
+                            "-{}",
+                            format_media_time(duration_ms.saturating_sub(elapsed_ms))
+                        ),
+                        Rect {
+                            x: c.x + c.w - 34.,
+                            y: progress_y - 5.,
+                            w: 34.,
+                            h: 16.,
+                        },
+                        11,
+                        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                        time_color,
+                    )?;
+                    self.fill(
+                        Rect {
+                            x: progress_x,
+                            y: progress_y - 1.5,
+                            w: progress_width,
+                            h: 6.,
+                        },
+                        3.,
+                        progress_color,
                     );
                     self.fill(
                         Rect {
-                            x: c.x,
-                            y: c.y + 68.,
-                            w: c.w
-                                * m.media
-                                    .as_ref()
-                                    .map(|media| {
-                                        if media.timeline.duration_ms == 0 {
-                                            0.
-                                        } else {
-                                            media.timeline.position(m.now, media.playing) as f32
-                                                / media.timeline.duration_ms as f32
-                                        }
-                                    })
-                                    .unwrap_or(0.46),
-                            h: 3.,
+                            x: progress_x,
+                            y: progress_y - 1.5,
+                            w: progress_width * progress,
+                            h: 6.,
                         },
-                        1.5,
+                        3.,
                         white,
                     );
                     for (hit, r) in m.controls() {
@@ -1198,22 +1222,12 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 
 #[cfg(test)]
 mod tests {
-    use super::cover_accent;
+    use super::format_media_time;
 
     #[test]
-    fn album_accent_prefers_visible_saturated_cover_colors() {
-        let cover = isle_core::Cover {
-            width: 4,
-            height: 1,
-            pixels: vec![
-                0, 0, 0, 0, // transparent pixel is ignored
-                0, 0, 255, 255, // red
-                0, 0, 255, 255, // repeated red has stronger frequency
-                255, 255, 255, 255, // white is ignored
-            ],
-        };
-        let accent = cover_accent(&cover);
-        assert!(accent[0] > 0.95);
-        assert!(accent[1] < 0.06 && accent[2] < 0.06);
+    fn progress_time_labels_use_the_legacy_minute_second_format() {
+        assert_eq!(format_media_time(0), "0:00");
+        assert_eq!(format_media_time(129_999), "2:09");
+        assert_eq!(format_media_time(3_600_000), "60:00");
     }
 }
