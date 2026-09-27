@@ -1,0 +1,4 @@
+[package]
+name = "isle-core"
+version.workspace = true
+edition.workspace = true

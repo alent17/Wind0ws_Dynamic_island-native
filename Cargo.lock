@@ -3,9 +3,14 @@
 version = 4
 
 [[package]]
+name = "isle-core"
+version = "0.1.0"
+
+[[package]]
 name = "isle-native"
 version = "0.1.0"
 dependencies = [
+ "isle-core",
  "isle-ui",
  "windows",
 ]
@@ -13,6 +18,9 @@ dependencies = [
 [[package]]
 name = "isle-ui"
 version = "0.1.0"
+dependencies = [
+ "isle-core",
+]
 
 [[package]]
 name = "proc-macro2"

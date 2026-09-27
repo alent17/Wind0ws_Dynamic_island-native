@@ -26,6 +26,8 @@ pub struct PageInstance {
     pub generation: u64,
 }
 pub struct Model {
+    pub media: Option<isle_core::MediaSnapshot>,
+    pub media_failed: bool,
     pub edge: Edge,
     pub attached: bool,
     pub expanded: bool,
@@ -52,6 +54,8 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            media: None,
+            media_failed: false,
             edge: Edge::Top,
             attached: false,
             expanded: false,
@@ -78,6 +82,22 @@ impl Default for Model {
     }
 }
 impl Model {
+    pub fn progress_tick(&self) -> bool {
+        self.expanded
+            && self.page() == Page::Music
+            && self
+                .media
+                .as_ref()
+                .is_some_and(|m| m.playing && m.timeline.duration_ms > 0)
+    }
+    pub fn enabled(&self, hit: Hit) -> bool {
+        self.media.as_ref().is_none_or(|m| match hit {
+            Hit::Play => m.play_pause,
+            Hit::Previous => m.previous,
+            Hit::Next => m.next,
+            _ => true,
+        })
+    }
     pub fn page(&self) -> Page {
         self.current.as_ref().map(|p| p.page).unwrap_or(Page::Music)
     }
@@ -170,7 +190,10 @@ impl Model {
     }
     pub fn continuous(&self) -> bool {
         self.moving()
-            || (!self.reduced && self.playing && (!self.expanded || self.page() == Page::Music))
+            || (self.media.is_none()
+                && !self.reduced
+                && self.playing
+                && (!self.expanded || self.page() == Page::Music))
             || (!self.reduced && self.expanded && self.page() == Page::Music && self.title_overflow)
     }
     pub fn origin(&self) -> Point {
@@ -343,7 +366,7 @@ impl Model {
                 self.controls()
                     .into_iter()
                     .map(|(h, _)| h)
-                    .filter(|h| !matches!(h, Hit::Tool(_))),
+                    .filter(|h| !matches!(h, Hit::Tool(_)) && self.enabled(*h)),
             );
         }
         if targets.is_empty() {
@@ -419,6 +442,23 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_progress_only_ticks_when_it_can_change_visible_pixels() {
+        let mut m = Model {
+            reduced: true,
+            media: Some(isle_core::MediaSnapshot::default()),
+            ..Model::default()
+        };
+        m.switch(Page::Music);
+        m.media.as_mut().unwrap().playing = true;
+        assert!(!m.progress_tick());
+        m.media.as_mut().unwrap().timeline.duration_ms = 10000;
+        assert!(m.progress_tick());
+        m.switch(Page::Volume);
+        assert!(!m.progress_tick());
+        m.toggle();
+        assert!(!m.progress_tick());
+    }
     #[test]
     fn keyboard_reaches_every_tool_and_page_control_then_wraps() {
         let mut m = Model {

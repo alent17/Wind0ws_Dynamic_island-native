@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod accessibility;
 mod frame_timer;
+mod media;
 mod render;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 use isle_ui::{geometry::*, model::*};
@@ -21,6 +22,7 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Media,
     Paint,
     Tick,
     Move(i32, i32),
@@ -51,6 +53,10 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        media::UPDATED => {
+            enqueue(Event::Media);
+            LRESULT(0)
+        }
         WM_GETOBJECT if lp.0 as i32 == UiaRootObjectId => ACCESSIBLE.with(|a| {
             a.borrow()
                 .as_ref()
@@ -178,6 +184,8 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
 }
 struct App {
+    media: Option<media::MediaService>,
+    media_error: Option<String>,
     window: HWND,
     accessible: accessibility::Shared,
     renderer: Option<Renderer>,
@@ -310,6 +318,7 @@ impl App {
                     rect.w = (right - rect.x).max(0.);
                 }
                 nodes.push(accessibility::Node {
+                    enabled: self.model.enabled(hit),
                     hit,
                     name: accessibility::label(hit, self.model.playing).to_string(),
                     rect: transform(rect),
@@ -419,6 +428,11 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
+        if let Some(service) = &self.media {
+            service.set_active(
+                !self.suspended && (!self.model.expanded || self.model.page() == Page::Music),
+            );
+        }
         let desired = if self.suspended {
             if self.model.timer_deadline.is_some() || self.exit_after.is_some() {
                 1000
@@ -427,7 +441,10 @@ impl App {
             }
         } else if self.model.continuous() {
             0
-        } else if self.model.timer_deadline.is_some() || self.scripted || self.exit_after.is_some()
+        } else if self.model.timer_deadline.is_some()
+            || self.scripted
+            || self.exit_after.is_some()
+            || self.model.progress_tick()
         {
             1000
         } else if self.model.expanded && self.model.page() == Page::Clock {
@@ -458,6 +475,23 @@ impl App {
         }
     }
     unsafe fn action(&mut self, hit: Hit) {
+        if !self.model.enabled(hit) {
+            return;
+        }
+        if let Some(service) = &self.media {
+            let action = match hit {
+                Hit::Play => Some(media::Action::Toggle),
+                Hit::Previous => Some(media::Action::Previous),
+                Hit::Next => Some(media::Action::Next),
+                _ => None,
+            };
+            if let Some(action) = action {
+                if let Some(snapshot) = &self.model.media {
+                    service.control(snapshot.session, action);
+                }
+                return;
+            }
+        }
         match hit {
             Hit::Tool(2) => {
                 MessageBoxW(
@@ -468,7 +502,7 @@ impl App {
                 );
             }
             Hit::Tool(3) => {
-                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n这是独立原型，未连接真实媒体或旧版设置。"),w!("原型操作"),MB_OK);
+                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体。\n尚未读取旧版设置，封面、频谱与设备控制仍待迁移。"),w!("原型操作"),MB_OK);
             }
             Hit::Tool(4) => {
                 self.model.toggle();
@@ -481,6 +515,7 @@ impl App {
             && !matches!(
                 event,
                 Event::Tick
+                    | Event::Media
                     | Event::Diagnostic
                     | Event::Close
                     | Event::Visibility(_)
@@ -493,6 +528,22 @@ impl App {
         }
         let mut changed = true;
         match event {
+            Event::Media => {
+                if let Some(service) = &self.media {
+                    let update = service.take();
+                    if self.model.media.as_ref().is_none_or(|old| {
+                        old.title != update.snapshot.title || old.artist != update.snapshot.artist
+                    }) {
+                        self.model.title_started = self.start.elapsed().as_secs_f64();
+                    }
+                    self.model.playing = update.snapshot.playing;
+                    self.model.media = Some(update.snapshot);
+                    self.model.media_failed = update.error.is_some();
+                    self.media_error = update.error;
+                }
+                changed =
+                    !self.suspended && (!self.model.expanded || self.model.page() == Page::Music);
+            }
             Event::Close => return Ok(false),
             Event::Diagnostic => {
                 self.report();
@@ -535,6 +586,7 @@ impl App {
                     return Ok(false);
                 }
                 changed = self.model.continuous()
+                    || self.model.progress_tick()
                     || self.model.timer_deadline.is_some()
                     || self.scripted
                     || (self.model.expanded && self.model.page() == Page::Clock);
@@ -669,7 +721,7 @@ impl App {
                     if let Some(hit) = self.model.focus {
                         self.action(hit);
                     } else {
-                        self.model.playing = !self.model.playing;
+                        self.action(Hit::Play);
                     }
                 }
                 0x70..=0x73 => {
@@ -687,7 +739,7 @@ impl App {
                     self.reduced_override = Some(self.model.reduced);
                     self.model.retarget();
                 }
-                0x76 => self.model.change_track(),
+                0x76 if self.media.is_none() => self.model.change_track(),
                 0x09 => self
                     .model
                     .move_focus(GetKeyState(VK_SHIFT.0 as i32) < 0, false),
@@ -735,6 +787,13 @@ impl App {
                 intervals.iter().sum::<f64>() / intervals.len() as f64
             };
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
+            let mut text = text;
+            text.pop();
+            if let Some(service) = &self.media {
+                let media = self.model.media.as_ref().unwrap();
+                text.push_str(&format!(",{},\"mediaSession\":{},\"mediaTitleChars\":{},\"mediaPlaying\":{},\"mediaPositionMs\":{},\"mediaDurationMs\":{},\"mediaError\":{}", service.diagnostics(), media.session, media.title.chars().count(), media.playing, media.timeline.position(self.start.elapsed().as_secs_f64(), media.playing), media.timeline.duration_ms, self.media_error.is_some()));
+            }
+            text.push('}');
             let _ = std::fs::write(path, text);
         }
     }
@@ -796,6 +855,10 @@ unsafe fn run() -> Result<()> {
     }));
     ACCESSIBLE.with(|a| *a.borrow_mut() = Some(accessibility::root(&accessible)));
     let mut model = Model {
+        media: args
+            .iter()
+            .any(|a| a == "--live-media")
+            .then(isle_core::MediaSnapshot::default),
         reduced: args.iter().any(|a| a == "--reduced-motion") || system_reduced_motion(),
         playing: !args.iter().any(|a| a == "--paused"),
         attached: args.iter().any(|a| a == "--attached"),
@@ -822,6 +885,9 @@ unsafe fn run() -> Result<()> {
         });
     }
     model.retarget();
+    if model.media.is_some() {
+        model.playing = false;
+    }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;
         model.timer_deadline = Some(model.timer_left);
@@ -829,6 +895,12 @@ unsafe fn run() -> Result<()> {
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let mut app = App {
+        media: if model.media.is_some() {
+            Some(media::MediaService::new(window, start).map_err(|_| Error::from(E_FAIL))?)
+        } else {
+            None
+        },
+        media_error: None,
         window,
         accessible,
         renderer: None,
@@ -924,6 +996,7 @@ unsafe fn run() -> Result<()> {
         None::<&IRawElementProviderSimple>,
     );
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
+    app.media = None;
     DestroyWindow(window)?;
     drop(app);
     CoUninitialize();

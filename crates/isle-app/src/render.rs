@@ -300,6 +300,9 @@ impl Renderer {
         hover: Option<Hit>,
         pressed: Option<Hit>,
     ) -> Result<()> {
+        if !m.expanded || m.page() != Page::Music {
+            self.layouts.clear();
+        }
         let white = color(0.94, 0.96, 1., 1.);
         let gray = color(0.5, 0.55, 0.6, 1.);
         let blue = color(0.45, 0.76, 1., 1.);
@@ -448,7 +451,13 @@ impl Renderer {
                         },
                         white,
                     );
-                    let title = if m.track == 0 {
+                    let title = if let Some(media) = &m.media {
+                        if media.title.is_empty() {
+                            "暂无媒体"
+                        } else {
+                            &media.title
+                        }
+                    } else if m.track == 0 {
                         "Midnight City"
                     } else {
                         "宇宙尽头的浪漫主义与一场不会结束的午夜公路旅行"
@@ -462,6 +471,7 @@ impl Renderer {
                     let (layout, title_width) = if let Some(l) = self.layouts.get(title) {
                         l.clone()
                     } else {
+                        self.layouts.clear(); // Only the currently displayed title owns a layout.
                         let f = self.format(13)?;
                         let wide: Vec<u16> = title.encode_utf16().collect();
                         let l = self.write.CreateTextLayout(&wide, &f, 2000., 24.)?;
@@ -514,7 +524,18 @@ impl Renderer {
                         }
                     }
                     self.text(
-                        "M83 · 原生渲染预览",
+                        m.media
+                            .as_ref()
+                            .map(|media| {
+                                if m.media_failed {
+                                    "媒体暂不可用"
+                                } else if media.session == 0 {
+                                    "等待播放器"
+                                } else {
+                                    media.artist.as_str()
+                                }
+                            })
+                            .unwrap_or("M83 · 原生渲染预览"),
                         Rect {
                             x: c.x + 64.,
                             y: c.y + 36.,
@@ -539,7 +560,18 @@ impl Renderer {
                         Rect {
                             x: c.x,
                             y: c.y + 68.,
-                            w: c.w * 0.46,
+                            w: c.w
+                                * m.media
+                                    .as_ref()
+                                    .map(|media| {
+                                        if media.timeline.duration_ms == 0 {
+                                            0.
+                                        } else {
+                                            media.timeline.position(m.now, media.playing) as f32
+                                                / media.timeline.duration_ms as f32
+                                        }
+                                    })
+                                    .unwrap_or(0.46),
                             h: 3.,
                         },
                         1.5,
@@ -547,7 +579,12 @@ impl Renderer {
                     );
                     for (hit, r) in m.controls() {
                         if matches!(hit, Hit::Previous | Hit::Play | Hit::Next) {
-                            if hover == Some(hit) || m.focus == Some(hit) {
+                            let white = if m.enabled(hit) {
+                                white
+                            } else {
+                                color(0.3, 0.32, 0.35, 1.)
+                            };
+                            if m.enabled(hit) && (hover == Some(hit) || m.focus == Some(hit)) {
                                 self.fill(r, 12., color(1., 1., 1., 0.1));
                             }
                             let x = r.x + 24.;
@@ -807,7 +844,7 @@ impl Renderer {
     }
     unsafe fn spectrum(&self, x: f32, y: f32, m: &Model) {
         for i in 0..6 {
-            let h = if !m.playing {
+            let h = if !m.playing || m.media.is_some() {
                 2.
             } else if m.reduced {
                 8.

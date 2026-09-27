@@ -21,6 +21,7 @@ pub const FOCUS: u32 = WM_APP + 51;
 pub const VALUE: u32 = WM_APP + 52;
 #[derive(Clone)]
 pub struct Node {
+    pub enabled: bool,
     pub hit: Hit,
     pub name: String,
     pub rect: Rect,
@@ -245,6 +246,9 @@ impl IAccessible_Impl for Provider {
         let s = self.snapshot()?;
         let n = self.resolve(v, &s)?;
         let mut flags = STATE_SYSTEM_FOCUSABLE.0;
+        if n > 0 && !s.nodes[n - 1].enabled {
+            flags |= STATE_SYSTEM_UNAVAILABLE.0;
+        }
         if !s.visible {
             flags |= STATE_SYSTEM_INVISIBLE.0 | STATE_SYSTEM_UNAVAILABLE.0;
         }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/isle-ui", "crates/isle-app"]
+members = ["crates/isle-core", "crates/isle-ui", "crates/isle-app"]
 resolver = "2"
 
 [workspace.package]

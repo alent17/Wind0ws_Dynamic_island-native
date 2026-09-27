@@ -19,6 +19,7 @@ cargo build --release --manifest-path native/Cargo.toml
 ./native/target/release/isle-native.exe --page music --attached --long-title
 ./native/target/release/isle-native.exe --page weather --edge left --attached
 ./native/target/release/isle-native.exe --page volume --paused --reduced-motion
+./native/target/release/isle-native.exe --live-media --page music
 ```
 
 | 操作 | 行为 |
@@ -48,9 +49,13 @@ cargo build --release --manifest-path native/Cargo.toml
 - 隐藏/最小化时释放页面、字体布局缓存和图形设备引用，并停止帧计时器；倒计时状态独立保留，隐藏期间完成后在恢复时展示提示。
 - 原生 MSAA 控件接口与 Windows UIA 桥接：名称、按钮/滑块角色、焦点、物理位置、激活和音量值操作。旧页面控件引用会失效，收起和隐藏后控件从树中移除。
 
-**这是绘制和交互原型，尚不能替换日常版本。** 音乐、封面图形、频谱、音量及天气是演示数据；浮动播放器和设置按钮仅显示说明。真实媒体、设备列表、网络天气、Studio、托盘和视频均未迁移。基础控件无障碍接口已接入，实际屏幕阅读器、文本阅读语义、完整 UIA RangeValue 模式及 tooltip 仍待补齐；多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
+**这是迁移中的独立原型，尚不能替换日常版本。** 默认仍使用演示数据，`--live-media` 可读取 Windows 媒体会话的真实歌名、歌手、播放状态和进度，并通过播放、上一首、下一首按钮发送实际控制请求。不支持的控制显示为禁用；F7 在真实模式下无效。尚不读取旧版播放器选择设置，使用自动选择策略。播放器未提供时长时不显示虚假的进度，网易云时长补全和封面解析仍待迁移。
 
-页面状态是 `Option<PageInstance>`，切换直接替换，收起设为 `None`。当前原型页面没有独占网络请求、Canvas 或后台采集任务；渲染器保留有界的字体和两个演示标题布局缓存。该模型测试不能替代未来真实业务接入后的订阅和请求释放测试。
+封面图形、音量和天气仍是演示数据；真实模式下频谱位置显示静态占位，尚未接入 WASAPI。浮动播放器和设置按钮仅显示说明。设备列表、网络天气、Studio、托盘和视频均未迁移。基础控件无障碍接口已接入，实际屏幕阅读器、文本阅读语义、完整 UIA RangeValue 模式及 tooltip 仍待补齐；多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
+
+页面状态是 `Option<PageInstance>`，切换直接替换，收起设为 `None`。渲染器只保留当前标题布局，离开音乐页后释放。真实媒体服务在专用 WinRT 线程运行，可见音乐页及收起状态按秒读取；其他功能页、隐藏和最小化期间释放媒体会话、事件订阅与管理器。只保留一个最新快照和最多 8 条待处理命令；异步操作支持取消及 2 秒超时。当前只有一个原生窗口，未来多窗口共享消费者计数仍需实现。
+
+只读媒体生命周期测试：`python native/scripts/live_media.py`，可见和隐藏各采样 60 秒，再执行 12 次切页释放/重建。测试不发送播放控制；输出不包含歌名或播放器身份。
 
 ## 验证
 
