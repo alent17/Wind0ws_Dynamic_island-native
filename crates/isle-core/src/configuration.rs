@@ -29,6 +29,8 @@ pub struct Appearance {
     pub collapsed_shoulder_radius: u8,
     pub expanded_shoulder_radius: u8,
     pub expanded_corner_radius: u32,
+    pub floating_fill_color: String,
+    pub floating_use_album_color: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -40,6 +42,8 @@ impl Default for Appearance {
             collapsed_shoulder_radius: 8,
             expanded_shoulder_radius: 32,
             expanded_corner_radius: 45,
+            floating_fill_color: "#28323c".into(),
+            floating_use_album_color: true,
         }
     }
 }
@@ -186,9 +190,18 @@ impl Document {
             expanded_shoulder_radius: self.0["expandedEdgeShoulderRadius"].as_u64().unwrap_or(32)
                 as u8,
             expanded_corner_radius: self.0["expandedCornerRadius"].as_u64().unwrap_or(45) as u32,
+            floating_fill_color: self.0["floatingFillColor"]
+                .as_str()
+                .filter(|value| valid_hex_color(value))
+                .unwrap_or("#28323c")
+                .into(),
+            floating_use_album_color: self.0["floatingUseAlbumColor"].as_bool().unwrap_or(true),
         }
     }
     pub fn set_appearance(&mut self, appearance: &Appearance) -> Result<(), String> {
+        if !valid_hex_color(&appearance.floating_fill_color) {
+            return Err("背景色必须是 #RRGGBB 格式".into());
+        }
         if appearance.edge_position > 100
             || !(80..=300).contains(&appearance.compact_length)
             || appearance.collapsed_shoulder_radius > 16
@@ -222,6 +235,14 @@ impl Document {
         self.0.insert(
             "expandedCornerRadius".into(),
             Value::from(appearance.expanded_corner_radius),
+        );
+        self.0.insert(
+            "floatingFillColor".into(),
+            Value::String(appearance.floating_fill_color.clone()),
+        );
+        self.0.insert(
+            "floatingUseAlbumColor".into(),
+            Value::Bool(appearance.floating_use_album_color),
         );
         Ok(())
     }
@@ -262,6 +283,12 @@ impl Document {
         }
         Ok(bytes)
     }
+}
+
+fn valid_hex_color(value: &str) -> bool {
+    value.len() == 7
+        && value.starts_with('#')
+        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -334,6 +361,8 @@ mod tests {
         appearance.collapsed_shoulder_radius = 12;
         appearance.expanded_shoulder_radius = 54;
         appearance.expanded_corner_radius = 70;
+        appearance.floating_fill_color = "#102030".into();
+        appearance.floating_use_album_color = false;
         doc.set_appearance(&appearance).unwrap();
         let loaded = Document::parse(&doc.bytes().unwrap()).unwrap();
         assert_eq!(loaded.appearance(), appearance);
@@ -342,6 +371,12 @@ mod tests {
             .set_appearance(&Appearance {
                 edge_position: 101,
                 ..appearance
+            })
+            .is_err());
+        assert!(doc
+            .set_appearance(&Appearance {
+                floating_fill_color: "blue".into(),
+                ..Appearance::default()
             })
             .is_err());
         assert!(Document::parse(br#"{"islandEdgePosition":255}"#).is_err());

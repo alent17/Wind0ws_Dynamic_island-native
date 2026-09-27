@@ -14,7 +14,7 @@ u.GetClassNameW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 u.GetWindowTextW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 exe=ROOT/'target/release/isle-native.exe'
 config=OUT/'native-settings-test.json'
-config.write_text('{"futureTest":{"keep":[1,null,3]},"autoStart":true}',encoding='utf-8')
+config.write_text('{"futureTest":{"keep":[1,null,3]},"autoStart":true,"floatingFillColor":"#102030","floatingUseAlbumColor":true}',encoding='utf-8')
 report=OUT/'native-settings-snapshot.json'
 placements=[]
 def launch():
@@ -78,6 +78,8 @@ try:
     for key in [0x70,0x71,0x72,0x73]:
         u.PostMessageW(hwnd,0x100,key,0);time.sleep(.1);check_bounds(hwnd)
     window=open_settings()
+    color=c.create_unicode_buffer(16);u.GetWindowTextW(u.GetDlgItem(window,215),color,16)
+    assert color.value=='#102030' and u.SendMessageW(u.GetDlgItem(window,216),0xf0,0,0)==1
     check(window,200,True)
     # Closing without Apply discards the draft.
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
@@ -107,27 +109,32 @@ try:
         label=c.create_unicode_buffer(64)
         u.GetWindowTextW(u.GetDlgItem(window,230+index),label,64)
         assert label.value==f'{names[index]}：{value} px',label.value
+    check(window,216,False)
     draft=snapshot()
     assert draft.get('settingsDraftPosition')==73 and draft.get('settingsDraftShape')==shape,draft
+    assert draft.get('settingsDraftFillColor')=='#102030' and not draft.get('settingsDraftAlbumColor'),draft
     ImageGrab.grab(check_bounds(window),all_screens=True).save(OUT/'native-appearance.png')
     u.SendMessageW(u.GetDlgItem(window,212),0xf5,0,0)
-    placed=expect(lambda s:not s['configurationSaving'] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64)
+    placed=expect(lambda s:not s['configurationSaving'] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64 and s['backgroundColor']=='#102030' and not s['albumColorEnabled'])
     bounds=check_bounds(hwnd)
     ImageGrab.grab(bounds,all_screens=True).save(OUT/'native-appearance-island.png')
     assert bounds[2]==0 and bounds[1]>0
     saved=json.loads(config.read_text(encoding='utf-8'))
     assert saved['islandStyle']=='edge' and saved['islandEdge']=='right' and saved['islandEdgePosition']==73
     assert [saved['compactLength'],saved['collapsedEdgeShoulderRadius'],saved['expandedEdgeShoulderRadius'],saved['expandedCornerRadius']]==shape
+    assert saved['floatingFillColor']=='#102030' and saved['floatingUseAlbumColor'] is False
 
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
     for _ in range(2):u.PostMessageW(hwnd,0x100,0x27,0)
     u.PostMessageW(hwnd,0x100,13,0);time.sleep(.3)
     ImageGrab.grab(check_bounds(hwnd),all_screens=True).save(OUT/'native-clock.png')
     close(proc,hwnd);proc,hwnd=launch()
-    restarted=expect(lambda s:s['visibleTools']==[0,5,6] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64);bounds=check_bounds(hwnd)
+    restarted=expect(lambda s:s['visibleTools']==[0,5,6] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64 and s['backgroundColor']=='#102030' and not s['albumColorEnabled']);bounds=check_bounds(hwnd)
     assert bounds[2]==0 and restarted['reducedMotion'] and restarted['weatherRequests']==0
     assert restarted['clockZoneIndex']==5 and json.loads(config.read_text(encoding='utf-8'))['clockTimeZone']=='UTC'
     window=open_settings()
+    color=c.create_unicode_buffer(16);u.GetWindowTextW(u.GetDlgItem(window,215),color,16)
+    assert color.value=='#102030' and u.SendMessageW(u.GetDlgItem(window,216),0xf0,0,0)==0
     assert [u.SendMessageW(u.GetDlgItem(window,220+i),0x400,0,0) for i in range(4)]==[140,12,48,64]
     assert u.SendMessageW(u.GetDlgItem(window,211),0x147,0,0)==1
     assert u.SendMessageW(u.GetDlgItem(window,213),0x147,0,0)==1
@@ -135,5 +142,5 @@ try:
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
     result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'appearanceApplied':placed,'restarted':restarted,'windowBounds':placements,'clockCases':clock_cases}
     (OUT/'native-settings-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
-    print('PASS: tools, animation, timezone, edge placement, shape sliders, restart restoration and secondary-screen bounds')
+    print('PASS: tools, animation, timezone, edge placement, shape and color settings, restart restoration and secondary-screen bounds')
 finally:close(proc,hwnd)

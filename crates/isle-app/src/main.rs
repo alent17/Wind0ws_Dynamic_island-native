@@ -805,7 +805,7 @@ impl App {
                                     self.settings.as_ref().unwrap().saving(true);
                                 }
                             } else if let Some(settings) = &self.settings {
-                                settings.message("位置请输入 0–100 的整数");
+                                settings.message("沿边位置需为 0–100，颜色需为 #RRGGBB");
                             }
                         }
                         weather_settings::PLAYERS if !self.configuration.busy() => {
@@ -909,6 +909,9 @@ impl App {
                                     appearance.expanded_shoulder_radius;
                                 self.model.expanded_corner_radius =
                                     appearance.expanded_corner_radius;
+                                self.model.background_color =
+                                    rgb_color(&appearance.floating_fill_color);
+                                self.model.use_album_color = appearance.floating_use_album_color;
                                 self.model.retarget();
                                 let _ = self.position();
                                 if let Some(settings) = &self.settings {
@@ -1314,6 +1317,14 @@ impl App {
                 self.model.expanded_shoulder_radius,
                 self.model.expanded_corner_radius,
             ));
+            let background = self
+                .model
+                .background_color
+                .map(|channel| (channel * 255.).round() as u8);
+            text.push_str(&format!(
+                ",\"backgroundColor\":\"#{:02X}{:02X}{:02X}\",\"albumColorEnabled\":{}",
+                background[0], background[1], background[2], self.model.use_album_color
+            ));
             text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
             if let Some(service) = &self.audio {
                 text.push(',');
@@ -1346,12 +1357,14 @@ impl App {
             if let Some(settings) = &self.settings {
                 if let Some(draft) = unsafe { settings.appearance() } {
                     text.push_str(&format!(
-                        ",\"settingsDraftPosition\":{},\"settingsDraftShape\":[{},{},{},{}]",
+                        ",\"settingsDraftPosition\":{},\"settingsDraftShape\":[{},{},{},{}],\"settingsDraftFillColor\":\"{}\",\"settingsDraftAlbumColor\":{}",
                         draft.edge_position,
                         draft.compact_length,
                         draft.collapsed_shoulder_radius,
                         draft.expanded_shoulder_radius,
-                        draft.expanded_corner_radius
+                        draft.expanded_corner_radius,
+                        draft.floating_fill_color,
+                        draft.floating_use_album_color
                     ));
                 }
             }
@@ -1362,6 +1375,18 @@ impl App {
 }
 fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
+}
+fn rgb_color(value: &str) -> [f32; 3] {
+    if value.len() != 7 || !value.starts_with('#') {
+        return [40. / 255., 50. / 255., 60. / 255.];
+    }
+    let mut rgb = [0.; 3];
+    for (index, channel) in rgb.iter_mut().enumerate() {
+        *channel = u8::from_str_radix(&value[1 + index * 2..3 + index * 2], 16)
+            .unwrap_or([40, 50, 60][index]) as f32
+            / 255.;
+    }
+    rgb
 }
 unsafe fn system_reduced_motion() -> bool {
     let mut animate = BOOL(1);
@@ -1466,6 +1491,8 @@ unsafe fn run() -> Result<()> {
         collapsed_shoulder_radius: appearance.collapsed_shoulder_radius,
         expanded_shoulder_radius: appearance.expanded_shoulder_radius,
         expanded_corner_radius: appearance.expanded_corner_radius,
+        background_color: rgb_color(&appearance.floating_fill_color),
+        use_album_color: appearance.floating_use_album_color,
         playing: !args.iter().any(|a| a == "--paused"),
         attached: args.iter().any(|a| a == "--attached") || appearance.style == "edge",
         edge: match value(&args, "--edge").as_deref() {

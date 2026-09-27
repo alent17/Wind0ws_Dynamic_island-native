@@ -16,7 +16,7 @@ use windows::{
     },
 };
 pub struct Renderer {
-    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
+    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [f32; 3])>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
@@ -45,6 +45,60 @@ fn rect(r: Rect) -> D2D_RECT_F {
         right: r.x + r.w,
         bottom: r.y + r.h,
     }
+}
+fn cover_accent(cover: &isle_core::Cover) -> [f32; 3] {
+    let mut counts = HashMap::<(u8, u8, u8), usize>::new();
+    for pixel in cover
+        .pixels
+        .chunks_exact(4)
+        .take((cover.width as usize).saturating_mul(cover.height as usize))
+    {
+        let alpha = pixel[3] as u32;
+        if alpha < 128 {
+            continue;
+        }
+        let unpremultiply = |channel: u8| ((channel as u32 * 255 / alpha).min(255)) as u8;
+        let b = unpremultiply(pixel[0]);
+        let g = unpremultiply(pixel[1]);
+        let r = unpremultiply(pixel[2]);
+        if (r == 0 && g == 0 && b == 0) || (r == 255 && g == 255 && b == 255) {
+            continue;
+        }
+        *counts
+            .entry((r / 12 * 12, g / 12 * 12, b / 12 * 12))
+            .or_default() += 1;
+    }
+    let saturation = |(r, g, b): (u8, u8, u8)| {
+        let (r, g, b) = (r as f32 / 255., g as f32 / 255., b as f32 / 255.);
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let lightness = (max + min) / 2.;
+        if max == min {
+            0.
+        } else if lightness > 0.5 {
+            (max - min) / (2. - max - min)
+        } else {
+            (max - min) / (max + min)
+        }
+    };
+    counts
+        .into_iter()
+        .max_by(|(color_a, count_a), (color_b, count_b)| {
+            let score_a = saturation(*color_a) * (*count_a as f32).ln();
+            let score_b = saturation(*color_b) * (*count_b as f32).ln();
+            score_a
+                .total_cmp(&score_b)
+                .then_with(|| count_a.cmp(count_b))
+        })
+        .map(|((r, g, b), _)| {
+            [
+                r.saturating_add(12),
+                g.saturating_add(12),
+                b.saturating_add(12),
+            ]
+            .map(|channel| channel as f32 / 255.)
+        })
+        .unwrap_or([60. / 255., 80. / 255., 100. / 255.])
 }
 impl Renderer {
     pub fn cover_alive(&self) -> bool {
@@ -323,6 +377,47 @@ impl Renderer {
             M32: 0.,
         });
         self.ctx.Clear(Some(&color(0., 0., 0., 0.)));
+        let media_cover = if m.expanded && m.page() == Page::Music {
+            m.media.as_ref().and_then(|media| media.cover.as_ref())
+        } else {
+            None
+        };
+        if let Some(cover) = media_cover {
+            if self
+                .cover
+                .as_ref()
+                .is_none_or(|(old, _, _)| !std::sync::Arc::ptr_eq(old, cover))
+            {
+                let bitmap = self.ctx.CreateBitmap(
+                    D2D_SIZE_U {
+                        width: cover.width,
+                        height: cover.height,
+                    },
+                    Some(cover.pixels.as_ptr().cast()),
+                    cover.width * 4,
+                    &D2D1_BITMAP_PROPERTIES {
+                        pixelFormat: D2D1_PIXEL_FORMAT {
+                            format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                            alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                        },
+                        dpiX: 96.,
+                        dpiY: 96.,
+                    },
+                )?;
+                self.cover = Some((cover.clone(), bitmap, cover_accent(cover)));
+            }
+        } else {
+            self.cover = None;
+        }
+        let background = if m.use_album_color {
+            self.cover
+                .as_ref()
+                .map(|(_, _, accent)| *accent)
+                .unwrap_or(m.background_color)
+        } else {
+            m.background_color
+        };
+        let background_color = color(background[0], background[1], background[2], 1.);
         let p = m.outline();
         let shape = self.factory.CreatePathGeometry()?;
         let sink = shape.Open()?;
@@ -331,7 +426,7 @@ impl Renderer {
         sink.AddLines(&points);
         sink.EndFigure(D2D1_FIGURE_END_CLOSED);
         sink.Close()?;
-        self.ink(color(0.015, 0.018, 0.025, 1.));
+        self.ink(background_color);
         self.ctx.FillGeometry(&shape, &self.brush, None);
         let c = m.body();
         if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
@@ -458,30 +553,7 @@ impl Renderer {
                         },
                         white,
                     );
-                    if let Some(cover) = m.media.as_ref().and_then(|m| m.cover.as_ref()) {
-                        if self
-                            .cover
-                            .as_ref()
-                            .is_none_or(|(old, _)| !std::sync::Arc::ptr_eq(old, cover))
-                        {
-                            let bitmap = self.ctx.CreateBitmap(
-                                D2D_SIZE_U {
-                                    width: cover.width,
-                                    height: cover.height,
-                                },
-                                Some(cover.pixels.as_ptr().cast()),
-                                cover.width * 4,
-                                &D2D1_BITMAP_PROPERTIES {
-                                    pixelFormat: D2D1_PIXEL_FORMAT {
-                                        format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                                        alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
-                                    },
-                                    dpiX: 96.,
-                                    dpiY: 96.,
-                                },
-                            )?;
-                            self.cover = Some((cover.clone(), bitmap));
-                        }
+                    if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
                         // Clear the placeholder beneath translucent rounded corners.
                         self.fill(
                             Rect {
@@ -491,7 +563,7 @@ impl Renderer {
                                 h: 54.,
                             },
                             12.,
-                            color(0.015, 0.018, 0.025, 1.),
+                            background_color,
                         );
                         let bitmap = &self.cover.as_ref().unwrap().1;
                         self.ctx.DrawBitmap(
@@ -506,8 +578,6 @@ impl Renderer {
                             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                             None,
                         );
-                    } else {
-                        self.cover = None;
                     }
                     let title = if let Some(media) = &m.media {
                         if media.title.is_empty() {
@@ -567,7 +637,7 @@ impl Renderer {
                                     h: 22.,
                                 },
                                 0.,
-                                color(0.015, 0.018, 0.025, a),
+                                color(background[0], background[1], background[2], a),
                             );
                             self.fill(
                                 Rect {
@@ -577,7 +647,7 @@ impl Renderer {
                                     h: 22.,
                                 },
                                 0.,
-                                color(0.015, 0.018, 0.025, a),
+                                color(background[0], background[1], background[2], a),
                             );
                         }
                     }
@@ -1124,4 +1194,26 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
         .ok()?
         .cast()
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cover_accent;
+
+    #[test]
+    fn album_accent_prefers_visible_saturated_cover_colors() {
+        let cover = isle_core::Cover {
+            width: 4,
+            height: 1,
+            pixels: vec![
+                0, 0, 0, 0, // transparent pixel is ignored
+                0, 0, 255, 255, // red
+                0, 0, 255, 255, // repeated red has stronger frequency
+                255, 255, 255, 255, // white is ignored
+            ],
+        };
+        let accent = cover_accent(&cover);
+        assert!(accent[0] > 0.95);
+        assert!(accent[1] < 0.06 && accent[2] < 0.06);
+    }
 }

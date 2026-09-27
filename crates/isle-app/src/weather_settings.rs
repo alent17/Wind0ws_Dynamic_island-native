@@ -81,6 +81,7 @@ pub struct Settings {
     edges: Vec<String>,
     shape_controls: Vec<HWND>,
     shape_labels: Vec<HWND>,
+    fill_color: HWND,
 }
 impl Settings {
     pub unsafe fn new(
@@ -109,7 +110,7 @@ impl Settings {
         let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut rect = RECT {
             right: px(540.),
-            bottom: px(860.),
+            bottom: px(930.),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -150,6 +151,7 @@ impl Settings {
             edges: vec![],
             shape_controls: vec![],
             shape_labels: vec![],
+            fill_color: HWND(0),
         };
         value.font = CreateFontW(
             -px(15.),
@@ -630,12 +632,59 @@ impl Settings {
             value.shape_controls.push(track);
         }
         child(
+            w!("STATIC"),
+            "灵动岛背景色",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            808.,
+            480.,
+            20.,
+        )?;
+        let album_color = child(
+            w!("BUTTON"),
+            "跟随专辑主色",
+            216,
+            WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            20.,
+            836.,
+            150.,
+            24.,
+        )?;
+        SendMessageW(
+            album_color,
+            BM_SETCHECK,
+            WPARAM(usize::from(appearance.floating_use_album_color)),
+            LPARAM(0),
+        );
+        child(
+            w!("STATIC"),
+            "自定义颜色",
+            0,
+            WINDOW_STYLE(0),
+            240.,
+            837.,
+            92.,
+            22.,
+        )?;
+        value.fill_color = child(
+            w!("EDIT"),
+            &appearance.floating_fill_color,
+            215,
+            WS_BORDER | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+            338.,
+            832.,
+            112.,
+            28.,
+        )?;
+        SendMessageW(value.fill_color, EM_LIMITTEXT, WPARAM(7), LPARAM(0));
+        child(
             w!("BUTTON"),
             "应用外观",
             APPLY_APPEARANCE,
             WS_TABSTOP,
             410.,
-            818.,
+            878.,
             110.,
             28.,
         )?;
@@ -722,6 +771,20 @@ impl Settings {
             .iter()
             .map(|track| SendMessageW(*track, WM_USER, WPARAM(0), LPARAM(0)).0)
             .collect::<Vec<_>>();
+        let fill_color = self.fill_color_text();
+        if fill_color.len() != 7
+            || !fill_color.starts_with('#')
+            || !fill_color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+        {
+            return None;
+        }
+        let album_color = SendMessageW(
+            GetDlgItem(self.hwnd, 216),
+            BM_GETCHECK,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .0 == 1;
         Some(isle_core::configuration::Appearance {
             style: read_combo(211, &self.styles)?,
             edge: read_combo(213, &self.edges)?,
@@ -730,7 +793,14 @@ impl Settings {
             collapsed_shoulder_radius: u8::try_from(*shape_values.get(1)?).ok()?,
             expanded_shoulder_radius: u8::try_from(*shape_values.get(2)?).ok()?,
             expanded_corner_radius: u32::try_from(*shape_values.get(3)?).ok()?,
+            floating_fill_color: fill_color,
+            floating_use_album_color: album_color,
         })
+    }
+    unsafe fn fill_color_text(&self) -> String {
+        let mut text = [0u16; 16];
+        let len = GetWindowTextW(self.fill_color, &mut text);
+        String::from_utf16_lossy(&text[..len.max(0) as usize])
     }
     pub unsafe fn query(&self) -> String {
         let mut text = [0u16; 81];
@@ -748,6 +818,8 @@ impl Settings {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
         EnableWindow(self.edge_position, !saving);
+        EnableWindow(GetDlgItem(self.hwnd, 215), !saving);
+        EnableWindow(GetDlgItem(self.hwnd, 216), !saving);
         for track in &self.shape_controls {
             EnableWindow(*track, !saving);
         }
