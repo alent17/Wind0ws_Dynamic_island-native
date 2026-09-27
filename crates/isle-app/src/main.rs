@@ -4,6 +4,7 @@ mod artwork;
 mod clock;
 mod configuration;
 mod frame_timer;
+mod icons;
 mod media;
 mod players;
 mod render;
@@ -178,7 +179,12 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             LRESULT(0)
         }
         WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
-            enqueue(Event::Wheel((wp.0 >> 16) as u16 as i16));
+            let delta = (wp.0 >> 16) as u16 as i16;
+            enqueue(Event::Wheel(if msg == WM_MOUSEHWHEEL {
+                delta.saturating_neg()
+            } else {
+                delta
+            }));
             LRESULT(0)
         }
         WM_KEYDOWN => {
@@ -260,6 +266,7 @@ struct App {
     exit_after: Option<f64>,
     log: Option<String>,
     scripted: bool,
+    test_fixture: bool,
     last_script: u64,
     frames_ms: Vec<f64>,
     intervals_ms: Vec<f64>,
@@ -451,6 +458,14 @@ impl App {
                             .map(|d| d.name.clone())
                             .unwrap_or_default(),
                         Hit::Back if self.model.device_menu => "返回音量".into(),
+                        Hit::Timer => if self.model.timer_deadline.is_some() {
+                            "暂停倒计时"
+                        } else if self.model.timer_active {
+                            "继续倒计时"
+                        } else {
+                            "开始倒计时"
+                        }
+                        .into(),
                         Hit::Mute if self.model.audio.as_ref().is_some_and(|a| a.muted) => {
                             "取消静音".into()
                         }
@@ -486,6 +501,7 @@ impl App {
             .collect();
         state.focus = self.model.focus;
         state.volume = volume;
+        state.timer_minutes = self.model.timer_minutes;
         let volume_id = state
             .nodes
             .iter()
@@ -583,7 +599,7 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
-        if self.settings.is_none() {
+        if self.settings.is_none() && !self.test_fixture {
             let job =
                 if !self.suspended && self.model.expanded && self.model.page() == Page::Weather {
                     self.model.weather.city.clone().map(weather::Job::Forecast)
@@ -656,6 +672,12 @@ impl App {
             && self.model.media.as_ref().is_none_or(|media| media.playing)
     }
     unsafe fn action(&mut self, hit: Hit) {
+        if hit == Hit::Timer {
+            self.model.now = self.start.elapsed().as_secs_f64();
+            if let Some(deadline) = self.model.timer_deadline {
+                self.model.timer_left = (deadline - self.model.now).max(0.);
+            }
+        }
         if matches!(hit, Hit::WeatherSettings | Hit::Tool(3)) {
             if let Some(settings) = &self.settings {
                 if IsWindowEnabled(self.window).as_bool() {
@@ -685,6 +707,17 @@ impl App {
         if !self.model.enabled(hit) {
             return;
         }
+        if self.test_fixture {
+            if let Hit::Device(index) = hit {
+                if let Some(audio) = &mut self.model.audio {
+                    if let Some(device) = audio.devices.get(index) {
+                        audio.device = device.clone();
+                    }
+                }
+                self.model.back();
+                return;
+            }
+        }
         if let (Some(service), Some(audio)) = (&self.audio, &self.model.audio) {
             match hit {
                 Hit::Mute => {
@@ -696,10 +729,12 @@ impl App {
                 }
                 Hit::Device(index) => {
                     if let Some(device) = audio.devices.get(index) {
-                        service.command(
-                            audio.device.id.clone(),
-                            system_audio::Action::Device(device.id.clone()),
-                        );
+                        if device.id != audio.device.id {
+                            service.command(
+                                audio.device.id.clone(),
+                                system_audio::Action::Device(device.id.clone()),
+                            );
+                        }
                     }
                     self.model.back();
                     return;
@@ -1032,7 +1067,7 @@ impl App {
                         .as_ref()
                         .is_some_and(|old| old.devices != audio.devices)
                     {
-                        self.model.device_offset = 0;
+                        self.model.device_scroll = 0.;
                         self.model.focus = None;
                     }
                     self.model.audio = Some(audio);
@@ -1084,6 +1119,11 @@ impl App {
                             if hit == Hit::Volume && value <= 100 && self.model.enabled(hit) =>
                         {
                             self.model.volume = value as f32
+                        }
+                        accessibility::VALUE
+                            if hit == Hit::TimerRuler && (1..=1440).contains(&value) =>
+                        {
+                            self.model.set_timer_minutes(value as f32);
                         }
                         _ => {}
                     }
@@ -1199,8 +1239,9 @@ impl App {
                             self.model.scroll = initial_scroll;
                             self.model.scroll_by(-dx);
                         } else if hit == Hit::Volume && self.model.enabled(hit) {
-                            let r = self.model.body();
-                            self.model.volume = ((p.x - r.x) / r.w * 100.).clamp(0., 100.);
+                            self.model.volume = (initial_scroll - dx / 10.).round().clamp(0., 100.);
+                        } else if hit == Hit::TimerRuler {
+                            self.model.set_timer_minutes(initial_scroll - dx / 10.);
                         }
                         changed = true;
                     }
@@ -1209,7 +1250,15 @@ impl App {
             Event::Down(x, y) => {
                 let p = self.point(x, y);
                 if let Some(hit) = self.model.hit(p) {
-                    self.down = Some((p, hit, self.model.scroll));
+                    if hit == Hit::Volume {
+                        self.model.device_menu = false;
+                    }
+                    let initial = match hit {
+                        Hit::Volume => self.model.volume,
+                        Hit::TimerRuler => self.model.timer_minutes as f32,
+                        _ => self.model.scroll,
+                    };
+                    self.down = Some((p, hit, initial));
                     self.dragged = false;
                     self.model.focus = None;
                 }
@@ -1219,8 +1268,15 @@ impl App {
                 if let Some((_, hit, _)) = self.down.take() {
                     if !self.dragged && self.model.hit(p) == Some(hit) {
                         if hit == Hit::Volume && self.model.enabled(hit) {
-                            let r = self.model.body();
-                            self.model.volume = ((p.x - r.x) / r.w * 100.).clamp(0., 100.);
+                            let r = self.model.ruler();
+                            self.model.volume = (self.model.volume + (p.x - r.x - r.w / 2.) / 10.)
+                                .round()
+                                .clamp(0., 100.);
+                        } else if hit == Hit::TimerRuler {
+                            let r = self.model.ruler();
+                            self.model.set_timer_minutes(
+                                self.model.timer_minutes as f32 + (p.x - r.x - 141.) / 10.,
+                            );
                         } else {
                             self.action(hit);
                         }
@@ -1229,11 +1285,7 @@ impl App {
             }
             Event::Wheel(delta) => {
                 if self.model.device_menu {
-                    self.model.activate(if delta < 0 {
-                        Hit::DeviceNext
-                    } else {
-                        Hit::DevicePrev
-                    });
+                    self.model.scroll_devices(-delta as f32 / 120. * 28.);
                 } else if self.model.expanded {
                     self.model.scroll_by(-delta as f32 / 120. * 32.);
                 }
@@ -1269,18 +1321,40 @@ impl App {
                 0x09 => self
                     .model
                     .move_focus(GetKeyState(VK_SHIFT.0 as i32) < 0, false),
-                0x25 | 0x27 => {
+                0x23 | 0x24 if self.model.focus == Some(Hit::TimerRuler) => {
+                    self.model
+                        .set_timer_minutes(if key == 0x24 { 1. } else { 1440. });
+                }
+                0x23 | 0x24 if matches!(self.model.focus, Some(Hit::Tool(_))) => {
+                    self.model.focus_tool_boundary(key == 0x23);
+                }
+                0x23 | 0x24
+                    if self.model.focus == Some(Hit::Volume) && self.model.enabled(Hit::Volume) =>
+                {
+                    self.model.volume = if key == 0x24 { 0. } else { 100. };
+                }
+                0x25..=0x28 => {
                     if self.model.device_menu {
-                        self.model.activate(if key == 0x25 {
+                        self.model.activate(if key == 0x25 || key == 0x26 {
                             Hit::DevicePrev
                         } else {
                             Hit::DeviceNext
                         });
+                    } else if self.model.focus == Some(Hit::TimerRuler) {
+                        let step = if GetKeyState(VK_SHIFT.0 as i32) < 0 {
+                            5.
+                        } else {
+                            1.
+                        };
+                        self.model.set_timer_minutes(
+                            self.model.timer_minutes as f32
+                                + if key == 0x25 { step } else { -step },
+                        );
                     } else if self.model.focus == Some(Hit::Volume)
                         && self.model.enabled(Hit::Volume)
                     {
                         self.model.volume = (self.model.volume
-                            + if key == 0x25 { -1. } else { 1. })
+                            + if key == 0x25 || key == 0x28 { -1. } else { 1. })
                         .clamp(0., 100.);
                     } else {
                         self.model.move_focus(key == 0x25, true);
@@ -1464,7 +1538,13 @@ unsafe fn run() -> Result<()> {
         return Err(Error::from_win32());
     }
     let window = CreateWindowExW(
-        WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        WS_EX_NOREDIRECTIONBITMAP
+            | WS_EX_TOPMOST
+            | if args.iter().any(|arg| arg == "--test-taskbar") {
+                WS_EX_APPWINDOW
+            } else {
+                WS_EX_TOOLWINDOW
+            },
         class,
         w!("Isle Native Prototype"),
         WS_POPUP,
@@ -1563,11 +1643,69 @@ unsafe fn run() -> Result<()> {
         });
     }
     model.retarget();
+    let test_fixture = args.iter().any(|a| a == "--test-fixture");
+    if test_fixture {
+        use isle_core::{
+            weather::{City, Day, Forecast},
+            AudioDevice, AudioSnapshot,
+        };
+        let devices = vec![
+            AudioDevice {
+                id: "speakers".into(),
+                name: "Speakers".into(),
+            },
+            AudioDevice {
+                id: "headphones".into(),
+                name: "Headphones".into(),
+            },
+        ];
+        model.audio = Some(AudioSnapshot {
+            device: devices[0].clone(),
+            devices,
+            volume: 42,
+            ..Default::default()
+        });
+        model.volume = 42.;
+        model.media = None;
+        model.spectrum = None;
+        model.weather.city = Some(City {
+            name: "Shanghai".into(),
+            latitude: 31.23,
+            longitude: 121.47,
+        });
+        model.weather.data = Some(Forecast {
+            temperature: 23.,
+            code: 0,
+            observed: "2026-09-24T04:26".into(),
+            days: vec![
+                Day {
+                    date: "2026-09-25".into(),
+                    code: 61,
+                    high: 24.,
+                    low: 17.,
+                },
+                Day {
+                    date: "2026-09-26".into(),
+                    code: 2,
+                    high: 23.,
+                    low: 16.,
+                },
+                Day {
+                    date: "2026-09-27".into(),
+                    code: 0,
+                    high: 26.,
+                    low: 18.,
+                },
+            ],
+        });
+    }
     if model.media.is_some() {
         model.playing = false;
     }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;
+        model.timer_duration = model.timer_left;
+        model.timer_active = true;
         model.timer_deadline = Some(model.timer_left);
     }
     let scale = GetDpiForWindow(window) as f32 / 96.;
@@ -1585,7 +1723,7 @@ unsafe fn run() -> Result<()> {
         } else {
             None
         },
-        audio: if model.audio.is_some() {
+        audio: if model.audio.is_some() && !test_fixture {
             Some(system_audio::AudioService::new(window).map_err(|_| Error::from(E_FAIL))?)
         } else {
             None
@@ -1627,6 +1765,7 @@ unsafe fn run() -> Result<()> {
         exit_after: value(&args, "--exit-after").and_then(|v| v.parse().ok()),
         log: value(&args, "--log"),
         scripted: args.iter().any(|a| a == "--scripted"),
+        test_fixture,
         last_script: 0,
         frames_ms: vec![],
         intervals_ms: vec![],

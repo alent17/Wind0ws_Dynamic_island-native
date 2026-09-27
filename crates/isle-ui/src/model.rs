@@ -18,8 +18,11 @@ pub enum Hit {
     Next,
     Volume,
     Timer,
+    TimerRuler,
+    Dismiss,
     Reset,
     Devices,
+    DeviceMenu,
     Device(usize),
     DevicePrev,
     DeviceNext,
@@ -37,7 +40,7 @@ pub struct Model {
     pub spectrum: Option<SpectrumVisual>,
     pub audio: Option<isle_core::AudioSnapshot>,
     pub device_menu: bool,
-    pub device_offset: usize,
+    pub device_scroll: f32,
     pub media: Option<isle_core::MediaSnapshot>,
     pub media_failed: bool,
     pub edge: Edge,
@@ -63,6 +66,10 @@ pub struct Model {
     pub volume: f32,
     pub timer_deadline: Option<f64>,
     pub timer_left: f64,
+    pub timer_duration: f64,
+    pub timer_minutes: u16,
+    pub timer_active: bool,
+    pub timer_finished: bool,
     pub now: f64,
     pub track: usize,
     pub title_started: f64,
@@ -78,7 +85,7 @@ impl Default for Model {
             spectrum: None,
             audio: None,
             device_menu: false,
-            device_offset: 0,
+            device_scroll: 0.,
             media: None,
             media_failed: false,
             edge: Edge::Top,
@@ -103,7 +110,11 @@ impl Default for Model {
             playing: true,
             volume: 42.,
             timer_deadline: None,
-            timer_left: 300.,
+            timer_left: 1200.,
+            timer_duration: 1200.,
+            timer_minutes: 20,
+            timer_active: false,
+            timer_finished: false,
             now: 0.,
             track: 0,
             title_started: 0.,
@@ -150,7 +161,7 @@ impl Model {
     }
     pub fn switch(&mut self, page: Page) {
         self.device_menu = false;
-        self.device_offset = 0;
+        self.device_scroll = 0.;
         self.title_started = self.now;
         self.expanded = true;
         self.generation += 1;
@@ -201,7 +212,6 @@ impl Model {
             let h = match self.page() {
                 Page::Music => 160.,
                 Page::Weather => 240.,
-                Page::Volume if self.device_menu => 216.,
                 _ => 188.,
             } + bar;
             let inset = if self.attached {
@@ -220,7 +230,13 @@ impl Model {
                 self.expanded_shoulder_radius.min(64) as f32,
             )
         } else {
-            let compact_length = self.compact_length.clamp(80, 300) as f32;
+            let compact_length = self.compact_length.clamp(80, 300).max(
+                if self.timer_active || self.timer_finished {
+                    240
+                } else {
+                    80
+                },
+            ) as f32;
             let len = if self.hovered {
                 (compact_length + 10.).min(300.)
             } else {
@@ -261,6 +277,8 @@ impl Model {
             self.timer_left = (deadline - now).max(0.);
             if self.timer_left == 0. {
                 self.timer_deadline = None;
+                self.timer_active = false;
+                self.timer_finished = true;
                 self.switch(Page::Timer);
             }
         }
@@ -332,8 +350,8 @@ impl Model {
         let c = self.content();
         let width = (self.visible_tools().count().min(5) as f32 * 32. - 4.).max(0.);
         Rect {
-            x: c.x + (c.w - width) / 2.,
-            y: c.y + 6.,
+            x: c.x + (c.w - width) / 2. + 1.,
+            y: c.y + 7.,
             w: width,
             h: 28.,
         }
@@ -355,9 +373,90 @@ impl Model {
         } else {
             0.
         };
-        c.y += bar + 12.;
-        c.h -= bar + 12.;
+        if self.page() == Page::Music {
+            c.y += bar + 12.;
+            c.h -= bar + 12.;
+        } else {
+            c.x -= 3.;
+            c.w += 8.;
+            c.y += bar + 17.;
+            c.h -= bar
+                + 40.
+                + if self.attached && vertical(self.edge) {
+                    self.shoulder.value
+                } else {
+                    0.
+                };
+        }
         c
+    }
+    pub fn detail_content(&self) -> Rect {
+        let c = self.body();
+        Rect {
+            x: c.x,
+            y: c.y + 40.,
+            w: c.w,
+            h: (c.h - 40.).max(0.),
+        }
+    }
+    pub fn ruler(&self) -> Rect {
+        let c = self.detail_content();
+        Rect {
+            x: c.x - 6.,
+            y: c.y,
+            w: c.w + 12.,
+            h: 44.,
+        }
+    }
+    pub fn device_trigger(&self) -> Rect {
+        let c = self.detail_content();
+        Rect {
+            x: c.x,
+            y: c.y + 54.,
+            w: (c.w - 66.).max(40.),
+            h: 26.,
+        }
+    }
+    pub fn device_popup(&self) -> Rect {
+        let trigger = self.device_trigger();
+        let count = self.audio.as_ref().map_or(0, |a| a.devices.len());
+        let h = (count as f32 * 28. + 10.).min(78.);
+        Rect {
+            x: trigger.x,
+            y: trigger.y - 4. - h,
+            w: trigger.w,
+            h,
+        }
+    }
+    pub fn set_timer_minutes(&mut self, value: f32) {
+        if !self.timer_active && !self.timer_finished {
+            self.timer_minutes = value.round().clamp(1., 1440.) as u16;
+            self.timer_left = f64::from(self.timer_minutes) * 60.;
+        }
+    }
+    pub fn device_viewport(&self) -> Rect {
+        let p = self.device_popup();
+        Rect {
+            x: p.x + 5.,
+            y: p.y + 5.,
+            w: p.w - 10.,
+            h: (p.h - 10.).max(0.),
+        }
+    }
+    pub fn device_row(&self, index: usize) -> Rect {
+        let p = self.device_viewport();
+        Rect {
+            x: p.x,
+            y: p.y + index as f32 * 28. - self.device_scroll,
+            w: p.w,
+            h: 28.,
+        }
+    }
+    pub fn scroll_devices(&mut self, delta: f32) {
+        let content = self.audio.as_ref().map_or(0, |a| a.devices.len()) as f32 * 28.;
+        self.device_scroll =
+            (self.device_scroll + delta).clamp(0., (content - self.device_viewport().h).max(0.));
+        self.focus = None;
     }
     pub fn controls(&self) -> Vec<(Hit, Rect)> {
         if !self.expanded {
@@ -385,6 +484,7 @@ impl Model {
                 },
             ));
         }
+        let p = self.detail_content();
         match self.page() {
             Page::Music => {
                 for (i, hit) in [Hit::Previous, Hit::Play, Hit::Next]
@@ -402,103 +502,82 @@ impl Model {
                     ));
                 }
             }
-            Page::Volume if self.device_menu => {
-                if let Some(audio) = &self.audio {
-                    for index in
-                        self.device_offset..(self.device_offset + 4).min(audio.devices.len())
-                    {
-                        v.push((
-                            Hit::Device(index),
-                            Rect {
-                                x: c.x,
-                                y: c.y + 36. + (index - self.device_offset) as f32 * 28.,
-                                w: c.w,
-                                h: 26.,
-                            },
-                        ));
-                    }
-                    if self.device_offset > 0 {
-                        v.push((
-                            Hit::DevicePrev,
-                            Rect {
-                                x: c.x + c.w - 60.,
-                                y: c.y,
-                                w: 28.,
-                                h: 28.,
-                            },
-                        ));
-                    }
-                    if self.device_offset + 4 < audio.devices.len() {
-                        v.push((
-                            Hit::DeviceNext,
-                            Rect {
-                                x: c.x + c.w - 28.,
-                                y: c.y,
-                                w: 28.,
-                                h: 28.,
-                            },
-                        ));
+            Page::Volume => {
+                if self.device_menu {
+                    if let Some(audio) = &self.audio {
+                        let viewport = self.device_viewport();
+                        for index in 0..audio.devices.len() {
+                            let row = self.device_row(index);
+                            let top = row.y.max(viewport.y);
+                            let bottom = (row.y + row.h).min(viewport.y + viewport.h);
+                            if bottom > top {
+                                v.push((
+                                    Hit::Device(index),
+                                    Rect {
+                                        y: top,
+                                        h: bottom - top,
+                                        ..row
+                                    },
+                                ));
+                            }
+                        }
                     }
                 }
-            }
-            Page::Volume => {
-                v.push((
-                    Hit::Volume,
-                    Rect {
-                        x: c.x,
-                        y: c.y + 44.,
-                        w: c.w,
-                        h: 56.,
-                    },
-                ));
+                v.push((Hit::Volume, self.ruler()));
                 if self.audio.is_some() {
-                    v.push((
-                        Hit::Mute,
-                        Rect {
-                            x: c.x,
-                            y: c.y + 102.,
-                            w: 80.,
-                            h: 32.,
-                        },
-                    ));
-                    v.push((
-                        Hit::Devices,
-                        Rect {
-                            x: c.x + 88.,
-                            y: c.y + 102.,
-                            w: c.w - 88.,
-                            h: 32.,
-                        },
-                    ));
+                    v.push((Hit::Devices, self.device_trigger()));
                 }
             }
             Page::Timer => {
+                if self.timer_finished {
+                    v.push((
+                        Hit::Dismiss,
+                        Rect {
+                            x: p.x + p.w - 38.,
+                            y: p.y + (p.h - 27.) / 2.,
+                            w: 27.,
+                            h: 27.,
+                        },
+                    ));
+                    return v;
+                }
+                if !self.timer_active {
+                    v.push((Hit::TimerRuler, self.ruler()));
+                }
+                let y = p.y
+                    + if self.timer_active {
+                        (p.h - 48.) / 2.
+                    } else {
+                        53.8
+                    };
                 v.push((
                     Hit::Timer,
                     Rect {
-                        x: c.x,
-                        y: c.y + 102.,
-                        w: c.w - 40.,
-                        h: 32.,
+                        x: p.x,
+                        y,
+                        w: if self.timer_active { 48. } else { 70.5 },
+                        h: if self.timer_active { 48. } else { 28. },
                     },
                 ));
-                v.push((
-                    Hit::Reset,
-                    Rect {
-                        x: c.x + c.w - 32.,
-                        y: c.y + 102.,
-                        w: 32.,
-                        h: 32.,
-                    },
-                ));
+                if self.timer_active {
+                    v.push((
+                        Hit::Reset,
+                        Rect {
+                            x: p.x + 60.,
+                            y,
+                            w: 48.,
+                            h: 48.,
+                        },
+                    ));
+                }
             }
-            Page::Weather => v.push((
+            Page::Weather if self.weather.city.is_none() => v.push((
                 Hit::WeatherSettings,
                 Rect {
-                    x: c.x + c.w - 28.,
-                    y: c.y,
-                    w: 28.,
-                    h: 28.,
+                    x: p.x,
+                    y: p.y + p.h / 2. - 4.,
+                    w: 76.,
+                    h: 40.,
                 },
             )),
             _ => {}
@@ -508,6 +587,15 @@ impl Model {
     pub fn hit(&self, p: Point) -> Option<Hit> {
         if !inside(p, &self.outline()) {
             return None;
+        }
+        if self.device_menu && self.device_popup().contains(p) {
+            return Some(
+                self.controls()
+                    .into_iter()
+                    .find(|(hit, r)| matches!(hit, Hit::Device(_)) && r.contains(p))
+                    .map(|(hit, _)| hit)
+                    .unwrap_or(Hit::DeviceMenu),
+            );
         }
         Some(
             self.controls()
@@ -557,8 +645,20 @@ impl Model {
             self.visible_tools().count().saturating_sub(5) as f32 * 32.,
         );
     }
+    pub fn focus_tool_boundary(&mut self, last: bool) {
+        let tool = if last {
+            self.visible_tools().last()
+        } else {
+            self.visible_tools().next()
+        };
+        self.focus = tool.map(Hit::Tool);
+        self.scroll_by(if last { f32::MAX } else { -f32::MAX });
+    }
     pub fn activate(&mut self, hit: Hit) {
         match hit {
+            Hit::Blank if !self.expanded && (self.timer_active || self.timer_finished) => {
+                self.switch(Page::Timer)
+            }
             Hit::Blank => self.toggle(),
             Hit::Back => self.back(),
             Hit::Play => self.playing = !self.playing,
@@ -574,37 +674,43 @@ impl Model {
                 if self.timer_deadline.is_some() {
                     self.timer_deadline = None;
                 } else {
-                    if self.timer_left <= 0. {
-                        self.timer_left = 300.
+                    if !self.timer_active {
+                        self.timer_left = f64::from(self.timer_minutes) * 60.;
+                        self.timer_duration = self.timer_left;
                     }
+                    self.timer_active = true;
+                    self.timer_finished = false;
                     self.timer_deadline = Some(self.now + self.timer_left);
                 }
             }
             Hit::Reset => {
                 self.timer_deadline = None;
-                self.timer_left = 300.;
+                self.timer_active = false;
+                self.timer_finished = false;
+                self.timer_left = f64::from(self.timer_minutes) * 60.;
+            }
+            Hit::Dismiss => {
+                self.timer_finished = false;
+                self.switch(Page::Music);
             }
             Hit::Devices => {
-                self.device_menu = true;
-                self.device_offset = 0;
+                self.device_menu = !self.device_menu;
+                self.device_scroll = 0.;
                 self.focus = None;
                 self.retarget();
             }
             Hit::DevicePrev => {
-                self.device_offset = self.device_offset.saturating_sub(4);
-                self.focus = None;
+                self.scroll_devices(-28.);
             }
             Hit::DeviceNext => {
-                if self
-                    .audio
-                    .as_ref()
-                    .is_some_and(|a| self.device_offset + 4 < a.devices.len())
-                {
-                    self.device_offset += 4;
-                    self.focus = None;
-                }
+                self.scroll_devices(28.);
             }
-            Hit::Device(_) | Hit::Mute | Hit::Volume | Hit::WeatherSettings => {}
+            Hit::Device(_)
+            | Hit::DeviceMenu
+            | Hit::Mute
+            | Hit::Volume
+            | Hit::TimerRuler
+            | Hit::WeatherSettings => {}
         }
     }
 }
@@ -758,25 +864,28 @@ mod tests {
         };
         m.switch(Page::Volume);
         assert!(!m.enabled(Hit::Volume));
+        let height = m.height.target;
         m.activate(Hit::Devices);
+        assert_eq!(m.height.target, height);
         assert_eq!(
             m.controls()
                 .iter()
                 .filter(|(h, _)| matches!(h, Hit::Device(_)))
                 .count(),
-            4
+            3
         );
-        m.activate(Hit::DeviceNext);
-        m.activate(Hit::DeviceNext);
+        for _ in 0..12 {
+            m.activate(Hit::DeviceNext);
+        }
         assert_eq!(
             m.controls()
                 .iter()
                 .filter(|(h, _)| matches!(h, Hit::Device(_)))
                 .count(),
-            1
+            3
         );
         m.activate(Hit::DeviceNext);
-        assert_eq!(m.device_offset, 8);
+        assert_eq!(m.device_scroll, 184.);
         m.back();
         assert!(!m.device_menu && m.page() == Page::Volume && m.expanded);
         m.back();
@@ -887,10 +996,41 @@ mod tests {
         m.switch(Page::Timer);
         m.activate(Hit::Timer);
         m.toggle();
-        m.step(0., 301.);
+        m.step(0., 1201.);
         assert_eq!(m.page(), Page::Timer);
         assert_eq!(m.timer_left, 0.);
         assert!(m.timer_deadline.is_none());
+        assert!(m.timer_finished);
+        m.activate(Hit::Dismiss);
+        assert_eq!(m.page(), Page::Music);
+        assert!(!m.timer_finished);
+    }
+    #[test]
+    fn timer_ruler_bounds_pause_resume_and_reset_survive_page_switches() {
+        let mut m = Model {
+            reduced: true,
+            ..Model::default()
+        };
+        m.switch(Page::Timer);
+        m.set_timer_minutes(2000.);
+        assert_eq!(m.timer_minutes, 1440);
+        m.set_timer_minutes(-10.);
+        assert_eq!(m.timer_minutes, 1);
+        m.activate(Hit::Timer);
+        m.step(0., 20.);
+        m.activate(Hit::Timer);
+        m.set_timer_minutes(60.);
+        assert_eq!(m.timer_left, 40.);
+        m.switch(Page::Music);
+        m.step(0., 30.);
+        m.switch(Page::Timer);
+        assert!(!m.controls().iter().any(|(hit, _)| *hit == Hit::TimerRuler));
+        m.activate(Hit::Timer);
+        assert_eq!(m.timer_deadline, Some(70.));
+        m.activate(Hit::Reset);
+        assert_eq!(m.timer_left, 60.);
+        assert!(!m.timer_active);
+        assert!(m.controls().iter().any(|(hit, _)| *hit == Hit::TimerRuler));
     }
     #[test]
     fn scrolling_is_bounded() {

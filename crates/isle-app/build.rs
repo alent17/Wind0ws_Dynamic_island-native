@@ -12,6 +12,18 @@ fn main() {
         let file = format!("MiSans-{weight}.ttf");
         let source = source.join(&file);
         println!("cargo:rerun-if-changed={}", source.display());
-        fs::copy(source, destination.join(file)).unwrap();
+        let target = destination.join(file);
+        // DirectWrite maps these files while a test window is running. Avoid
+        // rewriting unchanged font bytes during incremental builds.
+        if fs::read(&source).ok() != fs::read(&target).ok() {
+            fs::copy(source, target).unwrap();
+        }
     }
+    let icon_license = manifest.join("../../assets/icons/LICENSE");
+    println!("cargo:rerun-if-changed={}", icon_license.display());
+    fs::copy(
+        icon_license,
+        out.ancestors().nth(3).unwrap().join("LUCIDE-LICENSE.txt"),
+    )
+    .unwrap();
 }

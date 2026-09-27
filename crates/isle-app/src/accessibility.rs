@@ -38,6 +38,7 @@ pub struct Snapshot {
     pub outline: Vec<Point>,
     pub focus: Option<Hit>,
     pub volume: u32,
+    pub timer_minutes: u16,
 }
 pub type Shared = Arc<Mutex<Snapshot>>;
 pub fn label(hit: Hit, playing: bool) -> &'static str {
@@ -62,8 +63,11 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::Next => "下一首",
         Hit::Volume => "音量",
         Hit::Timer => "开始或暂停倒计时",
-        Hit::Reset => "重置倒计时",
+        Hit::TimerRuler => "选择倒计时时长（分钟）",
+        Hit::Dismiss => "关闭倒计时完成提示",
+        Hit::Reset => "取消倒计时",
         Hit::Devices => "选择输出设备",
+        Hit::DeviceMenu => "输出设备列表",
         Hit::Device(_) => "输出设备",
         Hit::DevicePrev => "上一页设备",
         Hit::DeviceNext => "下一页设备",
@@ -155,7 +159,7 @@ impl Provider {
         }
         s.nodes
             .get(self.child - 1)
-            .filter(|node| node.hit == Hit::Volume)
+            .filter(|node| matches!(node.hit, Hit::Volume | Hit::TimerRuler))
             .cloned()
             .ok_or_else(|| Error::from(E_INVALIDARG))
     }
@@ -308,29 +312,45 @@ impl IRawElementProviderSimple_Impl for Provider {
 }
 impl IRangeValueProvider_Impl for Provider {
     fn SetValue(&self, value: f64) -> Result<()> {
-        if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        let node = self.range_node()?;
+        let limits = if node.hit == Hit::TimerRuler {
+            1.0..=1440.0
+        } else {
+            0.0..=100.0
+        };
+        if !value.is_finite() || !limits.contains(&value) {
             return Err(HRESULT(UIA_E_INVALIDOPERATION as i32).into());
         }
-        let node = self.range_node()?;
         if !node.enabled {
             return Err(HRESULT(UIA_E_ELEMENTNOTENABLED as i32).into());
         }
         self.post(&number(0), VALUE, value.round() as u16)
     }
     fn Value(&self) -> Result<f64> {
-        self.range_node()?;
-        Ok(self.snapshot()?.volume as f64)
+        let node = self.range_node()?;
+        let state = self.snapshot()?;
+        Ok(if node.hit == Hit::TimerRuler {
+            state.timer_minutes as f64
+        } else {
+            state.volume as f64
+        })
     }
     fn IsReadOnly(&self) -> Result<BOOL> {
         Ok(BOOL::from(!self.range_node()?.enabled))
     }
     fn Maximum(&self) -> Result<f64> {
-        self.range_node()?;
-        Ok(100.0)
+        Ok(if self.range_node()?.hit == Hit::TimerRuler {
+            1440.0
+        } else {
+            100.0
+        })
     }
     fn Minimum(&self) -> Result<f64> {
-        self.range_node()?;
-        Ok(0.0)
+        Ok(if self.range_node()?.hit == Hit::TimerRuler {
+            1.0
+        } else {
+            0.0
+        })
     }
     fn LargeChange(&self) -> Result<f64> {
         self.range_node()?;
@@ -414,6 +434,8 @@ impl IAccessible_Impl for Provider {
         let n = self.resolve(v, &s)?;
         Ok(if n > 0 && s.nodes[n - 1].hit == Hit::Volume {
             BSTR::from(s.volume.to_string())
+        } else if n > 0 && s.nodes[n - 1].hit == Hit::TimerRuler {
+            BSTR::from(s.timer_minutes.to_string())
         } else {
             BSTR::default()
         })
@@ -426,7 +448,7 @@ impl IAccessible_Impl for Provider {
         let n = self.resolve(v, &s)?;
         Ok(number(if n == 0 {
             ROLE_SYSTEM_CLIENT
-        } else if s.nodes[n - 1].hit == Hit::Volume {
+        } else if matches!(s.nodes[n - 1].hit, Hit::Volume | Hit::TimerRuler) {
             ROLE_SYSTEM_SLIDER
         } else {
             ROLE_SYSTEM_PUSHBUTTON
@@ -487,11 +509,13 @@ impl IAccessible_Impl for Provider {
     fn get_accDefaultAction(&self, v: &VARIANT) -> Result<BSTR> {
         let s = self.snapshot()?;
         let n = self.resolve(v, &s)?;
-        Ok(BSTR::from(if n > 0 && s.nodes[n - 1].hit == Hit::Volume {
-            "调整"
-        } else {
-            "按下"
-        }))
+        Ok(BSTR::from(
+            if n > 0 && matches!(s.nodes[n - 1].hit, Hit::Volume | Hit::TimerRuler) {
+                "调整"
+            } else {
+                "按下"
+            },
+        ))
     }
     fn accSelect(&self, flags: i32, v: &VARIANT) -> Result<()> {
         if flags & SELFLAG_TAKEFOCUS as i32 == 0 {
@@ -562,19 +586,21 @@ impl IAccessible_Impl for Provider {
         Err(E_NOTIMPL.into())
     }
     fn put_accValue(&self, v: &VARIANT, value: &BSTR) -> Result<()> {
-        {
-            let s = self.snapshot()?;
-            let n = self.resolve(v, &s)?;
-            if n == 0 || s.nodes[n - 1].hit != Hit::Volume {
-                return Err(E_INVALIDARG.into());
-            }
-        }
         let value = value
             .to_string()
             .parse::<u16>()
             .map_err(|_| Error::from(E_INVALIDARG))?;
-        if value > 100 {
-            return Err(E_INVALIDARG.into());
+        {
+            let s = self.snapshot()?;
+            let n = self.resolve(v, &s)?;
+            let limits = match n.checked_sub(1).and_then(|i| s.nodes.get(i)).map(|n| n.hit) {
+                Some(Hit::Volume) => 0..=100,
+                Some(Hit::TimerRuler) => 1..=1440,
+                _ => return Err(E_INVALIDARG.into()),
+            };
+            if !limits.contains(&value) {
+                return Err(E_INVALIDARG.into());
+            }
         }
         self.post(v, VALUE, value)
     }

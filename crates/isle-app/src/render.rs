@@ -1,4 +1,7 @@
+use crate::icons::{Icon, Icons};
 use isle_ui::{geometry::*, model::*};
+#[path = "panels.rs"]
+mod panels;
 use std::collections::HashMap;
 use windows::{
     core::*,
@@ -16,6 +19,7 @@ use windows::{
     },
 };
 pub struct Renderer {
+    icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
@@ -359,7 +363,9 @@ impl Renderer {
         } else {
             "Segoe UI"
         };
+        let icons = Icons::new(&ctx)?;
         Ok(Self {
+            icons,
             fonts,
             font_family,
             ctx,
@@ -391,11 +397,6 @@ impl Renderer {
             &self.brush,
         );
     }
-    unsafe fn line(&self, a: Point, b: Point, width: f32, c: D2D1_COLOR_F) {
-        self.ink(c);
-        self.ctx
-            .DrawLine(point(a.x, a.y), point(b.x, b.y), &self.brush, width, None);
-    }
     unsafe fn format_with_weight(
         &mut self,
         size: u32,
@@ -424,14 +425,6 @@ impl Renderer {
             DWRITE_FONT_WEIGHT_NORMAL
         };
         self.format_with_weight(size, weight)
-    }
-    unsafe fn text(&mut self, text: &str, r: Rect, size: u32, c: D2D1_COLOR_F) -> Result<()> {
-        let weight = if size >= 26 || size == 13 {
-            DWRITE_FONT_WEIGHT_BOLD
-        } else {
-            DWRITE_FONT_WEIGHT_NORMAL
-        };
-        self.text_with_weight(text, r, size, weight, c)
     }
     unsafe fn text_with_weight(
         &mut self,
@@ -464,112 +457,24 @@ impl Renderer {
         );
         Ok(())
     }
-    unsafe fn glyph(&self, id: usize, r: Rect, c: D2D1_COLOR_F) {
-        let x = r.x + r.w / 2.;
-        let y = r.y + r.h / 2.;
-        self.ink(c);
-        let line = |a: (f32, f32), b: (f32, f32)| {
-            self.line(
-                Point {
-                    x: x + a.0,
-                    y: y + a.1,
-                },
-                Point {
-                    x: x + b.0,
-                    y: y + b.1,
-                },
-                1.5,
-                c,
-            )
-        };
-        match id {
-            0 | 5 => {
-                self.ctx.DrawEllipse(
-                    &D2D1_ELLIPSE {
-                        point: point(x, y),
-                        radiusX: 6.,
-                        radiusY: 6.,
-                    },
-                    &self.brush,
-                    1.4,
-                    None,
-                );
-                line((0., -3.), (0., 0.));
-                line((0., 0.), (3., 1.));
-                if id == 0 {
-                    line((-2., -9.), (2., -9.));
-                }
-            }
-            1 => {
-                line((-6., -2.), (-3., -2.));
-                line((-3., -2.), (1., -5.));
-                line((1., -5.), (1., 5.));
-                line((1., 5.), (-3., 2.));
-                line((-3., 2.), (-6., 2.));
-                line((-6., 2.), (-6., -2.));
-                line((5., -4.), (6., 0.));
-                line((6., 0.), (5., 4.));
-            }
-            2 => {
-                self.ctx.DrawRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect: rect(Rect {
-                            x: x - 5.,
-                            y: y - 6.,
-                            w: 11.,
-                            h: 12.,
-                        }),
-                        radiusX: 2.,
-                        radiusY: 2.,
-                    },
-                    &self.brush,
-                    1.4,
-                    None,
-                );
-                line((-8., -4.), (-8., 4.));
-            }
-            3 => {
-                self.ctx.DrawEllipse(
-                    &D2D1_ELLIPSE {
-                        point: point(x, y),
-                        radiusX: 4.,
-                        radiusY: 4.,
-                    },
-                    &self.brush,
-                    1.5,
-                    None,
-                );
-                for i in 0..8 {
-                    let t = i as f32 * std::f32::consts::PI / 4.;
-                    line((t.cos() * 5., t.sin() * 5.), (t.cos() * 7., t.sin() * 7.));
-                }
-            }
-            4 => {
-                line((-7., -5.), (7., 5.));
-                line((-7., 0.), (-3., -4.));
-                line((-3., -4.), (3., -4.));
-                line((3., -4.), (7., 0.));
-                line((7., 0.), (3., 4.));
-                line((3., 4.), (-3., 4.));
-                line((-3., 4.), (-7., 0.));
-            }
-            _ => {
-                self.ctx.DrawEllipse(
-                    &D2D1_ELLIPSE {
-                        point: point(x, y),
-                        radiusX: 3.,
-                        radiusY: 3.,
-                    },
-                    &self.brush,
-                    1.5,
-                    None,
-                );
-                for i in 0..8 {
-                    let t = i as f32 * std::f32::consts::PI / 4.;
-                    line((t.cos() * 5., t.sin() * 5.), (t.cos() * 7., t.sin() * 7.));
-                }
-            }
-        }
+    unsafe fn glyph(&self, id: usize, r: Rect, c: D2D1_COLOR_F) -> Result<()> {
+        let icon = [
+            Icon::Timer,
+            Icon::Volume,
+            Icon::Floating,
+            Icon::Settings,
+            Icon::Hide,
+            Icon::Clock,
+            Icon::CloudSun,
+        ][id.min(6)];
+        self.icons.draw(
+            icon,
+            r.x + (r.w - 16.) / 2.,
+            r.y + (r.h - 16.) / 2.,
+            16.,
+            1.8,
+            c,
+        )
     }
     pub unsafe fn draw(
         &mut self,
@@ -582,7 +487,6 @@ impl Renderer {
             self.cover = None;
         }
         let white = color(0.94, 0.96, 1., 1.);
-        let gray = color(0.5, 0.55, 0.6, 1.);
         let blue = color(0.45, 0.76, 1., 1.);
         self.title_overflow = false;
         self.ctx.BeginDraw();
@@ -649,13 +553,6 @@ impl Renderer {
         if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
             // Focus and press feedback share the same hit rectangles as input.
             for (hit, r) in m.controls() {
-                if !matches!(hit, Hit::Tool(_))
-                    && m.page() != Page::Music
-                    && hover == Some(hit)
-                    && hit != Hit::Volume
-                {
-                    self.fill(r, 12., color(1., 1., 1., 0.1));
-                }
                 if pressed == Some(hit) {
                     self.fill(r, 12., color(1., 1., 1., 0.16));
                 }
@@ -684,57 +581,62 @@ impl Renderer {
                     self.glyph(
                         i,
                         r,
-                        if m.focus == Some(Hit::Tool(i)) {
-                            blue
+                        if matches!(
+                            (m.page(), i),
+                            (Page::Timer, 0)
+                                | (Page::Volume, 1)
+                                | (Page::Clock, 5)
+                                | (Page::Weather, 6)
+                        ) {
+                            color(145. / 255., 202. / 255., 1., 1.)
                         } else {
-                            white
+                            color(217. / 255., 234. / 255., 1., 1.)
                         },
-                    );
+                    )?;
                 }
                 self.ctx.PopAxisAlignedClip();
             }
             if m.page() != Page::Music {
-                self.line(
-                    Point {
-                        x: c.x + 18.,
-                        y: c.y + 8.,
+                self.fill(
+                    Rect {
+                        x: c.x,
+                        y: c.y,
+                        w: 28.,
+                        h: 28.,
                     },
-                    Point {
-                        x: c.x + 10.,
-                        y: c.y + 14.,
-                    },
-                    1.5,
-                    blue,
+                    8.,
+                    color(
+                        65. / 255.,
+                        145. / 255.,
+                        235. / 255.,
+                        if hover == Some(Hit::Back) { 0.25 } else { 0.14 },
+                    ),
                 );
-                self.line(
-                    Point {
-                        x: c.x + 10.,
-                        y: c.y + 14.,
-                    },
-                    Point {
-                        x: c.x + 18.,
-                        y: c.y + 20.,
-                    },
-                    1.5,
-                    blue,
-                );
-                self.text(
+                self.icons.draw(
+                    Icon::Back,
+                    c.x + 6.,
+                    c.y + 6.,
+                    16.,
+                    2.,
+                    color(145. / 255., 202. / 255., 1., 1.),
+                )?;
+                self.text_with_weight(
                     match m.page() {
                         Page::Timer => "倒计时",
-                        Page::Volume if m.device_menu => "输出设备",
-                        Page::Volume => "音量",
+                        Page::Volume => "系统音量",
                         Page::Clock => "时间",
                         Page::Weather => "天气",
                         _ => "",
                     },
                     Rect {
-                        x: c.x + 38.,
-                        y: c.y + 4.,
-                        w: c.w - 38.,
-                        h: 24.,
+                        x: c.x + 37.,
+                        y: c.y + 7.,
+                        w: c.w - 37.,
+                        h: 18.,
                     },
-                    12,
-                    gray,
+                    11,
+                    DWRITE_FONT_WEIGHT_MEDIUM,
+                    color(235. / 255., 244. / 255., 1., 0.78),
                 )?;
             }
             match m.page() {
@@ -769,7 +671,7 @@ impl Renderer {
                             h: 28.,
                         },
                         white,
-                    );
+                    )?;
                     if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
                         // Clear the placeholder beneath translucent rounded corners.
                         self.fill(
@@ -1074,358 +976,16 @@ impl Renderer {
                         }
                     }
                 }
-                Page::Volume if m.device_menu => {
-                    if let Some(audio) = &m.audio {
-                        if audio.devices.is_empty() {
-                            self.text(
-                                "没有可用输出设备",
-                                Rect {
-                                    x: c.x,
-                                    y: c.y + 44.,
-                                    w: c.w,
-                                    h: 28.,
-                                },
-                                12,
-                                gray,
-                            )?;
-                        }
-                        for (hit, r) in m.controls() {
-                            match hit {
-                                Hit::Device(index) => {
-                                    let device = &audio.devices[index];
-                                    if hover == Some(hit) || m.focus == Some(hit) {
-                                        self.fill(r, 12., color(1., 1., 1., 0.1));
-                                    }
-                                    if device.id == audio.device.id {
-                                        self.fill(
-                                            Rect {
-                                                x: r.x + 8.,
-                                                y: r.y + 11.,
-                                                w: 5.,
-                                                h: 5.,
-                                            },
-                                            2.,
-                                            blue,
-                                        );
-                                    }
-                                    self.text(
-                                        &device.name,
-                                        Rect {
-                                            x: r.x + 22.,
-                                            y: r.y + 5.,
-                                            w: r.w - 28.,
-                                            h: 20.,
-                                        },
-                                        11,
-                                        white,
-                                    )?;
-                                }
-                                Hit::DevicePrev | Hit::DeviceNext => {
-                                    if hover == Some(hit) || m.focus == Some(hit) {
-                                        self.fill(r, 12., color(1., 1., 1., 0.1));
-                                    }
-                                    self.text(
-                                        if hit == Hit::DevicePrev { "‹" } else { "›" },
-                                        Rect {
-                                            x: r.x + 9.,
-                                            y: r.y + 2.,
-                                            w: 20.,
-                                            h: 24.,
-                                        },
-                                        18,
-                                        white,
-                                    )?;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                Page::Volume => {
-                    for (hit, r) in m.controls() {
-                        if matches!(hit, Hit::Devices | Hit::Mute)
-                            && (hover == Some(hit) || m.focus == Some(hit))
-                        {
-                            self.fill(r, 12., color(1., 1., 1., 0.1));
-                        }
-                    }
-                    for i in 0..23 {
-                        let x = c.x + i as f32 * c.w / 22.;
-                        let h = if i % 5 == 0 { 25. } else { 14. };
-                        self.line(
-                            Point { x, y: c.y + 55. },
-                            Point {
-                                x,
-                                y: c.y + 55. + h,
-                            },
-                            1.,
-                            if i as f32 / 22. * 100. <= m.volume {
-                                blue
-                            } else {
-                                gray
-                            },
-                        );
-                    }
-                    self.text(
-                        &if m.audio.as_ref().is_some_and(|a| a.muted) {
-                            "静音".into()
-                        } else {
-                            format!("{}%", m.volume as u32)
-                        },
-                        Rect {
-                            x: c.x,
-                            y: c.y + 95.,
-                            w: 80.,
-                            h: 38.,
-                        },
-                        26,
-                        blue,
-                    )?;
-                    self.text(
-                        m.audio
-                            .as_ref()
-                            .map(|a| {
-                                if a.failed {
-                                    "音频操作暂不可用"
-                                } else if a.device.id.is_empty() {
-                                    "正在读取设备"
-                                } else {
-                                    &a.device.name
-                                }
-                            })
-                            .unwrap_or("输出设备 · 原型数据"),
-                        Rect {
-                            x: c.x + 90.,
-                            y: c.y + 107.,
-                            w: c.w - 90.,
-                            h: 22.,
-                        },
-                        11,
-                        gray,
-                    )?;
-                }
-                Page::Timer => {
-                    let remaining = m.timer_left.ceil() as u64;
-                    self.text(
-                        &format!("{:02}:{:02}", remaining / 60, remaining % 60),
-                        Rect {
-                            x: c.x,
-                            y: c.y + 40.,
-                            w: c.w,
-                            h: 54.,
-                        },
-                        42,
-                        white,
-                    )?;
-                    self.text(
-                        if m.timer_deadline.is_some() {
-                            "暂停"
-                        } else if m.timer_left == 0. {
-                            "完成 · 重新开始"
-                        } else {
-                            "开始"
-                        },
-                        Rect {
-                            x: c.x,
-                            y: c.y + 109.,
-                            w: c.w - 40.,
-                            h: 24.,
-                        },
-                        14,
-                        blue,
-                    )?;
-                    self.glyph(
-                        0,
-                        Rect {
-                            x: c.x + c.w - 32.,
-                            y: c.y + 102.,
-                            w: 32.,
-                            h: 32.,
-                        },
-                        gray,
-                    );
-                }
-                Page::Clock => {
-                    let time = crate::clock::now(&m.time_zone);
-                    let st = time.unwrap_or_default();
-                    self.text(
-                        &if time.is_some() {
-                            format!("{:02}:{:02}", st.wHour, st.wMinute)
-                        } else {
-                            "--:--".into()
-                        },
-                        Rect {
-                            x: c.x,
-                            y: c.y + 42.,
-                            w: c.w,
-                            h: 58.,
-                        },
-                        44,
-                        white,
-                    )?;
-                    self.text(
-                        &if time.is_some() {
-                            format!("{} 年 {} 月 {} 日", st.wYear, st.wMonth, st.wDay)
-                        } else {
-                            "无法读取所选时区".into()
-                        },
-                        Rect {
-                            x: c.x,
-                            y: c.y + 108.,
-                            w: c.w,
-                            h: 22.,
-                        },
-                        13,
-                        gray,
-                    )?;
-                    self.text(
-                        crate::clock::label(&m.time_zone),
-                        Rect {
-                            x: c.x,
-                            y: c.y + 140.,
-                            w: c.w,
-                            h: 20.,
-                        },
-                        11,
-                        gray,
-                    )?;
-                }
-                Page::Weather => {
-                    use isle_core::weather::description;
-                    for (hit, r) in m.controls() {
-                        if hit == Hit::WeatherSettings {
-                            if hover == Some(hit) || m.focus == Some(hit) {
-                                self.fill(r, 12., color(1., 1., 1., 0.1));
-                            }
-                            self.glyph(3, r, white);
-                        }
-                    }
-                    if let Some(city) = &m.weather.city {
-                        self.text(
-                            &city.name,
-                            Rect {
-                                x: c.x,
-                                y: c.y + 38.,
-                                w: c.w,
-                                h: 24.,
-                            },
-                            16,
-                            white,
-                        )?;
-                        if let Some(data) = &m.weather.data {
-                            self.text(
-                                &format!("{:.0}°  {}", data.temperature, description(data.code)),
-                                Rect {
-                                    x: c.x,
-                                    y: c.y + 66.,
-                                    w: c.w,
-                                    h: 40.,
-                                },
-                                26,
-                                white,
-                            )?;
-                            for (i, day) in data.days.iter().take(3).enumerate() {
-                                let x = c.x + i as f32 * c.w / 3.;
-                                let width = c.w / 3. - 4.;
-                                self.text(
-                                    &day.date[5..],
-                                    Rect {
-                                        x,
-                                        y: c.y + 121.,
-                                        w: width,
-                                        h: 20.,
-                                    },
-                                    12,
-                                    gray,
-                                )?;
-                                self.text(
-                                    description(day.code),
-                                    Rect {
-                                        x,
-                                        y: c.y + 149.,
-                                        w: width,
-                                        h: 20.,
-                                    },
-                                    12,
-                                    blue,
-                                )?;
-                                self.text(
-                                    &format!("{:.0}° / {:.0}°", day.high, day.low),
-                                    Rect {
-                                        x,
-                                        y: c.y + 178.,
-                                        w: width,
-                                        h: 20.,
-                                    },
-                                    12,
-                                    white,
-                                )?;
-                            }
-                            self.text(
-                                &format!(
-                                    "{} {} · Open-Meteo",
-                                    if m.weather.failed {
-                                        "更新失败，缓存"
-                                    } else {
-                                        "更新"
-                                    },
-                                    &data.observed[11..]
-                                ),
-                                Rect {
-                                    x: c.x,
-                                    y: c.y + 207.,
-                                    w: c.w,
-                                    h: 16.,
-                                },
-                                10,
-                                gray,
-                            )?;
-                        } else {
-                            self.text(
-                                if m.weather.failed {
-                                    "天气读取失败，将自动重试"
-                                } else {
-                                    "正在获取天气…"
-                                },
-                                Rect {
-                                    x: c.x,
-                                    y: c.y + 85.,
-                                    w: c.w,
-                                    h: 28.,
-                                },
-                                14,
-                                gray,
-                            )?;
-                        }
-                    } else {
-                        self.text(
-                            "还没有设置城市",
-                            Rect {
-                                x: c.x,
-                                y: c.y + 55.,
-                                w: c.w,
-                                h: 32.,
-                            },
-                            20,
-                            white,
-                        )?;
-                        self.text(
-                            "点击右上角设置，搜索天气城市",
-                            Rect {
-                                x: c.x,
-                                y: c.y + 97.,
-                                w: c.w,
-                                h: 26.,
-                            },
-                            12,
-                            gray,
-                        )?;
-                    }
-                }
+                Page::Volume => self.volume_panel(m, hover)?,
+                Page::Timer => self.timer_panel(m, hover)?,
+                Page::Clock => self.clock_panel(m)?,
+                Page::Weather => self.weather_panel(m, hover)?,
             }
         } else if !m.expanded {
             let o = m.origin();
-            if vertical(m.edge) {
+            if m.timer_active || m.timer_finished {
+                self.compact_timer(m)?;
+            } else if vertical(m.edge) {
                 self.glyph(
                     5,
                     Rect {
@@ -1435,7 +995,7 @@ impl Renderer {
                         h: 28.,
                     },
                     blue,
-                );
+                )?;
                 self.spectrum(o.x + 4., o.y + m.height.value - 25., m);
             } else {
                 self.glyph(
@@ -1447,7 +1007,7 @@ impl Renderer {
                         h: m.height.value,
                     },
                     blue,
-                );
+                )?;
                 self.spectrum(o.x + m.width.value - 34., o.y + m.height.value / 2., m);
             }
         }

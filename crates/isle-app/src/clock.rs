@@ -66,13 +66,6 @@ pub fn convert(zone: &str, utc: &SYSTEMTIME) -> Option<SYSTEMTIME> {
 pub fn now(zone: &str) -> Option<SYSTEMTIME> {
     convert(zone, &unsafe { GetSystemTime() })
 }
-pub fn label(zone: &str) -> &str {
-    ZONES
-        .iter()
-        .find(|(id, _)| *id == zone)
-        .map(|(_, label)| *label)
-        .unwrap_or("不支持的时区 · 请按 F8 设置")
-}
 #[cfg(test)]
 mod tests {
     use super::*;

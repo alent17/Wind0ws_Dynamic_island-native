@@ -68,8 +68,8 @@ try:
     time.sleep(5)
     initial = expect(True)
     assert initial['audioDevices'] > 0, initial
-    for _ in range(11):
-        key(9)  # Seven tools, Back, volume slider, mute, device menu.
+    for _ in range(10):
+        key(9)  # Seven tools, Back, volume slider, device menu.
     key(13)
     time.sleep(.3)
     menu = snap()

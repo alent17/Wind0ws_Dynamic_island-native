@@ -36,7 +36,7 @@ for layout in ['floating', 'top', 'right', 'bottom', 'left']:
             time.sleep(.1)
         else:
             raise AssertionError('audio endpoint unavailable')
-        for _ in range(11):
+        for _ in range(10):
             u.PostMessageW(hwnd, 0x100, 9, 0)
         u.PostMessageW(hwnd, 0x100, 13, 0)
         time.sleep(.2)
