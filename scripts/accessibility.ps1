@@ -50,7 +50,11 @@ public static class NativeAccessCheck {
 }
 '@
 $nativeRoot=Split-Path $PSScriptRoot
-$owned=Start-Process (Join-Path $nativeRoot 'target/release/isle-native.exe') -ArgumentList '--page','music','--paused','--reduced-motion','--test-dpi','144' -PassThru -WindowStyle Hidden
+$artifactRoot=Join-Path $nativeRoot 'artifacts'
+New-Item -ItemType Directory -Force $artifactRoot|Out-Null
+$testSettings=Join-Path $artifactRoot 'accessibility-settings-test.json'
+'{"showCustomFunctionPanel":true,"showTimerTool":true,"showVolumeTool":true,"showFloatingTool":true,"showSettingsTool":true,"showHideTool":true,"showClockTool":true,"showWeatherTool":true,"enableAnimations":false,"reduceAnimations":true}' | Set-Content -Encoding UTF8 $testSettings
+$owned=Start-Process (Join-Path $nativeRoot 'target/release/isle-native.exe') -ArgumentList '--page','music','--paused','--reduced-motion','--test-dpi','144','--settings-path',$testSettings -PassThru -WindowStyle Hidden
 try {
     for($i=0;$i -lt 100;$i++) {
         $owned.Refresh()
@@ -67,12 +71,30 @@ try {
     $volumeElement=@($uiaChildren | Where-Object {$_.Current.Name -eq $volumeName})[0]
     ([System.Windows.Automation.InvokePattern]$volumeElement.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
     Start-Sleep -Milliseconds 300
+    $volumePage=[System.Windows.Automation.AutomationElement]::FromHandle($owned.MainWindowHandle)
+    $volumeDescendants=$volumePage.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+    $sliderElement=@($volumeDescendants | Where-Object {$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Slider}) | Select-Object -First 1
+    if(!$sliderElement){throw "UIA volume detail did not expose a slider: $((@($volumeDescendants | ForEach-Object {$_.Current.Name}) -join ', '))"}
+    $rangePattern=$null
+    if(!$sliderElement.TryGetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern,[ref]$rangePattern)){throw 'UIA volume slider lacks RangeValuePattern'}
+    $volumeRangeMin=$rangePattern.Current.Minimum
+    $volumeRangeMax=$rangePattern.Current.Maximum
+    if($volumeRangeMin -ne 0 -or $volumeRangeMax -ne 100){throw "UIA volume range must be 0–100, got $volumeRangeMin–$volumeRangeMax"}
+    if($rangePattern.Current.IsReadOnly -or $rangePattern.Current.SmallChange -ne 1 -or $rangePattern.Current.LargeChange -ne 10){throw 'UIA volume read-only or step metadata is incorrect'}
+    $rangePattern.SetValue(67)
+    Start-Sleep -Milliseconds 200
+    if($rangePattern.Current.Value -ne 67){throw "UIA RangeValue SetValue did not update volume: $($rangePattern.Current.Value)"}
+    $invalidRangeRejected=$false
+    try { $rangePattern.SetValue(101) } catch [System.Runtime.InteropServices.COMException] { $invalidRangeRejected=$true } catch [System.InvalidOperationException] { $invalidRangeRejected=$true }
+    if(!$invalidRangeRejected){throw 'UIA accepted volume outside its 0–100 range'}
     [NativeAccessCheck]::BackFromVolume($owned.MainWindowHandle)
     Write-Output 'UIA InvokePattern navigation passed'
     [NativeAccessCheck]::Run($owned.MainWindowHandle)
     $evidence=[ordered]@{
         binarySha256=(Get-FileHash (Join-Path $nativeRoot 'target/release/isle-native.exe') -Algorithm SHA256).Hash
         syntheticDpi=144; uiaDescendants=$uiaChildren.Count; uiaInvokePassed=$true
+        volumeRangeMin=$volumeRangeMin; volumeRangeMax=$volumeRangeMax
+        volumeRangeSetPassed=$true; volumeOutOfRangeRejected=$invalidRangeRejected
         msaaNamesRolesFocusBoundsValuePassed=$true; staleProviderRejected=$true
         scaledPointerClickPassed=$true; collapsedChildrenReleased=$true
     }

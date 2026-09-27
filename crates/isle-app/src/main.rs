@@ -467,6 +467,8 @@ impl App {
             .map(|n| &n.key)
             .ne(nodes.iter().map(|n| &n.key));
         let focus_changed = state.focus != self.model.focus;
+        let volume = self.model.volume.round() as u32;
+        let volume_changed = state.volume != volume;
         if reordered {
             state.revision = state.revision.wrapping_add(1);
         }
@@ -483,7 +485,12 @@ impl App {
             })
             .collect();
         state.focus = self.model.focus;
-        state.volume = self.model.volume.round() as u32;
+        state.volume = volume;
+        let volume_id = state
+            .nodes
+            .iter()
+            .position(|node| node.hit == Hit::Volume)
+            .map(|index| index as i32 + 1);
         let focus_id = state
             .nodes
             .iter()
@@ -496,6 +503,16 @@ impl App {
         }
         if focus_changed {
             NotifyWinEvent(EVENT_OBJECT_FOCUS, self.window, OBJID_CLIENT.0, focus_id);
+        }
+        if volume_changed {
+            if let Some(volume_id) = volume_id {
+                NotifyWinEvent(
+                    EVENT_OBJECT_VALUECHANGE,
+                    self.window,
+                    OBJID_CLIENT.0,
+                    volume_id,
+                );
+            }
         }
         Ok(())
     }

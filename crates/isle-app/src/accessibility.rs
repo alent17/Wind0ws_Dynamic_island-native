@@ -7,7 +7,7 @@ use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        System::{Com::*, Variant::*},
+        System::{Com::*, Ole::*, Variant::*},
         UI::{
             Accessibility::*,
             Controls::{STATE_SYSTEM_FOCUSABLE, STATE_SYSTEM_INVISIBLE, STATE_SYSTEM_UNAVAILABLE},
@@ -79,7 +79,13 @@ pub fn root(shared: &Shared) -> IAccessible {
     }
     .into()
 }
-#[implement(IAccessible)]
+#[implement(
+    IAccessible,
+    IAccessibleEx,
+    IServiceProvider,
+    IRawElementProviderSimple,
+    IRangeValueProvider
+)]
 struct Provider {
     shared: Shared,
     child: usize,
@@ -142,6 +148,17 @@ impl Provider {
         .into();
         a.cast().unwrap()
     }
+    fn range_node(&self) -> Result<Node> {
+        let s = self.snapshot()?;
+        if self.child == 0 {
+            return Err(E_INVALIDARG.into());
+        }
+        s.nodes
+            .get(self.child - 1)
+            .filter(|node| node.hit == Hit::Volume)
+            .cloned()
+            .ok_or_else(|| Error::from(E_INVALIDARG))
+    }
     fn post(&self, v: &VARIANT, msg: u32, value: u16) -> Result<()> {
         let s = self.snapshot()?;
         let n = self.resolve(v, &s)?;
@@ -156,6 +173,172 @@ impl Provider {
                 LPARAM(((s.revision as u64) << 16 | value as u64) as isize),
             )
         }
+    }
+}
+impl IAccessibleEx_Impl for Provider {
+    fn GetObjectForChild(&self, idchild: i32) -> Result<IAccessibleEx> {
+        let s = self.snapshot()?;
+        if self.child != 0 || idchild <= 0 || idchild as usize > s.nodes.len() {
+            return Err(E_INVALIDARG.into());
+        }
+        Ok(Provider {
+            shared: self.shared.clone(),
+            child: idchild as usize,
+            revision: s.revision,
+        }
+        .into())
+    }
+    fn GetIAccessiblePair(
+        &self,
+        ppacc: *mut Option<IAccessible>,
+        pidchild: *mut i32,
+    ) -> Result<()> {
+        if ppacc.is_null() || pidchild.is_null() {
+            return Err(E_POINTER.into());
+        }
+        let accessible: IAccessible = Provider {
+            shared: self.shared.clone(),
+            child: self.child,
+            revision: self.revision,
+        }
+        .into();
+        unsafe {
+            ppacc.write(Some(accessible));
+            pidchild.write(0);
+        }
+        Ok(())
+    }
+    fn GetRuntimeId(&self) -> Result<*mut SAFEARRAY> {
+        let s = self.snapshot()?;
+        let hwnd = s.hwnd as u64;
+        let values = [
+            UiaAppendRuntimeId as i32,
+            hwnd as u32 as i32,
+            (hwnd >> 32) as u32 as i32,
+            self.child as i32,
+            self.revision as i32,
+        ];
+        let array = unsafe { SafeArrayCreateVector(VT_I4, 0, values.len() as u32) };
+        if array.is_null() {
+            return Err(E_OUTOFMEMORY.into());
+        }
+        for (index, value) in values.iter().enumerate() {
+            let index = index as i32;
+            if let Err(error) =
+                unsafe { SafeArrayPutElement(array, &index, (value as *const i32).cast()) }
+            {
+                let _ = unsafe { SafeArrayDestroy(array) };
+                return Err(error);
+            }
+        }
+        Ok(array)
+    }
+    fn ConvertReturnedElement(
+        &self,
+        pin: Option<&IRawElementProviderSimple>,
+    ) -> Result<IAccessibleEx> {
+        pin.ok_or_else(|| Error::from(E_INVALIDARG))?.cast()
+    }
+}
+impl IServiceProvider_Impl for Provider {
+    fn QueryService(
+        &self,
+        guidservice: *const GUID,
+        riid: *const GUID,
+        ppvobject: *mut *mut std::ffi::c_void,
+    ) -> Result<()> {
+        if guidservice.is_null() || riid.is_null() || ppvobject.is_null() {
+            return Err(E_POINTER.into());
+        }
+        unsafe { ppvobject.write(std::ptr::null_mut()) };
+        if unsafe { *guidservice } != IAccessibleEx::IID {
+            return Err(E_NOINTERFACE.into());
+        }
+        let accessible_ex: IAccessibleEx = Provider {
+            shared: self.shared.clone(),
+            child: self.child,
+            revision: self.revision,
+        }
+        .into();
+        let requested = unsafe { *riid };
+        let raw = if requested == IAccessibleEx::IID {
+            accessible_ex.into_raw()
+        } else if requested == IRawElementProviderSimple::IID {
+            accessible_ex
+                .cast::<IRawElementProviderSimple>()?
+                .into_raw()
+        } else if requested == IRangeValueProvider::IID {
+            accessible_ex.cast::<IRangeValueProvider>()?.into_raw()
+        } else if requested == IAccessible::IID {
+            accessible_ex.cast::<IAccessible>()?.into_raw()
+        } else if requested == IDispatch::IID {
+            accessible_ex.cast::<IDispatch>()?.into_raw()
+        } else if requested == IUnknown::IID {
+            accessible_ex.cast::<IUnknown>()?.into_raw()
+        } else {
+            return Err(E_NOINTERFACE.into());
+        };
+        unsafe { ppvobject.write(raw) };
+        Ok(())
+    }
+}
+impl IRawElementProviderSimple_Impl for Provider {
+    fn ProviderOptions(&self) -> Result<ProviderOptions> {
+        Ok(ProviderOptions_ServerSideProvider)
+    }
+    fn GetPatternProvider(&self, patternid: UIA_PATTERN_ID) -> Result<IUnknown> {
+        if patternid != UIA_RangeValuePatternId {
+            return Err(E_NOTIMPL.into());
+        }
+        self.range_node()?;
+        let range: IRangeValueProvider = Provider {
+            shared: self.shared.clone(),
+            child: self.child,
+            revision: self.revision,
+        }
+        .into();
+        range.cast()
+    }
+    fn GetPropertyValue(&self, _: UIA_PROPERTY_ID) -> Result<VARIANT> {
+        Ok(VARIANT::default())
+    }
+    fn HostRawElementProvider(&self) -> Result<IRawElementProviderSimple> {
+        Err(E_NOTIMPL.into())
+    }
+}
+impl IRangeValueProvider_Impl for Provider {
+    fn SetValue(&self, value: f64) -> Result<()> {
+        if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+            return Err(HRESULT(UIA_E_INVALIDOPERATION as i32).into());
+        }
+        let node = self.range_node()?;
+        if !node.enabled {
+            return Err(HRESULT(UIA_E_ELEMENTNOTENABLED as i32).into());
+        }
+        self.post(&number(0), VALUE, value.round() as u16)
+    }
+    fn Value(&self) -> Result<f64> {
+        self.range_node()?;
+        Ok(self.snapshot()?.volume as f64)
+    }
+    fn IsReadOnly(&self) -> Result<BOOL> {
+        Ok(BOOL::from(!self.range_node()?.enabled))
+    }
+    fn Maximum(&self) -> Result<f64> {
+        self.range_node()?;
+        Ok(100.0)
+    }
+    fn Minimum(&self) -> Result<f64> {
+        self.range_node()?;
+        Ok(0.0)
+    }
+    fn LargeChange(&self) -> Result<f64> {
+        self.range_node()?;
+        Ok(10.0)
+    }
+    fn SmallChange(&self) -> Result<f64> {
+        self.range_node()?;
+        Ok(1.0)
     }
 }
 impl IDispatch_Impl for Provider {
