@@ -25,6 +25,36 @@ impl Rect {
 pub fn vertical(edge: Edge) -> bool {
     matches!(edge, Edge::Left | Edge::Right)
 }
+/// Fit the render host to the physical work area. The same effective scale is
+/// used for pixels, text, hit testing and accessibility bounds.
+pub fn window_placement(work: Rect, dpi: u32, host: f32, edge: Edge) -> (Rect, f32) {
+    let side = (host * dpi.max(1) as f32 / 96.)
+        .round()
+        .min(work.w.floor())
+        .min(work.h.floor())
+        .max(1.);
+    let (x, y) = match edge {
+        Edge::Top => (work.x + ((work.w - side) / 2.).floor(), work.y),
+        Edge::Bottom => (
+            work.x + ((work.w - side) / 2.).floor(),
+            work.y + work.h - side,
+        ),
+        Edge::Left => (work.x, work.y + ((work.h - side) / 2.).floor()),
+        Edge::Right => (
+            work.x + work.w - side,
+            work.y + ((work.h - side) / 2.).floor(),
+        ),
+    };
+    (
+        Rect {
+            x,
+            y,
+            w: side,
+            h: side,
+        },
+        side / host,
+    )
+}
 pub fn offset(w: f32, h: f32, host: f32, edge: Edge, attached: bool) -> Point {
     let gap = if attached { 0. } else { 22. };
     match edge {
@@ -185,6 +215,31 @@ pub fn inside(p: Point, poly: &[Point]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn host_fits_small_work_areas_at_all_dpis_and_keeps_its_edge() {
+        for dpi in [96, 120, 144, 192] {
+            for (w, h) in [(1920., 1080.), (600., 400.), (240., 180.)] {
+                let work = Rect {
+                    x: -1920.,
+                    y: 100.,
+                    w,
+                    h,
+                };
+                for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+                    let (r, scale) = window_placement(work, dpi, 480., edge);
+                    assert!(r.x >= work.x && r.y >= work.y);
+                    assert!(r.x + r.w <= work.x + work.w && r.y + r.h <= work.y + work.h);
+                    assert!((r.w / 480. - scale).abs() < 0.0001);
+                    match edge {
+                        Edge::Top => assert_eq!(r.y, work.y),
+                        Edge::Right => assert_eq!(r.x + r.w, work.x + work.w),
+                        Edge::Bottom => assert_eq!(r.y + r.h, work.y + work.h),
+                        Edge::Left => assert_eq!(r.x, work.x),
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn all_edges_have_bounded_geometry() {
         for e in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {

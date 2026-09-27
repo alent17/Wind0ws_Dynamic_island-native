@@ -44,8 +44,11 @@ cargo build --release --manifest-path native/Cargo.toml
 - 本地倒计时截止时间独立于页面；时间读取系统本地时间。
 - 长标题往返滚动和渐变，切歌、返回音乐和外形变化时重置停留；标题宽度只在创建布局时测量。
 - 自动读取并响应 Windows 客户端动画设置；F6 或命令行提供本次运行的覆盖。时间页下一次刷新对齐整分钟，响应系统时间变化。
+- 处理 DPI 变更建议矩形，保持所选贴边方向；小工作区下等比缩小容纳区域，绘制、命中与无障碍坐标使用同一比例。
+- 隐藏/最小化时释放页面、字体布局缓存和图形设备引用，并停止帧计时器；倒计时状态独立保留，隐藏期间完成后在恢复时展示提示。
+- 原生 MSAA 控件接口与 Windows UIA 桥接：名称、按钮/滑块角色、焦点、物理位置、激活和音量值操作。旧页面控件引用会失效，收起和隐藏后控件从树中移除。
 
-**这是绘制和交互原型，尚不能替换日常版本。** 音乐、封面图形、频谱、音量及天气是演示数据；浮动播放器和设置按钮仅显示说明。真实媒体、设备列表、网络天气、Studio、托盘、无障碍语义和视频均未迁移。多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
+**这是绘制和交互原型，尚不能替换日常版本。** 音乐、封面图形、频谱、音量及天气是演示数据；浮动播放器和设置按钮仅显示说明。真实媒体、设备列表、网络天气、Studio、托盘和视频均未迁移。基础控件无障碍接口已接入，实际屏幕阅读器、文本阅读语义、完整 UIA RangeValue 模式及 tooltip 仍待补齐；多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
 
 页面状态是 `Option<PageInstance>`，切换直接替换，收起设为 `None`。当前原型页面没有独占网络请求、Canvas 或后台采集任务；渲染器保留有界的字体和两个演示标题布局缓存。该模型测试不能替代未来真实业务接入后的订阅和请求释放测试。
 
@@ -56,13 +59,19 @@ cargo fmt --manifest-path native/Cargo.toml --all -- --check
 cargo clippy --manifest-path native/Cargo.toml --workspace --all-targets -- -D warnings
 cargo test --manifest-path native/Cargo.toml --workspace
 python native/scripts/interaction.py
+python native/scripts/display_lifecycle.py
+python native/scripts/lifecycle.py
+powershell.exe -NoProfile -File native/scripts/accessibility.ps1
+python native/scripts/visibility_resources.py
 ./native/scripts/measure.ps1 -Seconds 60 -Repetitions 3
 ```
 
 截图脚本需要 Pillow。`interaction.py` 按进程 ID 定位自己的窗口，并创建另一个进程的背景窗口检查透明区域的窗口路由；不会向安装版 Isle 发送指令。该检查使用 `WindowFromPoint` 和向返回窗口发送消息，不等价于鼠标硬件输入的全链路验收。
 
+资源可见性测试还需要 psutil；无障碍脚本通过 Windows PowerShell 的 .NET Framework interop 从另一个进程访问接口。`--test-dpi`、`--test-work-area WxH`、`--test-countdown-ms` 仅为测试覆盖参数，不修改系统显示或现有应用设置。`WM_APP+60` 在启用 `--log` 时写出当前诊断快照，不触发绘制。
+
 所有测试输出位于忽略提交的 `native/artifacts/`。性能报告里的 `drawAndPresentP95Ms` 包含 Present 等待，**不是帧间隔，也不是输入延迟**。CPU 百分比按机器全部逻辑处理器归一化；私有内存和工作集分别记录。
 
 `presentCallIntervalMeanMs/P95Ms` 是预热 5 秒后连续动画期间相邻绘制/Present 返回的间隔，不代表 DWM 最终上屏时间。`highResolutionTimer` 记录是否使用了高精度路径；不支持时回退普通等待计时器。日志采样数组有上限，未指定 `--log` 时不收集逐帧数据。
 
-实现与验收进展见 [首轮记录](../docs/native-ui-prototype-results.md) 和 [帧调度改进记录](../docs/native-ui-frame-timing-results.md)。
+实现与验收进展见 [首轮记录](../docs/native-ui-prototype-results.md)、[帧调度改进记录](../docs/native-ui-frame-timing-results.md) 和 [显示、生命周期与无障碍记录](../docs/native-ui-display-accessibility-results.md)。

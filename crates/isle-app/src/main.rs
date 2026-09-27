@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+mod accessibility;
 mod frame_timer;
 mod render;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -15,7 +16,7 @@ use windows::{
         Foundation::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*},
-        UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+        UI::{Accessibility::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
 #[derive(Debug)]
@@ -30,10 +31,15 @@ enum Event {
     Leave,
     Cancel,
     Resize,
+    Dpi(u32, RECT),
+    Visibility(bool),
     Preferences,
+    Access(u32, usize, u32, u16),
+    Diagnostic,
     Close,
 }
 thread_local! {static EVENTS:RefCell<VecDeque<Event>>=const{RefCell::new(VecDeque::new())};}
+thread_local! {static ACCESSIBLE:RefCell<Option<IAccessible>>=const{RefCell::new(None)};}
 fn enqueue(e: Event) {
     EVENTS.with(|q| q.borrow_mut().push_back(e));
 }
@@ -45,6 +51,32 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        WM_GETOBJECT if lp.0 as i32 == UiaRootObjectId => ACCESSIBLE.with(|a| {
+            a.borrow()
+                .as_ref()
+                .and_then(|a| UiaProviderFromIAccessible(a, 0, 0).ok())
+                .map(|provider| UiaReturnRawElementProvider(hwnd, wp, lp, &provider))
+                .unwrap_or(LRESULT(0))
+        }),
+        0x803c => {
+            enqueue(Event::Diagnostic);
+            LRESULT(0)
+        }
+        WM_GETOBJECT if lp.0 as i32 == OBJID_CLIENT.0 => ACCESSIBLE.with(|a| {
+            a.borrow()
+                .as_ref()
+                .map(|a| LresultFromObject(&IAccessible::IID, wp, a))
+                .unwrap_or(LRESULT(0))
+        }),
+        accessibility::INVOKE | accessibility::FOCUS | accessibility::VALUE => {
+            enqueue(Event::Access(
+                msg,
+                wp.0,
+                ((lp.0 as u64) >> 16) as u32,
+                lp.0 as u16,
+            ));
+            LRESULT(0)
+        }
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
             BeginPaint(hwnd, &mut ps);
@@ -104,7 +136,25 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             enqueue(Event::Key(wp.0 as u32));
             LRESULT(0)
         }
-        WM_DPICHANGED | WM_DISPLAYCHANGE => {
+        WM_DPICHANGED => {
+            if lp.0 != 0 {
+                enqueue(Event::Dpi(wp.0 as u16 as u32, *(lp.0 as *const RECT)));
+            }
+            LRESULT(0)
+        }
+        WM_SHOWWINDOW => {
+            enqueue(Event::Visibility(wp.0 != 0));
+            LRESULT(0)
+        }
+        WM_SIZE => {
+            if wp.0 == SIZE_MINIMIZED as usize {
+                enqueue(Event::Visibility(false));
+            } else if IsWindowVisible(hwnd).as_bool() {
+                enqueue(Event::Visibility(true));
+            }
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE => {
             enqueue(Event::Resize);
             LRESULT(0)
         }
@@ -129,7 +179,14 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 struct App {
     window: HWND,
-    renderer: Renderer,
+    accessible: accessibility::Shared,
+    renderer: Option<Renderer>,
+    suspended: bool,
+    pending_completion: bool,
+    total_frames: u64,
+    font_family: &'static str,
+    test_dpi: Option<u32>,
+    test_work: Option<(u32, u32)>,
     model: Model,
     scale: f32,
     last: Instant,
@@ -151,25 +208,46 @@ struct App {
 }
 impl App {
     unsafe fn position(&mut self) -> Result<()> {
-        let monitor = MonitorFromWindow(self.window, MONITOR_DEFAULTTONEAREST);
+        self.position_for(None, None)
+    }
+    unsafe fn position_for(&mut self, dpi: Option<u32>, suggested: Option<RECT>) -> Result<()> {
+        let monitor = if let Some(r) = suggested {
+            MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST)
+        } else {
+            MonitorFromWindow(self.window, MONITOR_DEFAULTTONEAREST)
+        };
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         GetMonitorInfoW(monitor, &mut info).ok()?;
-        self.scale = GetDpiForWindow(self.window) as f32 / 96.;
-        if self.scale == 0. {
-            self.scale = 1.;
-        }
+        let dpi = self
+            .test_dpi
+            .or(dpi)
+            .unwrap_or_else(|| GetDpiForWindow(self.window))
+            .max(96);
         let r = info.rcWork;
-        let size = (HOST * self.scale).ceil() as i32;
-        let (x, y) = match self.model.edge {
-            Edge::Top => ((r.left + r.right - size) / 2, r.top),
-            Edge::Bottom => ((r.left + r.right - size) / 2, r.bottom - size),
-            Edge::Left => (r.left, (r.top + r.bottom - size) / 2),
-            Edge::Right => (r.right - size, (r.top + r.bottom - size) / 2),
+        let mut work = Rect {
+            x: r.left as f32,
+            y: r.top as f32,
+            w: (r.right - r.left) as f32,
+            h: (r.bottom - r.top) as f32,
         };
-        SetWindowPos(self.window, HWND_TOPMOST, x, y, size, size, SWP_NOACTIVATE)?;
+        if let Some((w, h)) = self.test_work {
+            work.w = work.w.min(w as f32);
+            work.h = work.h.min(h as f32);
+        }
+        let (bounds, scale) = window_placement(work, dpi, HOST, self.model.edge);
+        self.scale = scale;
+        SetWindowPos(
+            self.window,
+            HWND_TOPMOST,
+            bounds.x as i32,
+            bounds.y as i32,
+            bounds.w as i32,
+            bounds.h as i32,
+            SWP_NOACTIVATE,
+        )?;
         Ok(())
     }
     unsafe fn region(&mut self) -> Result<()> {
@@ -202,27 +280,123 @@ impl App {
         self.region = points;
         Ok(())
     }
+    unsafe fn update_accessibility(&self) -> Result<()> {
+        let mut window = RECT::default();
+        GetWindowRect(self.window, &mut window)?;
+        let transform = |r: Rect| Rect {
+            x: window.left as f32 + r.x * self.scale,
+            y: window.top as f32 + r.y * self.scale,
+            w: r.w * self.scale,
+            h: r.h * self.scale,
+        };
+        let origin = self.model.origin();
+        let bounds = transform(Rect {
+            x: origin.x,
+            y: origin.y,
+            w: self.model.width.value,
+            h: self.model.height.value,
+        });
+        let mut nodes = vec![];
+        if !self.suspended
+            && self.model.expanded
+            && self.model.width.value > 250.
+            && (self.model.height.value - self.model.height.target).abs() < 35.
+        {
+            for (hit, mut rect) in self.model.controls() {
+                if matches!(hit, Hit::Tool(_)) {
+                    let bar = self.model.bar();
+                    let right = (rect.x + rect.w).min(bar.x + bar.w);
+                    rect.x = rect.x.max(bar.x);
+                    rect.w = (right - rect.x).max(0.);
+                }
+                nodes.push(accessibility::Node {
+                    hit,
+                    name: accessibility::label(hit, self.model.playing).to_string(),
+                    rect: transform(rect),
+                });
+            }
+        }
+        let mut state = self.accessible.lock().map_err(|_| Error::from(E_FAIL))?;
+        let reordered = state
+            .nodes
+            .iter()
+            .map(|n| n.hit)
+            .ne(nodes.iter().map(|n| n.hit));
+        let focus_changed = state.focus != self.model.focus;
+        if reordered {
+            state.revision = state.revision.wrapping_add(1);
+        }
+        state.visible = !self.suspended;
+        state.nodes = nodes;
+        state.bounds = bounds;
+        state.outline = self
+            .model
+            .outline()
+            .into_iter()
+            .map(|p| Point {
+                x: window.left as f32 + p.x * self.scale,
+                y: window.top as f32 + p.y * self.scale,
+            })
+            .collect();
+        state.focus = self.model.focus;
+        state.volume = self.model.volume.round() as u32;
+        let focus_id = state
+            .nodes
+            .iter()
+            .position(|n| Some(n.hit) == state.focus)
+            .map(|i| i as i32 + 1)
+            .unwrap_or(0);
+        drop(state);
+        if reordered {
+            NotifyWinEvent(EVENT_OBJECT_REORDER, self.window, OBJID_CLIENT.0, 0);
+        }
+        if focus_changed {
+            NotifyWinEvent(EVENT_OBJECT_FOCUS, self.window, OBJID_CLIENT.0, focus_id);
+        }
+        Ok(())
+    }
     unsafe fn redraw(&mut self) -> Result<()> {
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32();
         self.last = now;
+        let timer_was_running = self.model.timer_deadline.is_some();
         self.model.step(dt, (now - self.start).as_secs_f64());
+        if self.suspended {
+            if timer_was_running && self.model.timer_deadline.is_none() {
+                self.pending_completion = true;
+            }
+            if self.model.expanded {
+                self.model.toggle();
+            }
+        }
+        if self.suspended {
+            self.sync_timer()?;
+            return Ok(());
+        }
         self.region()?;
+        if self.renderer.is_none() {
+            self.renderer = Some(Renderer::new(self.window, self.scale)?);
+        }
         let start = Instant::now();
-        if let Err(error) = self.renderer.draw(
+        if let Err(error) = self.renderer.as_mut().unwrap().draw(
             &self.model,
             self.hover,
             self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
         ) {
             eprintln!("Rendering failed, rebuilding device: {error}");
-            self.renderer = Renderer::new(self.window, self.scale)?;
-            self.renderer.draw(
+            // Release the previous composition target before binding a new one
+            // to the same HWND, including the device-loss recovery path.
+            self.renderer = None;
+            self.renderer = Some(Renderer::new(self.window, self.scale)?);
+            self.renderer.as_mut().unwrap().draw(
                 &self.model,
                 self.hover,
                 self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
             )?;
         }
-        self.model.title_overflow = self.renderer.title_overflow;
+        self.total_frames += 1;
+        self.font_family = self.renderer.as_ref().unwrap().font_family;
+        self.model.title_overflow = self.renderer.as_ref().unwrap().title_overflow;
         let presented = Instant::now();
         if self.log.is_some() && self.model.continuous() && self.start.elapsed().as_secs() >= 5 {
             if let Some(last) = self.last_present {
@@ -238,7 +412,20 @@ impl App {
         if self.log.is_some() && self.frames_ms.len() < 36000 {
             self.frames_ms.push(start.elapsed().as_secs_f64() * 1000.);
         }
-        let desired = if self.model.continuous() {
+        self.update_accessibility()?;
+        self.sync_timer()
+    }
+    fn continuous(&self) -> bool {
+        !self.suspended && self.model.continuous()
+    }
+    unsafe fn sync_timer(&mut self) -> Result<()> {
+        let desired = if self.suspended {
+            if self.model.timer_deadline.is_some() || self.exit_after.is_some() {
+                1000
+            } else {
+                0
+            }
+        } else if self.model.continuous() {
             0
         } else if self.model.timer_deadline.is_some() || self.scripted || self.exit_after.is_some()
         {
@@ -290,9 +477,53 @@ impl App {
         }
     }
     unsafe fn handle(&mut self, event: Event) -> Result<bool> {
+        if self.suspended
+            && !matches!(
+                event,
+                Event::Tick
+                    | Event::Diagnostic
+                    | Event::Close
+                    | Event::Visibility(_)
+                    | Event::Dpi(_, _)
+                    | Event::Resize
+                    | Event::Preferences
+            )
+        {
+            return Ok(true);
+        }
         let mut changed = true;
         match event {
             Event::Close => return Ok(false),
+            Event::Diagnostic => {
+                self.report();
+                return Ok(true);
+            }
+            Event::Access(message, child, revision, value) => {
+                let hit = {
+                    let state = self.accessible.lock().map_err(|_| Error::from(E_FAIL))?;
+                    if revision != state.revision || !state.visible {
+                        return Ok(true);
+                    }
+                    if child == 0 {
+                        Some(Hit::Blank)
+                    } else {
+                        state.nodes.get(child - 1).map(|n| n.hit)
+                    }
+                };
+                if let Some(hit) = hit {
+                    match message {
+                        accessibility::INVOKE => self.action(hit),
+                        accessibility::FOCUS => {
+                            SetFocus(self.window);
+                            self.model.focus = if hit == Hit::Blank { None } else { Some(hit) };
+                        }
+                        accessibility::VALUE if hit == Hit::Volume && value <= 100 => {
+                            self.model.volume = value as f32
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Event::Paint => {}
             Event::Cancel => {
                 self.down = None;
@@ -307,7 +538,7 @@ impl App {
                     || self.model.timer_deadline.is_some()
                     || self.scripted
                     || (self.model.expanded && self.model.page() == Page::Clock);
-                if self.scripted {
+                if self.scripted && !self.suspended {
                     let step = (elapsed / 0.35) as u64;
                     if step != self.last_script {
                         self.last_script = step;
@@ -323,14 +554,53 @@ impl App {
                 }
             }
             Event::Preferences => {
+                let old_scale = self.scale;
+                self.position()?;
+                if old_scale != self.scale {
+                    self.renderer = None;
+                    self.region.clear();
+                }
                 self.model.reduced = self
                     .reduced_override
                     .unwrap_or_else(|| system_reduced_motion());
                 self.model.retarget();
             }
+            Event::Visibility(visible) => {
+                let suspended = !visible;
+                if suspended == self.suspended {
+                    return Ok(true);
+                }
+                self.suspended = suspended;
+                self.last_present = None;
+                self.down = None;
+                self.hover = None;
+                if suspended {
+                    self.frame_timer.cancel();
+                    if self.model.expanded {
+                        self.model.toggle();
+                    }
+                    self.renderer = None;
+                    self.update_accessibility()?;
+                    self.sync_timer()?;
+                    return Ok(true);
+                }
+                self.position()?;
+                self.region.clear();
+                self.last = Instant::now();
+                if self.pending_completion {
+                    self.pending_completion = false;
+                    self.model.switch(Page::Timer);
+                }
+            }
+            Event::Dpi(dpi, rect) => {
+                self.position_for(Some(dpi), Some(rect))?;
+                self.renderer = None;
+                self.region.clear();
+                self.model.retarget();
+            }
             Event::Resize => {
                 self.position()?;
-                self.renderer = Renderer::new(self.window, self.scale)?;
+                self.renderer = None;
                 self.region.clear();
             }
             Event::Leave => {
@@ -464,7 +734,7 @@ impl App {
             } else {
                 intervals.iter().sum::<f64>() / intervals.len() as f64
             };
-            let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{}}}",self.start.elapsed().as_secs_f64(),self.renderer.frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.renderer.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len());
+            let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let _ = std::fs::write(path, text);
         }
     }
@@ -520,6 +790,11 @@ unsafe fn run() -> Result<()> {
     if window.0 == 0 {
         return Err(Error::from_win32());
     }
+    let accessible = std::sync::Arc::new(std::sync::Mutex::new(accessibility::Snapshot {
+        hwnd: window.0,
+        ..Default::default()
+    }));
+    ACCESSIBLE.with(|a| *a.borrow_mut() = Some(accessibility::root(&accessible)));
     let mut model = Model {
         reduced: args.iter().any(|a| a == "--reduced-motion") || system_reduced_motion(),
         playing: !args.iter().any(|a| a == "--paused"),
@@ -547,11 +822,25 @@ unsafe fn run() -> Result<()> {
         });
     }
     model.retarget();
+    if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
+        model.timer_left = ms as f64 / 1000.;
+        model.timer_deadline = Some(model.timer_left);
+    }
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let mut app = App {
         window,
-        renderer: Renderer::new(window, scale)?,
+        accessible,
+        renderer: None,
+        suspended: false,
+        pending_completion: false,
+        total_frames: 0,
+        font_family: "uninitialized",
+        test_dpi: value(&args, "--test-dpi").and_then(|v| v.parse().ok()),
+        test_work: value(&args, "--test-work-area").and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse::<u32>().ok()?.max(1), h.parse::<u32>().ok()?.max(1)))
+        }),
         model,
         scale,
         last: start,
@@ -572,9 +861,6 @@ unsafe fn run() -> Result<()> {
         reduced_override: args.iter().any(|a| a == "--reduced-motion").then_some(true),
     };
     app.position()?;
-    if app.scale != app.renderer.scale {
-        app.renderer = Renderer::new(window, app.scale)?;
-    }
     app.redraw()?;
     if args.iter().any(|a| a == "--benchmark") {
         // Keep the same rendering path while preventing input from changing a
@@ -584,7 +870,7 @@ unsafe fn run() -> Result<()> {
     ShowWindow(window, SW_SHOWNOACTIVATE);
     let mut msg = MSG::default();
     'running: loop {
-        let continuous = app.model.continuous();
+        let continuous = app.continuous();
         if continuous {
             let deadline = app.last + Duration::from_nanos(16_666_667);
             app.frame_timer
@@ -627,6 +913,17 @@ unsafe fn run() -> Result<()> {
     if app.interval > 0 {
         let _ = KillTimer(window, 1);
     }
+    app.accessible
+        .lock()
+        .map_err(|_| Error::from(E_FAIL))?
+        .closed = true;
+    UiaReturnRawElementProvider(
+        window,
+        WPARAM(0),
+        LPARAM(0),
+        None::<&IRawElementProviderSimple>,
+    );
+    ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     DestroyWindow(window)?;
     drop(app);
     CoUninitialize();

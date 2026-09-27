@@ -29,7 +29,6 @@ pub struct Renderer {
     formats: HashMap<u32, IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
-    pub scale: f32,
     pub title_overflow: bool,
 }
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
@@ -65,8 +64,8 @@ impl Renderer {
         let adapter = dxgi.GetAdapter()?;
         let dxgi_factory: IDXGIFactory2 = adapter.GetParent()?;
         let desc = DXGI_SWAP_CHAIN_DESC1 {
-            Width: (HOST * scale).ceil() as u32,
-            Height: (HOST * scale).ceil() as u32,
+            Width: (HOST * scale).round() as u32,
+            Height: (HOST * scale).round() as u32,
             Format: DXGI_FORMAT_B8G8R8A8_UNORM,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
@@ -129,7 +128,6 @@ impl Renderer {
             formats: HashMap::new(),
             layouts: HashMap::new(),
             frames: 0,
-            scale,
             title_overflow: false,
         })
     }
