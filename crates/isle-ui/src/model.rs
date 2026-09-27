@@ -76,6 +76,7 @@ pub struct Model {
     pub title_overflow: bool,
     pub disc_angle: f32,
     pub content_animating: bool,
+    pub pending_page: Option<(Page, f64)>,
     pub tool_count: usize,
     pub tool_mask: [bool; 7],
 }
@@ -123,6 +124,7 @@ impl Default for Model {
             title_overflow: false,
             disc_angle: 0.,
             content_animating: false,
+            pending_page: None,
             tool_count: 7,
             tool_mask: [true; 7],
         }
@@ -164,6 +166,7 @@ impl Model {
         self.current.as_ref().map(|p| p.page).unwrap_or(Page::Music)
     }
     pub fn switch(&mut self, page: Page) {
+        self.pending_page = None;
         self.device_menu = false;
         self.device_scroll = 0.;
         self.title_started = self.now;
@@ -176,8 +179,20 @@ impl Model {
         self.focus = None;
         self.retarget();
     }
+    pub fn navigate(&mut self, page: Page) {
+        if !self.expanded || self.reduced {
+            self.switch(page);
+        } else if page == self.page() {
+            self.pending_page = None;
+        } else {
+            self.pending_page = Some((page, self.now));
+            self.focus = None;
+            self.device_menu = false;
+        }
+    }
     pub fn toggle(&mut self) {
         if self.expanded {
+            self.pending_page = None;
             self.device_menu = false;
             self.expanded = false;
             self.current = None;
@@ -189,6 +204,10 @@ impl Model {
         }
     }
     pub fn back(&mut self) {
+        if self.pending_page.take().is_some() {
+            self.navigate(Page::Music);
+            return;
+        }
         if self.device_menu {
             self.device_menu = false;
             self.focus = None;
@@ -196,7 +215,7 @@ impl Model {
             return;
         }
         if self.page() != Page::Music {
-            self.switch(Page::Music)
+            self.navigate(Page::Music)
         } else {
             self.toggle()
         }
@@ -270,6 +289,11 @@ impl Model {
     }
     pub fn step(&mut self, dt: f32, now: f64) {
         self.now = now;
+        if let Some((page, started)) = self.pending_page {
+            if self.reduced || now - started >= 0.1 {
+                self.switch(page);
+            }
+        }
         if self.disc_spinning() {
             self.disc_angle =
                 (self.disc_angle + dt * std::f32::consts::TAU / 8.) % std::f32::consts::TAU;
@@ -299,6 +323,7 @@ impl Model {
     }
     pub fn continuous(&self) -> bool {
         self.moving()
+            || self.pending_page.is_some()
             || (!self.reduced && self.content_animating)
             || self.disc_spinning()
             || (self.media.is_none()
@@ -507,6 +532,12 @@ impl Model {
         self.focus = None;
     }
     pub fn controls(&self) -> Vec<(Hit, Rect)> {
+        self.visual_controls()
+            .into_iter()
+            .filter(|(hit, _)| self.pending_page.is_none() || matches!(hit, Hit::Tool(_)))
+            .collect()
+    }
+    pub fn visual_controls(&self) -> Vec<(Hit, Rect)> {
         if !self.expanded {
             return vec![];
         }
@@ -712,10 +743,10 @@ impl Model {
             Hit::Play => self.playing = !self.playing,
             Hit::Previous | Hit::Next => self.change_track(),
             Hit::Tool(i) => match i {
-                0 => self.switch(Page::Timer),
-                1 => self.switch(Page::Volume),
-                5 => self.switch(Page::Clock),
-                6 => self.switch(Page::Weather),
+                0 => self.navigate(Page::Timer),
+                1 => self.navigate(Page::Volume),
+                5 => self.navigate(Page::Clock),
+                6 => self.navigate(Page::Weather),
                 _ => {}
             },
             Hit::Timer => {
@@ -804,6 +835,25 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_exit_keeps_one_instance_and_disables_outgoing_controls() {
+        let mut m = Model::default();
+        m.switch(Page::Timer);
+        let generation = m.generation;
+        m.navigate(Page::Volume);
+        assert_eq!(m.page(), Page::Timer);
+        assert!(m.controls().iter().all(|(h, _)| matches!(h, Hit::Tool(_))));
+        assert!(m.visual_controls().iter().any(|(h, _)| *h == Hit::Timer));
+        m.step(0.04, 0.04);
+        m.navigate(Page::Clock);
+        m.step(0.1, 0.15);
+        assert_eq!(m.page(), Page::Clock);
+        assert_eq!(m.generation, generation + 1);
+        m.navigate(Page::Weather);
+        m.toggle();
+        m.step(0.1, 1.);
+        assert!(!m.expanded && m.current.is_none() && m.pending_page.is_none());
+    }
     #[test]
     fn compact_cover_is_visible_and_rotation_obeys_lifecycle() {
         let mut m = Model {

@@ -176,14 +176,23 @@ impl Renderer {
         // TimerPanel's ruler is authored with its selected mark at 141 px;
         // VolumePanel centers its selected mark in the available width.
         let center = if timer { 141. } else { r.w / 2. };
+        let motion = self
+            .ruler_motion
+            .get_or_insert_with(|| isle_ui::rolling::Tween::new(value as f32));
+        let position = motion.update(
+            value as f32,
+            m.now,
+            if timer { 0.26 } else { 0.18 },
+            m.reduced || self.ruler_dragging,
+        );
+        self.content_animating |= motion.active(m.now);
+        let visible_value = position.round() as i32;
         self.ctx
             .PushAxisAlignedClip(&rect(r), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        for tick in (value - 30).max(if timer { 1 } else { 0 })..=(value + 30).min(if timer {
-            1440
-        } else {
-            100
-        }) {
-            let x = r.x + center + (tick - value) as f32 * 10.;
+        for tick in (visible_value - 30).max(if timer { 1 } else { 0 })
+            ..=(visible_value + 30).min(if timer { 1440 } else { 100 })
+        {
+            let x = r.x + center + (tick as f32 - position) * 10.;
             if x < r.x - 5. || x > r.x + r.w + 5. {
                 continue;
             }
@@ -354,7 +363,7 @@ impl Renderer {
                 let viewport = m.device_viewport();
                 self.ctx
                     .PushAxisAlignedClip(&rect(viewport), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                for (hit, _) in m.controls() {
+                for (hit, _) in m.visual_controls() {
                     if let Hit::Device(index) = hit {
                         let r = m.device_row(index);
                         let device = &audio.devices[index];
@@ -505,7 +514,7 @@ impl Renderer {
                 CAPTION,
             )?;
         }
-        for (hit, r) in m.controls() {
+        for (hit, r) in m.visual_controls() {
             if !matches!(hit, Hit::Timer | Hit::Reset | Hit::Dismiss) {
                 continue;
             }
@@ -754,7 +763,7 @@ impl Renderer {
                 DWRITE_TEXT_ALIGNMENT_LEADING,
                 color(1., 1., 1., 0.5),
             )?;
-            for (hit, r) in m.controls() {
+            for (hit, r) in m.visual_controls() {
                 if hit == Hit::WeatherSettings {
                     if hover == Some(hit) || m.focus == Some(hit) {
                         self.fill(r, 12., color(1., 1., 1., 0.1));

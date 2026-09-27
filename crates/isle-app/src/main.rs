@@ -562,6 +562,10 @@ impl App {
             &self.model,
             self.hover,
             self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
+            self.dragged
+                && self
+                    .down
+                    .is_some_and(|(_, h, _)| matches!(h, Hit::Volume | Hit::TimerRuler)),
         ) {
             eprintln!("Rendering failed, rebuilding device: {error}");
             // Release the previous composition target before binding a new one
@@ -572,6 +576,10 @@ impl App {
                 &self.model,
                 self.hover,
                 self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
+                self.dragged
+                    && self
+                        .down
+                        .is_some_and(|(_, h, _)| matches!(h, Hit::Volume | Hit::TimerRuler)),
             )?;
         }
         self.total_frames += 1;
@@ -800,6 +808,7 @@ impl App {
         if !self.continuous() {
             self.last = Instant::now();
         }
+        self.model.now = self.start.elapsed().as_secs_f64();
         let mut changed = true;
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);

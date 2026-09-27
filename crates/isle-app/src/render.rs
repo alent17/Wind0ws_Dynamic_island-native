@@ -24,6 +24,8 @@ pub struct Renderer {
     number_used: bool,
     pub content_animating: bool,
     page_enter: Option<(u64, f64)>,
+    ruler_motion: Option<isle_ui::rolling::Tween>,
+    ruler_dragging: bool,
     icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
     disc_brush: Option<ID2D1BitmapBrush>,
@@ -390,6 +392,8 @@ impl Renderer {
             number_used: false,
             content_animating: false,
             page_enter: None,
+            ruler_motion: None,
+            ruler_dragging: false,
             layouts: HashMap::new(),
             frames: 0,
             title_overflow: false,
@@ -493,12 +497,15 @@ impl Renderer {
         m: &Model,
         hover: Option<Hit>,
         pressed: Option<Hit>,
+        dragging: bool,
     ) -> Result<()> {
         if self.digits_page != (m.generation, m.expanded) {
             self.digits.clear();
+            self.ruler_motion = None;
             self.digits_page = (m.generation, m.expanded);
         }
         self.number_used = false;
+        self.ruler_dragging = dragging;
         self.content_animating = false;
         if !m.expanded {
             self.page_enter = None;
@@ -595,7 +602,7 @@ impl Renderer {
         let c = m.body();
         if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
             // Focus and press feedback share the same hit rectangles as input.
-            for (hit, r) in m.controls() {
+            for (hit, r) in m.visual_controls() {
                 if pressed == Some(hit) {
                     self.fill(r, 12., color(1., 1., 1., 0.16));
                 }
@@ -639,6 +646,25 @@ impl Renderer {
                 }
                 self.ctx.PopAxisAlignedClip();
             }
+            let exit_opacity = m.pending_page.map_or(1., |(_, started)| {
+                1. - isle_ui::rolling::page_ease(((m.now - started) / 0.1).clamp(0., 1.) as f32)
+            });
+            let exit_layer = D2D1_LAYER_PARAMETERS {
+                contentBounds: rect(Rect {
+                    x: 0.,
+                    y: 0.,
+                    w: HOST,
+                    h: HOST,
+                }),
+                maskTransform: Matrix3x2 {
+                    M11: 1.,
+                    M22: 1.,
+                    ..Default::default()
+                },
+                opacity: exit_opacity,
+                ..Default::default()
+            };
+            self.ctx.PushLayer(&exit_layer, None);
             if m.page() != Page::Music {
                 self.fill(
                     Rect {
@@ -991,7 +1017,7 @@ impl Renderer {
                         3.,
                         white,
                     );
-                    for (hit, r) in m.controls() {
+                    for (hit, r) in m.visual_controls() {
                         if matches!(hit, Hit::Previous | Hit::Play | Hit::Next) {
                             let white = if m.enabled(hit) {
                                 white
@@ -1066,6 +1092,7 @@ impl Renderer {
                 M22: 1.,
                 ..Default::default()
             });
+            self.ctx.PopLayer();
             self.ctx.PopLayer();
         } else if !m.expanded {
             let o = m.origin();

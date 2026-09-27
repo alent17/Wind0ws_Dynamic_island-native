@@ -6,6 +6,46 @@ pub struct Digit {
     target: f32,
     started: f64,
 }
+#[derive(Clone, Debug)]
+pub struct Tween {
+    from: f32,
+    target: f32,
+    started: f64,
+    duration: f64,
+}
+impl Tween {
+    pub fn new(value: f32) -> Self {
+        Self {
+            from: value,
+            target: value,
+            started: -1.,
+            duration: 0.,
+        }
+    }
+    pub fn value(&self, now: f64) -> f32 {
+        if !self.active(now) {
+            self.target
+        } else {
+            self.from
+                + (self.target - self.from)
+                    * ease(((now - self.started) / self.duration).clamp(0., 1.) as f32)
+        }
+    }
+    pub fn update(&mut self, target: f32, now: f64, duration: f64, immediate: bool) -> f32 {
+        if immediate {
+            *self = Self::new(target);
+        } else if target != self.target {
+            self.from = self.value(now);
+            self.target = target;
+            self.started = now;
+            self.duration = duration;
+        }
+        self.value(now)
+    }
+    pub fn active(&self, now: f64) -> bool {
+        self.from != self.target && now - self.started < self.duration
+    }
+}
 fn ease(t: f32) -> f32 {
     if t <= 0. {
         return 0.;
@@ -84,6 +124,15 @@ pub fn page_ease(t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ruler_retargets_continuously_and_dragging_is_immediate() {
+        let mut t = Tween::new(20.);
+        t.update(90., 0., 0.26, false);
+        let before = t.value(0.1);
+        assert_eq!(t.update(35., 0.1, 0.26, false), before);
+        assert_eq!(t.update(40., 0.12, 0.26, true), 40.);
+        assert!(!t.active(0.12));
+    }
     #[test]
     fn wraps_and_interruption_starts_from_current_position() {
         let mut d = Digit::new(9);
