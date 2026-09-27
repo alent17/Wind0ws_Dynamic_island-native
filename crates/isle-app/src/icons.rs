@@ -30,6 +30,7 @@ pub enum Icon {
     Snow,
     Lightning,
     ChevronUp,
+    Music,
 }
 
 pub struct Icons {
@@ -65,6 +66,7 @@ impl Icons {
             asset!("cloud-snow"),
             asset!("cloud-lightning"),
             asset!("chevron-up"),
+            asset!("music-2"),
         ];
         let documents = sources
             .into_iter()

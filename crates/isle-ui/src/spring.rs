@@ -25,8 +25,9 @@ impl Spring {
     pub fn active(&self) -> bool {
         (self.value - self.target).abs() > 0.01 || self.velocity.abs() > 0.01
     }
-    // A fixed 240Hz internal integration step makes the response independent of
-    // monitor refresh rate. Coefficients are calibrated separately from Svelte.
+    // Fractional powers of the original Svelte 60 Hz recurrence:
+    // v' = .2 v + .18 (target - x), x' = x + v'. This preserves
+    // its sampled trajectory without stepping visually at 60 Hz on faster displays.
     pub fn advance(&mut self, dt: f32) {
         if !self.active() {
             self.value = self.target;
@@ -34,12 +35,16 @@ impl Spring {
             return;
         }
         let dt = dt.clamp(0., 0.1);
-        let steps = (dt * 240.).ceil().max(1.) as u32;
-        let h = dt / steps as f32;
-        for _ in 0..steps {
-            self.velocity += ((self.target - self.value) * 620. - self.velocity * 40.) * h;
-            self.value += self.velocity * h;
-        }
+        let discriminant = (1.02_f32 * 1.02 - 0.8).sqrt();
+        let a = (1.02 + discriminant) / 2.;
+        let b = (1.02 - discriminant) / 2.;
+        let power = dt * 60.;
+        let alpha = (a.powf(power) - b.powf(power)) / (a - b);
+        let beta = (a * b.powf(power) - b * a.powf(power)) / (a - b);
+        let displacement = self.value - self.target;
+        let velocity = self.velocity / 60.;
+        self.value = self.target + (alpha * 0.82 + beta) * displacement + alpha * 0.2 * velocity;
+        self.velocity = (alpha * -0.18 * displacement + (alpha * 0.2 + beta) * velocity) * 60.;
         if !self.active() {
             self.value = self.target;
             self.velocity = 0.;
@@ -49,6 +54,18 @@ impl Spring {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn matches_original_svelte_sixty_hz_trajectory() {
+        let mut s = Spring::new(80.);
+        s.set(364., false);
+        let (mut value, mut velocity) = (80_f32, 0_f32);
+        for _ in 0..24 {
+            velocity = velocity * 0.2 + (364. - value) * 0.18;
+            value += velocity;
+            s.advance(1. / 60.);
+            assert!((s.value - value).abs() < 0.001);
+        }
+    }
     #[test]
     fn interrupted_motion_preserves_velocity_and_converges() {
         let mut s = Spring::new(80.);

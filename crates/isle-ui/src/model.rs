@@ -74,6 +74,7 @@ pub struct Model {
     pub track: usize,
     pub title_started: f64,
     pub title_overflow: bool,
+    pub disc_angle: f32,
     pub tool_count: usize,
     pub tool_mask: [bool; 7],
 }
@@ -119,6 +120,7 @@ impl Default for Model {
             track: 0,
             title_started: 0.,
             title_overflow: false,
+            disc_angle: 0.,
             tool_count: 7,
             tool_mask: [true; 7],
         }
@@ -266,6 +268,10 @@ impl Model {
     }
     pub fn step(&mut self, dt: f32, now: f64) {
         self.now = now;
+        if self.disc_spinning() {
+            self.disc_angle =
+                (self.disc_angle + dt * std::f32::consts::TAU / 8.) % std::f32::consts::TAU;
+        }
         if let Some(spectrum) = &mut self.spectrum {
             spectrum.step(dt, self.reduced);
         }
@@ -291,6 +297,7 @@ impl Model {
     }
     pub fn continuous(&self) -> bool {
         self.moving()
+            || self.disc_spinning()
             || (self.media.is_none()
                 && self.spectrum.is_none()
                 && !self.reduced
@@ -300,6 +307,44 @@ impl Model {
             || (!self.reduced
                 && (!self.expanded || self.page() == Page::Music)
                 && self.spectrum.as_ref().is_some_and(SpectrumVisual::moving))
+    }
+    pub fn cover_visible(&self) -> bool {
+        if self.expanded {
+            self.page() == Page::Music
+        } else {
+            !self.timer_active && !self.timer_finished
+        }
+    }
+    pub fn disc_spinning(&self) -> bool {
+        !self.expanded
+            && !self.hovered
+            && !self.reduced
+            && self.playing
+            && self.cover_visible()
+            && self.media.as_ref().is_some_and(|m| m.cover.is_some())
+    }
+    pub fn compact_cover(&self) -> Rect {
+        let o = self.origin();
+        let inset = if self.attached {
+            self.shoulder.value.max(0.)
+        } else {
+            0.
+        };
+        if vertical(self.edge) {
+            Rect {
+                x: o.x + (self.width.value - 20.) / 2.,
+                y: o.y + inset + 4.,
+                w: 20.,
+                h: 20.,
+            }
+        } else {
+            Rect {
+                x: o.x + inset + 4.,
+                y: o.y + (self.height.value - 20.) / 2.,
+                w: 20.,
+                h: 20.,
+            }
+        }
     }
     pub fn origin(&self) -> Point {
         offset(
@@ -756,6 +801,66 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compact_cover_is_visible_and_rotation_obeys_lifecycle() {
+        let mut m = Model {
+            media: Some(isle_core::MediaSnapshot {
+                cover: Some(std::sync::Arc::new(isle_core::Cover {
+                    width: 1,
+                    height: 1,
+                    pixels: vec![255; 4],
+                })),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(m.cover_visible() && m.disc_spinning());
+        m.step(1., 1.);
+        let angle = m.disc_angle;
+        assert!((angle - std::f32::consts::FRAC_PI_4).abs() < 0.001);
+        m.playing = false;
+        m.step(1., 2.);
+        assert_eq!(m.disc_angle, angle);
+        m.playing = true;
+        m.reduced = true;
+        assert!(!m.disc_spinning());
+        m.switch(Page::Volume);
+        assert!(!m.cover_visible());
+        m.toggle();
+        assert!(m.cover_visible());
+        m.timer_active = true;
+        assert!(!m.cover_visible());
+    }
+    #[test]
+    fn compact_cover_fits_every_edge_and_floating_mode() {
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            for attached in [false, true] {
+                let mut m = Model {
+                    edge,
+                    attached,
+                    reduced: true,
+                    ..Default::default()
+                };
+                m.retarget();
+                let r = m.compact_cover();
+                assert_eq!((r.w, r.h), (20., 20.));
+                assert!(inside(
+                    Point {
+                        x: r.x + 10.,
+                        y: r.y + 10.
+                    },
+                    &m.outline()
+                ));
+                assert!(inside(
+                    Point {
+                        x: r.x + 1.,
+                        y: r.y + 10.
+                    },
+                    &m.outline()
+                ));
+            }
+        }
+    }
     #[test]
     fn appearance_geometry_settings_retarget_compact_and_expanded_shapes() {
         let mut m = Model {

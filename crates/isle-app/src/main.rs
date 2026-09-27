@@ -794,6 +794,11 @@ impl App {
         {
             return Ok(true);
         }
+        // An idle window has no animation frames. Do not charge that idle time
+        // to a spring (or rotating cover) started by this input event.
+        if !self.continuous() {
+            self.last = Instant::now();
+        }
         let mut changed = true;
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
@@ -1082,6 +1087,7 @@ impl App {
                         old.title != update.snapshot.title || old.artist != update.snapshot.artist
                     }) {
                         self.model.title_started = self.start.elapsed().as_secs_f64();
+                        self.model.disc_angle = 0.;
                     }
                     self.model.playing = update.snapshot.playing;
                     self.model.media = Some(update.snapshot);
@@ -1702,6 +1708,31 @@ unsafe fn run() -> Result<()> {
     if model.media.is_some() {
         model.playing = false;
     }
+    if test_fixture && args.iter().any(|a| a == "--test-cover") {
+        let pixels = (0..64 * 64)
+            .flat_map(|i| {
+                let x = i % 64;
+                let y = i / 64;
+                if x < 32 {
+                    [220, (80 + y * 2) as u8, 30, 255]
+                } else {
+                    [40, 90, 235, 255]
+                }
+            })
+            .collect();
+        model.playing = !args.iter().any(|a| a == "--paused");
+        model.media = Some(isle_core::MediaSnapshot {
+            title: "封面与弹簧测试".into(),
+            artist: "独立测试数据".into(),
+            playing: model.playing,
+            cover: Some(std::sync::Arc::new(isle_core::Cover {
+                width: 64,
+                height: 64,
+                pixels,
+            })),
+            ..Default::default()
+        });
+    }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;
         model.timer_duration = model.timer_left;
@@ -1728,7 +1759,7 @@ unsafe fn run() -> Result<()> {
         } else {
             None
         },
-        media: if model.media.is_some() {
+        media: if model.media.is_some() && !test_fixture {
             Some(
                 media::MediaService::new(window, start, media_selection)
                     .map_err(|_| Error::from(E_FAIL))?,

@@ -21,6 +21,7 @@ use windows::{
 pub struct Renderer {
     icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
+    disc_brush: Option<ID2D1BitmapBrush>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
@@ -378,6 +379,7 @@ impl Renderer {
             brush,
             formats: HashMap::new(),
             cover: None,
+            disc_brush: None,
             layouts: HashMap::new(),
             frames: 0,
             title_overflow: false,
@@ -484,7 +486,6 @@ impl Renderer {
     ) -> Result<()> {
         if !m.expanded || m.page() != Page::Music {
             self.layouts.clear();
-            self.cover = None;
         }
         let white = color(0.94, 0.96, 1., 1.);
         let blue = color(0.45, 0.76, 1., 1.);
@@ -499,7 +500,7 @@ impl Renderer {
             M32: 0.,
         });
         self.ctx.Clear(Some(&color(0., 0., 0., 0.)));
-        let media_cover = if m.expanded && m.page() == Page::Music {
+        let media_cover = if m.cover_visible() {
             m.media.as_ref().and_then(|media| media.cover.as_ref())
         } else {
             None
@@ -526,10 +527,12 @@ impl Renderer {
                         dpiY: 96.,
                     },
                 )?;
+                self.disc_brush = Some(self.ctx.CreateBitmapBrush(&bitmap, None, None)?);
                 self.cover = Some((cover.clone(), bitmap, cover_spectrum_palette(cover)));
             }
         } else {
             self.cover = None;
+            self.disc_brush = None;
         }
         // The existing Isle island keeps a black surface. Cover color belongs
         // to the separate floating player, so artwork stays in the cover only.
@@ -545,6 +548,27 @@ impl Renderer {
         sink.Close()?;
         self.ink(background_color);
         self.ctx.FillGeometry(&shape, &self.brush, None);
+        // Clip every content frame to the same animated outline used for input.
+        // A spring interrupted mid-flight must never expose rectangular page edges.
+        let mut layer = D2D1_LAYER_PARAMETERS {
+            contentBounds: rect(Rect {
+                x: 0.,
+                y: 0.,
+                w: HOST,
+                h: HOST,
+            }),
+            geometricMask: std::mem::ManuallyDrop::new(Some(shape.cast()?)),
+            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            maskTransform: Matrix3x2 {
+                M11: 1.,
+                M22: 1.,
+                ..Default::default()
+            },
+            opacity: 1.,
+            ..Default::default()
+        };
+        self.ctx.PushLayer(&layer, None);
+        std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
         if m.expanded {
             self.ink(color(1., 1., 1., 0.1));
             self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
@@ -986,31 +1010,24 @@ impl Renderer {
             if m.timer_active || m.timer_finished {
                 self.compact_timer(m)?;
             } else if vertical(m.edge) {
-                self.glyph(
-                    5,
-                    Rect {
-                        x: o.x,
-                        y: o.y + 10.,
-                        w: m.width.value,
-                        h: 28.,
-                    },
-                    blue,
-                )?;
-                self.spectrum(o.x + 4., o.y + m.height.value - 25., m);
+                self.compact_artwork(m)?;
+                let inset = if m.attached { m.shoulder.value } else { 0. };
+                self.spectrum(
+                    o.x + m.width.value / 2. - 11.,
+                    o.y + m.height.value - inset - 18.,
+                    m,
+                );
             } else {
-                self.glyph(
-                    5,
-                    Rect {
-                        x: o.x + 8.,
-                        y: o.y,
-                        w: 28.,
-                        h: m.height.value,
-                    },
-                    blue,
-                )?;
-                self.spectrum(o.x + m.width.value - 34., o.y + m.height.value / 2., m);
+                self.compact_artwork(m)?;
+                let inset = if m.attached { m.shoulder.value } else { 0. };
+                self.spectrum(
+                    o.x + m.width.value - inset - 30.,
+                    o.y + m.height.value / 2.,
+                    m,
+                );
             }
         }
+        self.ctx.PopLayer();
         self.ctx.EndDraw(None, None)?;
         self.swap.Present(1, 0).ok()?;
         self.frames += 1;
@@ -1044,6 +1061,42 @@ impl Renderer {
                 color(sample[0], sample[1], sample[2], 1.),
             );
         }
+    }
+    unsafe fn compact_artwork(&self, m: &Model) -> Result<()> {
+        let r = m.compact_cover();
+        self.fill(r, 10., color(1., 1., 1., 0.06));
+        if let (Some((cover, _, _)), Some(brush)) = (&self.cover, &self.disc_brush) {
+            let angle = m.disc_angle;
+            let (sin, cos) = angle.sin_cos();
+            let sx = r.w / cover.width as f32;
+            let sy = r.h / cover.height as f32;
+            brush.SetTransform(&Matrix3x2 {
+                M11: sx * cos,
+                M12: sx * sin,
+                M21: -sy * sin,
+                M22: sy * cos,
+                M31: r.x + 10. - 10. * cos + 10. * sin,
+                M32: r.y + 10. - 10. * sin - 10. * cos,
+            });
+            self.ctx.FillEllipse(
+                &D2D1_ELLIPSE {
+                    point: point(r.x + 10., r.y + 10.),
+                    radiusX: 10.,
+                    radiusY: 10.,
+                },
+                brush,
+            );
+        } else {
+            self.icons.draw(
+                Icon::Music,
+                r.x + 4.,
+                r.y + 4.,
+                12.,
+                2.,
+                color(1., 1., 1., 0.3),
+            )?;
+        }
+        Ok(())
     }
 }
 
