@@ -25,7 +25,7 @@ try:
  # F7 changes to a long title; arrow keys focus volume then Enter.
  u.PostMessageW(hwnd,0x100,0x76,0);time.sleep(.2)
  ImageGrab.grab((bounds.left,bounds.top,bounds.right,bounds.bottom)).save(out/'long-title.png')
- u.PostMessageW(hwnd,0x100,0x27,0);u.PostMessageW(hwnd,0x100,0x0d,0);time.sleep(.3)
+ u.PostMessageW(hwnd,0x100,0x27,0);u.PostMessageW(hwnd,0x100,0x27,0);u.PostMessageW(hwnd,0x100,0x0d,0);time.sleep(.3)
  ImageGrab.grab((bounds.left,bounds.top,bounds.right,bounds.bottom)).save(out/'volume.png')
  u.PostMessageW(hwnd,0x100,0x1b,0);u.PostMessageW(hwnd,0x100,0x1b,0);time.sleep(.3)
  ImageGrab.grab((bounds.left,bounds.top,bounds.right,bounds.bottom)).save(out/'compact.png')

@@ -30,6 +30,7 @@ pub struct Renderer {
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub scale: f32,
+    pub title_overflow: bool,
 }
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -129,6 +130,7 @@ impl Renderer {
             layouts: HashMap::new(),
             frames: 0,
             scale,
+            title_overflow: false,
         })
     }
     unsafe fn ink(&self, c: D2D1_COLOR_F) {
@@ -294,10 +296,16 @@ impl Renderer {
             }
         }
     }
-    pub unsafe fn draw(&mut self, m: &Model, hover: Option<Hit>) -> Result<()> {
+    pub unsafe fn draw(
+        &mut self,
+        m: &Model,
+        hover: Option<Hit>,
+        pressed: Option<Hit>,
+    ) -> Result<()> {
         let white = color(0.94, 0.96, 1., 1.);
         let gray = color(0.5, 0.55, 0.6, 1.);
         let blue = color(0.45, 0.76, 1., 1.);
+        self.title_overflow = false;
         self.ctx.BeginDraw();
         self.ctx.SetTransform(&Matrix3x2 {
             M11: 1.,
@@ -320,6 +328,32 @@ impl Renderer {
         self.ctx.FillGeometry(&shape, &self.brush, None);
         let c = m.body();
         if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
+            // Focus and press feedback share the same hit rectangles as input.
+            for (hit, r) in m.controls() {
+                if !matches!(hit, Hit::Tool(_))
+                    && m.page() != Page::Music
+                    && hover == Some(hit)
+                    && hit != Hit::Volume
+                {
+                    self.fill(r, 12., color(1., 1., 1., 0.1));
+                }
+                if pressed == Some(hit) {
+                    self.fill(r, 12., color(1., 1., 1., 0.16));
+                }
+                if m.focus == Some(hit) {
+                    self.ink(blue);
+                    self.ctx.DrawRoundedRectangle(
+                        &D2D1_ROUNDED_RECT {
+                            rect: rect(r),
+                            radiusX: 12.,
+                            radiusY: 12.,
+                        },
+                        &self.brush,
+                        1.,
+                        None,
+                    );
+                }
+            }
             if m.tool_count > 0 {
                 self.ctx
                     .PushAxisAlignedClip(&rect(m.bar()), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -440,6 +474,7 @@ impl Renderer {
                         cached
                     };
                     let distance = (title_width - title_rect.w).max(0.);
+                    self.title_overflow = distance > 0.;
                     let shift = if m.reduced {
                         0.
                     } else {

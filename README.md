@@ -13,6 +13,8 @@ cargo build --release --manifest-path native/Cargo.toml
 
 启动即显示独立原型岛。点击空白展开/收起，Alt+F4 退出。原型不注册开机启动、不读取或写入旧版设置、不占用旧版快捷键。
 
+构建会把仓库已有的三个 MiSans 字重复制到可执行文件旁的 `fonts/`。复制原型到其他目录时请同时复制该目录；字体通过 DirectWrite 私有集合加载，不安装到系统。缺少字体时回退到 Segoe UI，诊断报告记录实际 `fontFamily`。
+
 ```powershell
 ./native/target/release/isle-native.exe --page music --attached --long-title
 ./native/target/release/isle-native.exe --page weather --edge left --attached
@@ -25,7 +27,8 @@ cargo build --release --manifest-path native/Cargo.toml
 | F5 | 切换悬浮和贴边 |
 | F6 | 切换减少动画 |
 | F7 | 切换长短标题 |
-| 方向键 / Tab，Enter | 选择并打开工具 |
+| 方向键，Enter | 选择并打开工具；聚焦音量刻度尺时调节音量 |
+| Tab / Shift+Tab，Enter / Space | 遍历并激活工具与页面控件 |
 | Escape | 详情返回音乐，音乐收起 |
 | 拖动工具栏或滚轮 | 浏览后面的时间、天气按钮 |
 | Space | 切换模拟播放状态 |
@@ -35,13 +38,14 @@ cargo build --release --manifest-path native/Cargo.toml
 ## 已实现范围
 
 - 透明合成窗口、浮动和四边凹肩轮廓；可见轮廓与原生窗口区域共用几何数据。
-- 可中断的宽、高、圆角、凹肩弹簧；静止时停止动画计时器，按需绘制。
+- 可中断的宽、高、圆角、凹肩弹簧；高精度单次计时器请求约 60 次/秒，静止时取消帧等待，按需绘制，不修改系统全局计时精度。
 - 纯图标紧凑工具栏、横向拖动、返回、空白收起与手势取消。
 - 音乐、音量、倒计时、时间、天气五个原型页；只有当前页面实例，收起释放页面。
 - 本地倒计时截止时间独立于页面；时间读取系统本地时间。
-- 长标题往返滚动和渐变，减少动画模式静止。
+- 长标题往返滚动和渐变，切歌、返回音乐和外形变化时重置停留；标题宽度只在创建布局时测量。
+- 自动读取并响应 Windows 客户端动画设置；F6 或命令行提供本次运行的覆盖。时间页下一次刷新对齐整分钟，响应系统时间变化。
 
-**这是绘制和交互原型，尚不能替换日常版本。** 音乐、封面图形、频谱、音量及天气是演示数据；浮动播放器和设置按钮仅显示说明。真实媒体、设备列表、网络天气、Studio、托盘、无障碍语义和视频均未迁移。系统减少动画偏好自动读取、多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
+**这是绘制和交互原型，尚不能替换日常版本。** 音乐、封面图形、频谱、音量及天气是演示数据；浮动播放器和设置按钮仅显示说明。真实媒体、设备列表、网络天气、Studio、托盘、无障碍语义和视频均未迁移。多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
 
 页面状态是 `Option<PageInstance>`，切换直接替换，收起设为 `None`。当前原型页面没有独占网络请求、Canvas 或后台采集任务；渲染器保留有界的字体和两个演示标题布局缓存。该模型测试不能替代未来真实业务接入后的订阅和请求释放测试。
 
@@ -59,4 +63,6 @@ python native/scripts/interaction.py
 
 所有测试输出位于忽略提交的 `native/artifacts/`。性能报告里的 `drawAndPresentP95Ms` 包含 Present 等待，**不是帧间隔，也不是输入延迟**。CPU 百分比按机器全部逻辑处理器归一化；私有内存和工作集分别记录。
 
-实现与验收进展见 [首轮记录](../docs/native-ui-prototype-results.md)。
+`presentCallIntervalMeanMs/P95Ms` 是预热 5 秒后连续动画期间相邻绘制/Present 返回的间隔，不代表 DWM 最终上屏时间。`highResolutionTimer` 记录是否使用了高精度路径；不支持时回退普通等待计时器。日志采样数组有上限，未指定 `--log` 时不收集逐帧数据。
+
+实现与验收进展见 [首轮记录](../docs/native-ui-prototype-results.md) 和 [帧调度改进记录](../docs/native-ui-frame-timing-results.md)。

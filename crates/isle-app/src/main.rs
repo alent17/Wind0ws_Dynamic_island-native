@@ -209,11 +209,20 @@ impl App {
         self.model.step(dt, (now - self.start).as_secs_f64());
         self.region()?;
         let start = Instant::now();
-        if let Err(error) = self.renderer.draw(&self.model, self.hover) {
+        if let Err(error) = self.renderer.draw(
+            &self.model,
+            self.hover,
+            self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
+        ) {
             eprintln!("Rendering failed, rebuilding device: {error}");
             self.renderer = Renderer::new(self.window, self.scale)?;
-            self.renderer.draw(&self.model, self.hover)?;
+            self.renderer.draw(
+                &self.model,
+                self.hover,
+                self.down.filter(|_| !self.dragged).map(|(_, h, _)| h),
+            )?;
         }
+        self.model.title_overflow = self.renderer.title_overflow;
         let presented = Instant::now();
         if self.log.is_some() && self.model.continuous() && self.start.elapsed().as_secs() >= 5 {
             if let Some(last) = self.last_present {
@@ -288,7 +297,6 @@ impl App {
             Event::Cancel => {
                 self.down = None;
                 self.dragged = false;
-                changed = false;
             }
             Event::Tick => {
                 let elapsed = self.start.elapsed().as_secs_f64();
@@ -387,7 +395,13 @@ impl App {
             }
             Event::Key(key) => match key {
                 0x1b => self.model.back(),
-                0x20 => self.model.playing = !self.model.playing,
+                0x20 => {
+                    if let Some(hit) = self.model.focus {
+                        self.action(hit);
+                    } else {
+                        self.model.playing = !self.model.playing;
+                    }
+                }
                 0x70..=0x73 => {
                     self.model.edge =
                         [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left][(key - 0x70) as usize];
@@ -404,20 +418,16 @@ impl App {
                     self.model.retarget();
                 }
                 0x76 => self.model.change_track(),
-                0x09 | 0x25 | 0x27 => {
-                    if self.model.expanded && self.model.tool_count > 0 {
-                        let index = if let Some(Hit::Tool(i)) = self.model.focus {
-                            i
-                        } else {
-                            0
-                        };
-                        let next = if key == 0x25 {
-                            index.saturating_sub(1)
-                        } else {
-                            (index + 1) % self.model.tool_count
-                        };
-                        self.model.focus = Some(Hit::Tool(next));
-                        self.model.scroll = ((next.saturating_sub(4)) * 32) as f32;
+                0x09 => self
+                    .model
+                    .move_focus(GetKeyState(VK_SHIFT.0 as i32) < 0, false),
+                0x25 | 0x27 => {
+                    if self.model.focus == Some(Hit::Volume) {
+                        self.model.volume = (self.model.volume
+                            + if key == 0x25 { -1. } else { 1. })
+                        .clamp(0., 100.);
+                    } else {
+                        self.model.move_focus(key == 0x25, true);
                     }
                 }
                 0x0d => {

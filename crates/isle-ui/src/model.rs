@@ -46,6 +46,7 @@ pub struct Model {
     pub now: f64,
     pub track: usize,
     pub title_started: f64,
+    pub title_overflow: bool,
     pub tool_count: usize,
 }
 impl Default for Model {
@@ -71,6 +72,7 @@ impl Default for Model {
             now: 0.,
             track: 0,
             title_started: 0.,
+            title_overflow: false,
             tool_count: 7,
         }
     }
@@ -169,7 +171,7 @@ impl Model {
     pub fn continuous(&self) -> bool {
         self.moving()
             || (!self.reduced && self.playing && (!self.expanded || self.page() == Page::Music))
-            || (!self.reduced && self.expanded && self.page() == Page::Music && self.track == 1)
+            || (!self.reduced && self.expanded && self.page() == Page::Music && self.title_overflow)
     }
     pub fn origin(&self) -> Point {
         offset(
@@ -324,10 +326,44 @@ impl Model {
         Some(
             self.controls()
                 .into_iter()
-                .find(|(_, r)| r.contains(p))
+                .find(|(hit, r)| {
+                    r.contains(p) && (!matches!(hit, Hit::Tool(_)) || self.bar().contains(p))
+                })
                 .map(|(h, _)| h)
                 .unwrap_or(Hit::Blank),
         )
+    }
+    pub fn move_focus(&mut self, backwards: bool, tools_only: bool) {
+        if !self.expanded {
+            return;
+        }
+        let mut targets: Vec<Hit> = (0..self.tool_count).map(Hit::Tool).collect();
+        if !tools_only {
+            targets.extend(
+                self.controls()
+                    .into_iter()
+                    .map(|(h, _)| h)
+                    .filter(|h| !matches!(h, Hit::Tool(_))),
+            );
+        }
+        if targets.is_empty() {
+            self.focus = None;
+            return;
+        }
+        let index = self
+            .focus
+            .and_then(|focus| targets.iter().position(|h| *h == focus));
+        let next = match index {
+            Some(i) if backwards => (i + targets.len() - 1) % targets.len(),
+            Some(i) => (i + 1) % targets.len(),
+            None if backwards => targets.len() - 1,
+            None => 0,
+        };
+        self.focus = Some(targets[next]);
+        if let Hit::Tool(i) = targets[next] {
+            let x = i as f32 * 32.;
+            self.scroll = self.scroll.clamp((x + 28. - 156.).max(0.), x);
+        }
     }
     pub fn scroll_by(&mut self, delta: f32) {
         self.scroll =
@@ -383,6 +419,85 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn keyboard_reaches_every_tool_and_page_control_then_wraps() {
+        let mut m = Model {
+            reduced: true,
+            ..Model::default()
+        };
+        m.switch(Page::Volume);
+        for i in 0..7 {
+            m.move_focus(false, false);
+            assert_eq!(m.focus, Some(Hit::Tool(i)));
+            let r = m.tool(i);
+            assert!(r.x >= m.bar().x && r.x + r.w <= m.bar().x + m.bar().w);
+        }
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Back));
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Volume));
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Tool(0)));
+        m.move_focus(true, false);
+        assert_eq!(m.focus, Some(Hit::Volume));
+    }
+    #[test]
+    fn focus_works_without_tools_and_hidden_toolbar_cannot_receive_clicks() {
+        let mut m = Model {
+            reduced: true,
+            tool_count: 0,
+            ..Model::default()
+        };
+        m.switch(Page::Music);
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Previous));
+        m.tool_count = 7;
+        m.scroll = 14.;
+        let r = m.tool(0);
+        assert_eq!(
+            m.hit(Point {
+                x: r.x + 1.,
+                y: r.y + 14.
+            }),
+            Some(Hit::Blank)
+        );
+        m.toggle();
+        m.move_focus(false, false);
+        assert_eq!(m.focus, None);
+    }
+    #[test]
+    fn title_restarts_after_track_page_and_shape_changes() {
+        let mut m = Model {
+            now: 90.,
+            ..Model::default()
+        };
+        m.change_track();
+        assert_eq!(marquee(100., m.now - m.title_started), 0.);
+        m.now = 100.;
+        m.switch(Page::Music);
+        assert_eq!(m.title_started, 100.);
+        m.now = 110.;
+        m.retarget();
+        assert_eq!(m.title_started, 110.);
+    }
+    #[test]
+    fn title_frames_follow_measured_overflow_visibility_and_motion_preference() {
+        let mut m = Model {
+            reduced: true,
+            playing: false,
+            ..Model::default()
+        };
+        m.switch(Page::Music);
+        m.reduced = false;
+        assert!(!m.continuous());
+        m.title_overflow = true;
+        assert!(m.continuous());
+        m.reduced = true;
+        assert!(!m.continuous());
+        m.switch(Page::Volume);
+        m.reduced = false;
+        assert!(!m.continuous());
+    }
     #[test]
     fn collapsed_pages_are_released() {
         let mut m = Model {
