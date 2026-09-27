@@ -4,6 +4,7 @@ mod artwork;
 mod frame_timer;
 mod media;
 mod render;
+mod spectrum;
 mod system_audio;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 use isle_ui::{geometry::*, model::*};
@@ -24,6 +25,7 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Spectrum,
     Audio,
     Media,
     Paint,
@@ -56,6 +58,10 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        spectrum::UPDATED => {
+            enqueue(Event::Spectrum);
+            LRESULT(0)
+        }
         system_audio::UPDATED => {
             enqueue(Event::Audio);
             LRESULT(0)
@@ -192,6 +198,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 struct App {
     audio: Option<system_audio::AudioService>,
+    spectrum: Option<spectrum::SpectrumService>,
     media: Option<media::MediaService>,
     media_error: Option<String>,
     window: HWND,
@@ -400,6 +407,9 @@ impl App {
         let dt = (now - self.last).as_secs_f32();
         self.last = now;
         let timer_was_running = self.model.timer_deadline.is_some();
+        if self.spectrum.is_some() && !self.spectrum_visible() {
+            self.model.spectrum = Some(SpectrumVisual::default());
+        }
         self.model.step(dt, (now - self.start).as_secs_f64());
         if self.suspended {
             if timer_was_running && self.model.timer_deadline.is_none() {
@@ -459,6 +469,13 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
+        if let Some(service) = &self.spectrum {
+            let active = self.spectrum_visible();
+            service.active(active);
+            if !active {
+                self.model.spectrum = Some(SpectrumVisual::default());
+            }
+        }
         if let Some(audio) = &self.audio {
             audio.active(
                 !self.suspended && self.model.expanded && self.model.page() == Page::Volume,
@@ -510,6 +527,11 @@ impl App {
             y: y as f32 / self.scale,
         }
     }
+    fn spectrum_visible(&self) -> bool {
+        !self.suspended
+            && (!self.model.expanded || self.model.page() == Page::Music)
+            && self.model.media.as_ref().is_none_or(|media| media.playing)
+    }
     unsafe fn action(&mut self, hit: Hit) {
         if !self.model.enabled(hit) {
             return;
@@ -560,7 +582,7 @@ impl App {
                 );
             }
             Hit::Tool(3) => {
-                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体、封面和系统音量。\n--live-audio 单独启用真实音量与输出设备。\n尚未读取旧版设置，真实频谱和天气仍待迁移。"),w!("原型操作"),MB_OK);
+                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体、封面、频谱和系统音量。\n--live-audio 单独启用真实音量与输出设备。\n--live-spectrum 单独验证系统输出频谱。\n尚未读取旧版设置，天气仍待迁移。"),w!("原型操作"),MB_OK);
             }
             Hit::Tool(4) => {
                 self.model.toggle();
@@ -575,6 +597,7 @@ impl App {
                 Event::Tick
                     | Event::Media
                     | Event::Audio
+                    | Event::Spectrum
                     | Event::Diagnostic
                     | Event::Close
                     | Event::Visibility(_)
@@ -589,6 +612,20 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::Spectrum => {
+                if let Some(service) = &self.spectrum {
+                    let frame = service.take();
+                    if self.spectrum_visible() {
+                        if let Some(spectrum) = &mut self.model.spectrum {
+                            spectrum.target = frame.bars;
+                            spectrum.failed = frame.failed;
+                        }
+                    }
+                }
+                // Interpolated bars use the existing frame timer; incoming data must
+                // not add a second stream of presents between those frames.
+                changed = self.spectrum_visible() && self.model.reduced;
+            }
             Event::Audio => {
                 if let Some(service) = &self.audio {
                     let audio = service.take();
@@ -911,6 +948,15 @@ impl App {
                     text.push_str(&format!(",\"audioVolume\":{},\"audioMuted\":{},\"audioDevices\":{},\"audioError\":{},\"audioDeviceMenu\":{}", audio.volume, audio.muted, audio.devices.len(), audio.failed, self.model.device_menu));
                 }
             }
+            if let Some(service) = &self.spectrum {
+                let visual = self.model.spectrum.as_ref().unwrap();
+                text.push_str(&format!(
+                    ",{},\"spectrumError\":{},\"spectrumPeak\":{}",
+                    service.diagnostics(),
+                    visual.failed,
+                    visual.values.iter().copied().fold(0., f32::max)
+                ));
+            }
             if let Some(service) = &self.media {
                 let media = self.model.media.as_ref().unwrap();
                 text.push_str(&format!(
@@ -985,6 +1031,10 @@ unsafe fn run() -> Result<()> {
     }));
     ACCESSIBLE.with(|a| *a.borrow_mut() = Some(accessibility::root(&accessible)));
     let mut model = Model {
+        spectrum: args
+            .iter()
+            .any(|a| a == "--live-spectrum" || a == "--live-media")
+            .then(SpectrumVisual::default),
         audio: args
             .iter()
             .any(|a| a == "--live-audio" || a == "--live-media")
@@ -1029,6 +1079,11 @@ unsafe fn run() -> Result<()> {
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let mut app = App {
+        spectrum: if model.spectrum.is_some() {
+            Some(spectrum::SpectrumService::new(window)?)
+        } else {
+            None
+        },
         audio: if model.audio.is_some() {
             Some(system_audio::AudioService::new(window).map_err(|_| Error::from(E_FAIL))?)
         } else {
@@ -1137,6 +1192,7 @@ unsafe fn run() -> Result<()> {
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     app.media = None;
     app.audio = None;
+    app.spectrum = None;
     DestroyWindow(window)?;
     drop(app);
     CoUninitialize();

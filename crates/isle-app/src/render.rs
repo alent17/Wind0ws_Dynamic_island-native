@@ -991,7 +991,9 @@ impl Renderer {
     }
     unsafe fn spectrum(&self, x: f32, y: f32, m: &Model) {
         for i in 0..6 {
-            let h = if !m.playing || m.media.is_some() {
+            let h = if let Some(spectrum) = &m.spectrum {
+                2. + 15. * spectrum.values[i].clamp(0., 1.)
+            } else if !m.playing || m.media.is_some() {
                 2.
             } else if m.reduced {
                 8.

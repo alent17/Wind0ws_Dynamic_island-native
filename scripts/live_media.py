@@ -1,6 +1,6 @@
 """Read-only GSMTC/lifecycle probe. Never sends media playback commands.
 
-60-second visible and hidden samples, then 12 page release/reacquire cycles.
+60-second visible and hidden samples (5 with --quick), then 12 release cycles.
 Song names and source application identities are not written to the report.
 """
 import ctypes as c
@@ -17,6 +17,7 @@ u.ShowWindow.argtypes = [w.HWND, c.c_int]
 exe = ROOT / 'target/release/isle-native.exe'
 report = OUT / 'live-media-snapshot.json'
 require_artwork = '--require-artwork' in sys.argv
+quick = '--quick' in sys.argv
 proc = subprocess.Popen([str(exe), '--live-media', '--page', 'music', '--reduced-motion', '--benchmark', '--log', str(report)])
 hwnd = wait_window(proc)
 tracked = psutil.Process(proc.pid)
@@ -36,8 +37,13 @@ def snap():
 def expect(active):
     for _ in range(50):
         state = snap()
-        if state['mediaActive'] == active and state['mediaManagerAlive'] == active:
+        spectrum_active = active and state.get('mediaPlaying', False)
+        spectrum_ready = ('spectrumActive' not in state or
+                          (state['spectrumActive'] == spectrum_active and
+                           state['spectrumCaptureAlive'] == spectrum_active))
+        if state['mediaActive'] == active and state['mediaManagerAlive'] == active and spectrum_ready:
             assert not state['mediaError'], state
+            assert not state.get('spectrumError', False), state
             return state
         time.sleep(.1)
     raise AssertionError(state)
@@ -76,7 +82,7 @@ try:
         bounds = w.RECT()
         u.GetWindowRect(hwnd, c.byref(bounds))
         ImageGrab.grab((bounds.left, bounds.top, bounds.right, bounds.bottom)).save(OUT / 'artwork-live.png')
-    visible = sample(60)
+    visible = sample(5 if quick else 60)
     visible_end = snap()
     print('visible complete', visible_end, flush=True)
     u.ShowWindow(hwnd, 0)
@@ -87,12 +93,16 @@ try:
             if not hidden_start['artworkBusy']: break
             time.sleep(.1)
         assert not hidden_start['artworkBusy'] and not hidden_start['coverTextureAlive']
-    hidden = sample(60)
+    hidden = sample(5 if quick else 60)
     hidden_end = snap()
     assert hidden_end['mediaPolls'] == hidden_start['mediaPolls']
     assert hidden_end['frames'] == hidden_start['frames']
     assert not hidden_end['rendererAlive'] and hidden_end['livePages'] == 0
     assert hidden_end['timerIntervalMs'] == 0
+    if 'spectrumAnalyses' in hidden_end:
+        assert hidden_end['spectrumAnalyses'] == hidden_start['spectrumAnalyses']
+        assert hidden_end['spectrumPackets'] == hidden_start['spectrumPackets']
+        assert hidden_end['spectrumPeak'] == 0
     if require_artwork:
         assert hidden_end['artworkHttpRequests'] == hidden_start['artworkHttpRequests']
         assert not hidden_end['artworkBusy']
@@ -124,7 +134,9 @@ try:
               'cycles': cycles, 'children': [p.name() for p in tracked.children(recursive=True)],
               'beforeCycles': before_cycles, 'afterCycles': snap(),
               'playbackCommandsSent': 0}
-    (OUT / ('artwork-media-results.json' if require_artwork else 'live-media-results.json')).write_text(json.dumps(result, indent=2), encoding='utf-8')
+    result['sampleSeconds'] = 5 if quick else 60
+    name = 'artwork-media-results' if require_artwork else 'live-media-results'
+    (OUT / (name + ('-quick' if quick else '') + '.json')).write_text(json.dumps(result, indent=2), encoding='utf-8')
     for name, rows in [('visible', visible), ('hidden', hidden)]:
         print(name, {key: sum(r[key] for r in rows)/len(rows) for key in rows[0]}, flush=True)
     print('PASS: media session release/reacquire, no hidden polling or rendering, 12 cycles', flush=True)

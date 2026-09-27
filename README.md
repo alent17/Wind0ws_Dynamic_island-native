@@ -21,6 +21,7 @@ cargo build --release --manifest-path native/Cargo.toml
 ./native/target/release/isle-native.exe --page volume --paused --reduced-motion
 ./native/target/release/isle-native.exe --live-media --page music
 ./native/target/release/isle-native.exe --live-audio --page volume
+./native/target/release/isle-native.exe --live-spectrum --page music
 ```
 
 | 操作 | 行为 |
@@ -54,11 +55,15 @@ cargo build --release --manifest-path native/Cargo.toml
 
 `--live-audio` 单独启用真实系统音量和输出设备；`--live-media` 同时启用它们。音量页刻度尺支持拖动和键盘，点击数值切换静音，点击设备名进入输出设备列表。列表每页最多 4 项，方向键、滚轮和翻页按钮切换；Escape 先返回音量页，再返回音乐页。设备切换会更改 Windows 默认输出，包括通信角色。默认演示模式不修改系统音量。
 
-天气仍是演示数据；真实模式下频谱位置显示静态占位，尚未接入 WASAPI。浮动播放器和设置按钮仅显示说明。网络天气、Studio、托盘和视频均未迁移。基础控件无障碍接口已接入，实际屏幕阅读器、文本阅读语义、完整 UIA RangeValue 模式及 tooltip 仍待补齐；多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
+`--live-media` 已接入 WASAPI 六段频谱：读取当前默认输出设备的系统混音，音乐页或收起岛可见且媒体正在播放时采集；其他功能页、暂停或隐藏时停止并释放。`--live-spectrum` 单独验证输出采集，标题和播放按钮仍为演示数据。分析最多约 20 次/秒，界面平滑插值沿用约 60Hz 帧调度；减少动画模式直接显示采集结果。无输入时回到平线，不用模拟数据替代真实频谱。设备变更约一秒内检测并重建，采集失败退避重试。仅分析输出，不读取麦克风，也不保存原始声音。
+
+天气仍是演示数据。浮动播放器和设置按钮仅显示说明。网络天气、Studio、托盘和视频均未迁移。基础控件无障碍接口已接入，实际屏幕阅读器、文本阅读语义、完整 UIA RangeValue 模式及 tooltip 仍待补齐；多 DPI 实机、设备丢失、睡眠恢复和旧版动画轨迹校准仍待验收。
 
 系统音量服务仅在可见音量页采集，每秒更新；切页、收起或隐藏释放 COM 端点与枚举器并停止轮询。拖动命令合并且队列最多 8 条，执行前核对默认设备身份，丢弃超过 2 秒的命令。设备列表有独立无障碍名称，设备重排后旧控件引用失效。默认设备切换沿用旧后端的非公开 `IPolicyConfig` 接口，仍需多系统版本和真实切换验收。
 
 只读音量与生命周期测试：`python native/scripts/live_audio.py`。需要至少一个可用输出设备；可见、隐藏各采样 60 秒并执行 12 次页面释放/重建，验证期间不发送音量、静音或设备切换命令。阶段报告见 [系统音量迁移](../docs/native-ui-system-audio.md)。
+
+频谱验证：`python native/scripts/live_spectrum.py`，静态 UI 基线、实时频谱、隐藏各采样 60 秒，随后检查 12 次切页和快速隐藏/恢复；`--quick` 使用 5 秒样本。需要系统已有声音播放，脚本不会自动播放或修改音量。基线使用同一原生构建，不是旧 WebView2 完整程序。阶段结果和限制见 [实时频谱迁移](../docs/native-ui-spectrum.md)。
 
 页面状态是 `Option<PageInstance>`，切换直接替换，收起设为 `None`。渲染器只保留当前标题布局，离开音乐页后释放。真实媒体服务在专用 WinRT 线程运行，可见音乐页及收起状态按秒读取；其他功能页、隐藏和最小化期间释放媒体会话、事件订阅与管理器。只保留一个最新快照和最多 8 条待处理命令；异步操作支持取消及 2 秒超时。当前只有一个原生窗口，未来多窗口共享消费者计数仍需实现。
 

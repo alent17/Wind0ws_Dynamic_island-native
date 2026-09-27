@@ -31,6 +31,7 @@ pub struct PageInstance {
     pub generation: u64,
 }
 pub struct Model {
+    pub spectrum: Option<SpectrumVisual>,
     pub audio: Option<isle_core::AudioSnapshot>,
     pub device_menu: bool,
     pub device_offset: usize,
@@ -62,6 +63,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            spectrum: None,
             audio: None,
             device_menu: false,
             device_offset: 0,
@@ -196,6 +198,9 @@ impl Model {
     }
     pub fn step(&mut self, dt: f32, now: f64) {
         self.now = now;
+        if let Some(spectrum) = &mut self.spectrum {
+            spectrum.step(dt, self.reduced);
+        }
         self.width.advance(dt);
         self.height.advance(dt);
         self.radius.advance(dt);
@@ -217,10 +222,14 @@ impl Model {
     pub fn continuous(&self) -> bool {
         self.moving()
             || (self.media.is_none()
+                && self.spectrum.is_none()
                 && !self.reduced
                 && self.playing
                 && (!self.expanded || self.page() == Page::Music))
             || (!self.reduced && self.expanded && self.page() == Page::Music && self.title_overflow)
+            || (!self.reduced
+                && (!self.expanded || self.page() == Page::Music)
+                && self.spectrum.as_ref().is_some_and(SpectrumVisual::moving))
     }
     pub fn origin(&self) -> Point {
         offset(
@@ -530,6 +539,29 @@ impl Model {
         }
     }
 }
+#[derive(Default)]
+pub struct SpectrumVisual {
+    pub values: [f32; 6],
+    pub target: [f32; 6],
+    pub failed: bool,
+}
+impl SpectrumVisual {
+    pub fn moving(&self) -> bool {
+        self.values
+            .iter()
+            .zip(self.target)
+            .any(|(v, t)| (v - t).abs() > 0.002)
+    }
+    pub fn step(&mut self, dt: f32, reduced: bool) {
+        for (value, target) in self.values.iter_mut().zip(self.target) {
+            if reduced || (*value - target).abs() <= 0.002 {
+                *value = target;
+            } else {
+                *value += (target - *value) * (1. - (-dt.clamp(0., 0.1) / 0.055).exp());
+            }
+        }
+    }
+}
 pub fn marquee(distance: f32, seconds: f64) -> f32 {
     if distance <= 0. {
         return 0.;
@@ -549,6 +581,28 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_spectrum_settles_and_hidden_pages_do_not_request_animation_frames() {
+        let mut m = Model {
+            playing: false,
+            spectrum: Some(SpectrumVisual::default()),
+            ..Default::default()
+        };
+        m.spectrum.as_mut().unwrap().target = [0.8; 6];
+        assert!(m.continuous());
+        for i in 0..120 {
+            m.step(1. / 60., i as f64 / 60.);
+        }
+        assert!(!m.continuous());
+        m.spectrum.as_mut().unwrap().target = [0.; 6];
+        m.reduced = true;
+        m.step(0., 3.);
+        assert_eq!(m.spectrum.as_ref().unwrap().values, [0.; 6]);
+        m.switch(Page::Volume);
+        m.reduced = false;
+        m.spectrum.as_mut().unwrap().target = [1.; 6];
+        assert!(!m.continuous());
+    }
     #[test]
     fn live_progress_only_ticks_when_it_can_change_visible_pixels() {
         let mut m = Model {
