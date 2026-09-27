@@ -577,6 +577,7 @@ impl App {
         self.total_frames += 1;
         self.font_family = self.renderer.as_ref().unwrap().font_family;
         self.model.title_overflow = self.renderer.as_ref().unwrap().title_overflow;
+        self.model.content_animating = self.renderer.as_ref().unwrap().content_animating;
         let presented = Instant::now();
         if self.log.is_some() && self.model.continuous() && self.start.elapsed().as_secs() >= 5 {
             if let Some(last) = self.last_present {

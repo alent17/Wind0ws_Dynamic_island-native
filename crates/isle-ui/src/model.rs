@@ -75,6 +75,7 @@ pub struct Model {
     pub title_started: f64,
     pub title_overflow: bool,
     pub disc_angle: f32,
+    pub content_animating: bool,
     pub tool_count: usize,
     pub tool_mask: [bool; 7],
 }
@@ -121,6 +122,7 @@ impl Default for Model {
             title_started: 0.,
             title_overflow: false,
             disc_angle: 0.,
+            content_animating: false,
             tool_count: 7,
             tool_mask: [true; 7],
         }
@@ -297,6 +299,7 @@ impl Model {
     }
     pub fn continuous(&self) -> bool {
         self.moving()
+            || (!self.reduced && self.content_animating)
             || self.disc_spinning()
             || (self.media.is_none()
                 && self.spectrum.is_none()

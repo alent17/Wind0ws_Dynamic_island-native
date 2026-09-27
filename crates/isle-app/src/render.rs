@@ -19,6 +19,11 @@ use windows::{
     },
 };
 pub struct Renderer {
+    digits: Vec<Option<isle_ui::rolling::Digit>>,
+    digits_page: (u64, bool),
+    number_used: bool,
+    pub content_animating: bool,
+    page_enter: Option<(u64, f64)>,
     icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
     disc_brush: Option<ID2D1BitmapBrush>,
@@ -380,6 +385,11 @@ impl Renderer {
             formats: HashMap::new(),
             cover: None,
             disc_brush: None,
+            digits: Vec::new(),
+            digits_page: (0, false),
+            number_used: false,
+            content_animating: false,
+            page_enter: None,
             layouts: HashMap::new(),
             frames: 0,
             title_overflow: false,
@@ -484,6 +494,15 @@ impl Renderer {
         hover: Option<Hit>,
         pressed: Option<Hit>,
     ) -> Result<()> {
+        if self.digits_page != (m.generation, m.expanded) {
+            self.digits.clear();
+            self.digits_page = (m.generation, m.expanded);
+        }
+        self.number_used = false;
+        self.content_animating = false;
+        if !m.expanded {
+            self.page_enter = None;
+        }
         if !m.expanded || m.page() != Page::Music {
             self.layouts.clear();
         }
@@ -663,6 +682,43 @@ impl Renderer {
                     color(235. / 255., 244. / 255., 1., 0.78),
                 )?;
             }
+            let started = match self.page_enter {
+                Some((generation, started)) if generation == m.generation => started,
+                _ => {
+                    self.page_enter = Some((m.generation, m.now));
+                    m.now
+                }
+            };
+            let progress = if m.reduced || m.page() == Page::Music {
+                1.
+            } else {
+                ((m.now - started) / 0.18).clamp(0., 1.) as f32
+            };
+            // CSS `ease` (.25,.1,.25,1), matching page-enter in the Svelte surface.
+            let eased = isle_ui::rolling::page_ease(progress);
+            self.content_animating |= progress < 1.;
+            let page_layer = D2D1_LAYER_PARAMETERS {
+                contentBounds: rect(Rect {
+                    x: 0.,
+                    y: 0.,
+                    w: HOST,
+                    h: HOST,
+                }),
+                maskTransform: Matrix3x2 {
+                    M11: 1.,
+                    M22: 1.,
+                    ..Default::default()
+                },
+                opacity: eased,
+                ..Default::default()
+            };
+            self.ctx.PushLayer(&page_layer, None);
+            self.ctx.SetTransform(&Matrix3x2 {
+                M11: 1.,
+                M22: 1.,
+                M32: (1. - eased) * 4.,
+                ..Default::default()
+            });
             match m.page() {
                 Page::Music => {
                     self.fill(
@@ -1005,6 +1061,12 @@ impl Renderer {
                 Page::Clock => self.clock_panel(m)?,
                 Page::Weather => self.weather_panel(m, hover)?,
             }
+            self.ctx.SetTransform(&Matrix3x2 {
+                M11: 1.,
+                M22: 1.,
+                ..Default::default()
+            });
+            self.ctx.PopLayer();
         } else if !m.expanded {
             let o = m.origin();
             if m.timer_active || m.timer_finished {
@@ -1028,6 +1090,9 @@ impl Renderer {
             }
         }
         self.ctx.PopLayer();
+        if !self.number_used {
+            self.digits.clear();
+        }
         self.ctx.EndDraw(None, None)?;
         self.swap.Present(1, 0).ok()?;
         self.frames += 1;

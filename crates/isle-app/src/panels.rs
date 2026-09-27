@@ -37,6 +37,7 @@ impl Renderer {
     // .015em gaps. Plain DrawText uses different kerning and cannot match it.
     unsafe fn number(
         &mut self,
+        m: &Model,
         text: &str,
         r: Rect,
         size: u32,
@@ -54,25 +55,54 @@ impl Renderer {
         let f = self.format_with_weight(size, DWRITE_FONT_WEIGHT_BOLD)?;
         f.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
         f.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-        for character in text.chars() {
+        self.number_used = true;
+        self.digits.resize_with(text.chars().count(), || None);
+        for (index, character) in text.chars().enumerate() {
             let w = if character == ':' {
                 0.24 * em
             } else {
                 0.62 * em
             };
-            let mut buffer = [0u16; 2];
-            self.text_utf16(
-                character.encode_utf16(&mut buffer),
-                Rect {
-                    x,
-                    y: r.y,
-                    w,
-                    h: em,
-                },
-                size,
-                DWRITE_FONT_WEIGHT_BOLD,
-                ink,
-            )?;
+            let cell = Rect {
+                x,
+                y: r.y,
+                w,
+                h: em,
+            };
+            self.ctx
+                .PushAxisAlignedClip(&rect(cell), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            if let Some(digit) = character.to_digit(10) {
+                let state =
+                    self.digits[index].get_or_insert_with(|| isle_ui::rolling::Digit::new(digit));
+                let position = state.update(digit, m.now, m.reduced);
+                self.content_animating |= state.active(m.now);
+                let first = position.floor() as i32;
+                for value in first..=first + 1 {
+                    let mut buffer = [0u16; 2];
+                    let symbol = char::from_digit(value.rem_euclid(10) as u32, 10).unwrap();
+                    self.text_utf16(
+                        symbol.encode_utf16(&mut buffer),
+                        Rect {
+                            y: r.y + (value as f32 - position) * em,
+                            ..cell
+                        },
+                        size,
+                        DWRITE_FONT_WEIGHT_BOLD,
+                        ink,
+                    )?;
+                }
+            } else {
+                self.digits[index] = None;
+                let mut buffer = [0u16; 2];
+                self.text_utf16(
+                    character.encode_utf16(&mut buffer),
+                    cell,
+                    size,
+                    DWRITE_FONT_WEIGHT_BOLD,
+                    ink,
+                )?;
+            }
+            self.ctx.PopAxisAlignedClip();
             x += w + 0.015 * em;
         }
         f.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)?;
@@ -274,6 +304,7 @@ impl Renderer {
             color(1., 1., 1., 0.48),
         )?;
         self.number(
+            m,
             &format!("{}", m.volume.round() as u32),
             Rect {
                 x: p.x + p.w - 54.,
@@ -442,6 +473,7 @@ impl Renderer {
                     49.
                 };
             self.number(
+                m,
                 &countdown_label(m.timer_left),
                 Rect {
                     x: p.x + 110.,
@@ -556,6 +588,7 @@ impl Renderer {
             color(1., 1., 1., 0.5),
         )?;
         self.number(
+            m,
             &if time.is_some() {
                 format!("{:02}:{:02}", st.wHour, st.wMinute)
             } else {
@@ -833,6 +866,7 @@ impl Renderer {
             )?;
         } else {
             self.number(
+                m,
                 &countdown_label(m.timer_left),
                 r,
                 if vertical { 11 } else { 13 },
