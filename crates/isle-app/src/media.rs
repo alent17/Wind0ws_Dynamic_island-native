@@ -33,6 +33,8 @@ pub struct Update {
 }
 struct Shared {
     artwork: Arc<crate::artwork::Statistics>,
+    selection: Mutex<Selection>,
+    revision: AtomicU64,
     polls: AtomicU64,
     updates: AtomicU64,
     manager_alive: AtomicBool,
@@ -47,9 +49,11 @@ pub struct MediaService {
     worker: Option<JoinHandle<()>>,
 }
 impl MediaService {
-    pub fn new(hwnd: HWND, start: Instant) -> std::io::Result<Self> {
+    pub fn new(hwnd: HWND, start: Instant, selection: Selection) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             artwork: Arc::default(),
+            selection: Mutex::new(selection),
+            revision: AtomicU64::new(0),
             polls: AtomicU64::new(0),
             updates: AtomicU64::new(0),
             manager_alive: AtomicBool::new(false),
@@ -85,6 +89,16 @@ impl MediaService {
             sender,
             worker: Some(worker),
         })
+    }
+    pub fn set_selection(&self, selection: Selection) {
+        *self
+            .shared
+            .selection
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = selection;
+        self.shared.revision.fetch_add(1, Ordering::AcqRel);
+        *self.shared.update.lock().unwrap_or_else(|e| e.into_inner()) = Update::default();
+        let _ = self.sender.try_send(Command::Wake);
     }
     pub fn set_active(&self, active: bool) {
         if self.shared.active.swap(active, Ordering::AcqRel) != active {
@@ -198,7 +212,11 @@ fn poll(
             candidates.push((session, id, playing, updated));
         }
     }
-    let selection = Selection::default();
+    let selection = shared
+        .selection
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let previous_source = shared
         .update
         .lock()
@@ -332,6 +350,7 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
     let mut current: Option<Session> = None;
     let mut sequence = 0;
     let mut next_poll = Instant::now();
+    let mut revision = shared.revision.load(Ordering::Acquire);
     while !shared.stopping.load(Ordering::Acquire) {
         let active = shared.active.load(Ordering::Acquire);
         if !active {
@@ -352,6 +371,12 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
         }
         if !shared.active.load(Ordering::Acquire) {
             continue;
+        }
+        let latest = shared.revision.load(Ordering::Acquire);
+        if revision != latest {
+            current = None;
+            enrichment.cancel();
+            revision = latest;
         }
         let mut error = None;
         if let Some(Command::Control(target, action, when)) = command {
@@ -399,7 +424,10 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                 start,
                 &mut enrichment,
             ) {
-                Ok(snapshot) if shared.active.load(Ordering::Acquire) => {
+                Ok(snapshot)
+                    if shared.active.load(Ordering::Acquire)
+                        && revision == shared.revision.load(Ordering::Acquire) =>
+                {
                     publish(shared, hwnd, snapshot, error)
                 }
                 Ok(_) => {}

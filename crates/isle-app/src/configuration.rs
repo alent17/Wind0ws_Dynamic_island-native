@@ -131,6 +131,7 @@ impl Store {
         match edit {
             Edit::City(city) => document.set_city(city)?,
             Edit::Controls(controls) => document.set_controls(controls),
+            Edit::Players(selection) => document.set_selection(selection)?,
         }
         let bytes = document.bytes()?;
         let parent = self
@@ -179,6 +180,7 @@ impl Store {
 pub enum Edit {
     City(City),
     Controls(Controls),
+    Players(isle_core::Selection),
 }
 pub struct Outcome {
     pub edit: Edit,
@@ -187,6 +189,7 @@ pub struct Outcome {
 pub struct Service {
     pub city: Option<City>,
     pub controls: Controls,
+    pub selection: isle_core::Selection,
     pub load_error: Option<String>,
     busy: bool,
     sender: SyncSender<Option<Edit>>,
@@ -202,6 +205,12 @@ impl Service {
             .as_ref()
             .ok()
             .map(Document::controls)
+            .unwrap_or_default();
+        let selection = store
+            .document
+            .as_ref()
+            .ok()
+            .map(Document::selection)
             .unwrap_or_default();
         let load_error = store.document.as_ref().err().cloned();
         let (sender, receiver) = sync_channel(1);
@@ -223,6 +232,7 @@ impl Service {
         Ok(Self {
             city,
             controls,
+            selection,
             load_error,
             busy: false,
             sender,
@@ -248,6 +258,7 @@ impl Service {
             match &out.edit {
                 Edit::City(city) => self.city = Some(city.clone()),
                 Edit::Controls(controls) => self.controls = controls.clone(),
+                Edit::Players(selection) => self.selection = selection.clone(),
             }
         }
         Some(out)

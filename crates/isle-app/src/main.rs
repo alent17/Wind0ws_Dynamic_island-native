@@ -5,6 +5,7 @@ mod clock;
 mod configuration;
 mod frame_timer;
 mod media;
+mod players;
 mod render;
 mod spectrum;
 mod system_audio;
@@ -29,6 +30,8 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Players(usize, isize),
+    PlayersUpdated,
     ConfigSaved,
     Weather,
     City(usize, isize),
@@ -65,6 +68,14 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        players::COMMAND => {
+            enqueue(Event::Players(wp.0, lp.0));
+            LRESULT(0)
+        }
+        players::UPDATED => {
+            enqueue(Event::PlayersUpdated);
+            LRESULT(0)
+        }
         configuration::UPDATED => {
             enqueue(Event::ConfigSaved);
             LRESULT(0)
@@ -218,6 +229,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 struct App {
     weather: weather::Service,
     settings: Option<weather_settings::Settings>,
+    player_dialog: Option<players::Dialog>,
     configuration: configuration::Service,
     saving_window: Option<isize>,
     audio: Option<system_audio::AudioService>,
@@ -685,6 +697,8 @@ impl App {
                     | Event::Audio
                     | Event::Spectrum
                     | Event::Weather
+                    | Event::Players(_, _)
+                    | Event::PlayersUpdated
                     | Event::ConfigSaved
                     | Event::City(_, _)
                     | Event::Diagnostic
@@ -701,6 +715,44 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::PlayersUpdated => {
+                if let Some(dialog) = &mut self.player_dialog {
+                    dialog.take_update();
+                }
+                changed = false;
+            }
+            Event::Players(action, hwnd) => {
+                if self
+                    .player_dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.hwnd.0 == hwnd)
+                {
+                    match action {
+                        players::CLOSE => self.player_dialog = None,
+                        players::SAVE
+                            if !self.configuration.busy()
+                                && self.player_dialog.as_ref().is_some_and(|d| d.ready()) =>
+                        {
+                            let selection = self.player_dialog.as_ref().unwrap().selection();
+                            if self
+                                .configuration
+                                .save(configuration::Edit::Players(selection))
+                            {
+                                self.player_dialog.as_mut().unwrap().saving(true);
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(true);
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(dialog) = &mut self.player_dialog {
+                                dialog.action(action);
+                            }
+                        }
+                    }
+                }
+                changed = false;
+            }
             Event::City(action, hwnd) => {
                 if self.settings.as_ref().is_some_and(|s| s.hwnd.0 == hwnd) {
                     match action {
@@ -733,7 +785,27 @@ impl App {
                                 self.settings.as_ref().unwrap().saving(true);
                             }
                         }
+                        weather_settings::PLAYERS if !self.configuration.busy() => {
+                            if let Some(dialog) = &self.player_dialog {
+                                if IsWindowEnabled(self.window).as_bool() {
+                                    SetForegroundWindow(dialog.hwnd);
+                                }
+                            } else {
+                                match players::Dialog::new(
+                                    self.window,
+                                    &self.configuration.selection,
+                                ) {
+                                    Ok(dialog) => self.player_dialog = Some(dialog),
+                                    Err(_) => self
+                                        .settings
+                                        .as_ref()
+                                        .unwrap()
+                                        .message("无法打开播放器选择"),
+                                }
+                            }
+                        }
                         weather_settings::CLOSE => {
+                            self.player_dialog = None;
                             self.settings = None;
                             self.weather.request(None);
                         }
@@ -756,6 +828,7 @@ impl App {
                                     ..Default::default()
                                 };
                                 if same_window {
+                                    self.player_dialog = None;
                                     self.settings = None;
                                     self.weather.request(None);
                                     if !self.suspended {
@@ -764,6 +837,24 @@ impl App {
                                 } else if let Some(settings) = &self.settings {
                                     settings.saving(false);
                                     settings.message("城市已保存");
+                                }
+                            }
+                            configuration::Edit::Players(selection) => {
+                                if let Some(media) = &self.media {
+                                    media.set_selection(selection);
+                                }
+                                if self.model.media.is_some() {
+                                    self.model.media = Some(isle_core::MediaSnapshot::default());
+                                }
+                                self.down = None;
+                                let _ = ReleaseCapture();
+                                if let Some(dialog) = &mut self.player_dialog {
+                                    dialog.saving(false);
+                                    dialog.message("播放器设置已保存");
+                                }
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("播放器设置已保存");
                                 }
                             }
                             configuration::Edit::Controls(controls) => {
@@ -781,6 +872,10 @@ impl App {
                             }
                         },
                         Err(error) => {
+                            if let Some(dialog) = &mut self.player_dialog {
+                                dialog.saving(false);
+                                dialog.message(&error);
+                            }
                             if let Some(settings) = &self.settings {
                                 settings.saving(false);
                                 settings.message(&error);
@@ -1145,6 +1240,7 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            text.push_str(&format!(",\"playerDialogAlive\":{},\"playerListReady\":{},\"playerListRows\":{},\"playerSelectionAutomatic\":{},\"playerAllowedCount\":{},\"playerOrderCount\":{}",self.player_dialog.is_some(),self.player_dialog.as_ref().is_some_and(|d|d.ready()),self.player_dialog.as_ref().map(|d|d.row_count()).unwrap_or(0),self.configuration.selection.allowed.is_none(),self.configuration.selection.allowed.as_ref().map(|ids|ids.len()).unwrap_or(0),self.configuration.selection.order.len()));
             text.push_str(&format!(
                 ",\"clockZoneIndex\":{},\"clockZoneSupported\":{}",
                 clock::ZONES
@@ -1328,7 +1424,9 @@ unsafe fn run() -> Result<()> {
     }
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
+    let media_selection = configuration.selection.clone();
     let mut app = App {
+        player_dialog: None,
         weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
         settings: None,
         configuration,
@@ -1344,7 +1442,10 @@ unsafe fn run() -> Result<()> {
             None
         },
         media: if model.media.is_some() {
-            Some(media::MediaService::new(window, start).map_err(|_| Error::from(E_FAIL))?)
+            Some(
+                media::MediaService::new(window, start, media_selection)
+                    .map_err(|_| Error::from(E_FAIL))?,
+            )
         } else {
             None
         },
@@ -1418,6 +1519,13 @@ unsafe fn run() -> Result<()> {
                 break 'running;
             }
             if app
+                .player_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.route(&msg))
+            {
+                continue;
+            }
+            if app
                 .settings
                 .as_ref()
                 .is_some_and(|settings| settings.route(&msg))
@@ -1455,6 +1563,7 @@ unsafe fn run() -> Result<()> {
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     app.media = None;
     app.audio = None;
+    app.player_dialog = None;
     app.settings = None;
     app.weather.request(None);
     app.spectrum = None;

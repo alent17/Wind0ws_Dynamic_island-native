@@ -98,6 +98,32 @@ impl Document {
         }
         Ok(prefs)
     }
+    pub fn selection(&self) -> crate::Selection {
+        crate::Selection {
+            allowed: serde_json::from_value(self.0["selectedPlayerIds"].clone()).unwrap_or(None),
+            order: serde_json::from_value(self.0["playerOrderIds"].clone()).unwrap_or_default(),
+        }
+    }
+    pub fn set_selection(&mut self, selection: &crate::Selection) -> Result<(), String> {
+        for ids in std::iter::once(&selection.order).chain(selection.allowed.iter()) {
+            if ids.len() > 256
+                || ids.iter().any(|id| {
+                    id.is_empty() || id.chars().count() > 512 || id.chars().any(char::is_control)
+                })
+            {
+                return Err("播放器列表无效或超过 256 项".into());
+            }
+        }
+        self.0.insert(
+            "selectedPlayerIds".into(),
+            serde_json::to_value(&selection.allowed).unwrap(),
+        );
+        self.0.insert(
+            "playerOrderIds".into(),
+            serde_json::to_value(&selection.order).unwrap(),
+        );
+        Ok(())
+    }
     pub fn city(&self) -> Option<City> {
         serde_json::from_value(self.0.get("weatherLocation")?.clone())
             .ok()
@@ -202,6 +228,35 @@ mod tests {
                 .time_zone,
             "Unknown/Legacy"
         );
+    }
+    #[test]
+    fn player_selection_distinguishes_all_from_none_and_preserves_unrelated_values() {
+        let mut doc = Document::parse(
+            br#"{"playerWeights":{"custom":73},"future":{"keep":true},"clockTimeZone":"UTC"}"#,
+        )
+        .unwrap();
+        let none = crate::Selection {
+            allowed: Some(vec![]),
+            order: vec!["offline".into()],
+        };
+        doc.set_selection(&none).unwrap();
+        let loaded = Document::parse(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(loaded.selection(), none);
+        assert_eq!(loaded.0["playerWeights"]["custom"], 73);
+        assert_eq!(loaded.0["future"]["keep"], true);
+        assert_eq!(loaded.controls().time_zone, "UTC");
+        doc.set_selection(&crate::Selection::default()).unwrap();
+        assert!(Document::parse(&doc.bytes().unwrap())
+            .unwrap()
+            .selection()
+            .allowed
+            .is_none());
+        assert!(doc
+            .set_selection(&crate::Selection {
+                allowed: Some(vec!["\n".into()]),
+                order: vec![]
+            })
+            .is_err());
     }
     #[test]
     fn edits_preserve_unknown_root_nested_and_unused_fields() {

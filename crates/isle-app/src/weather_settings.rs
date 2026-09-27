@@ -16,6 +16,7 @@ pub const SEARCH: usize = 102;
 pub const APPLY: usize = 104;
 pub const APPLY_CONTROLS: usize = 105;
 pub const CLOSE: usize = 2;
+pub const PLAYERS: usize = 107;
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let action = match msg {
         WM_CLOSE => Some(CLOSE),
@@ -26,7 +27,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let notify = wp.0 >> 16;
             if id == 103 && notify == LBN_DBLCLK as usize {
                 Some(APPLY)
-            } else if matches!(id, SEARCH | APPLY | APPLY_CONTROLS | CLOSE)
+            } else if matches!(id, SEARCH | APPLY | APPLY_CONTROLS | PLAYERS | CLOSE)
                 && notify == BN_CLICKED as usize
             {
                 Some(id)
@@ -368,6 +369,16 @@ impl Settings {
             .position(|id| id == &controls.time_zone)
             .unwrap_or(0);
         SendMessageW(zone, CB_SETCURSEL, WPARAM(selected), LPARAM(0));
+        child(
+            w!("BUTTON"),
+            "播放器…",
+            PLAYERS,
+            WS_TABSTOP,
+            414.,
+            472.,
+            106.,
+            28.,
+        )?;
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -440,7 +451,7 @@ impl Settings {
             EnableWindow(control, !saving);
         }
         EnableWindow(self.apply, !saving && !self.cities.is_empty());
-        for id in (200..211).chain(std::iter::once(APPLY_CONTROLS)) {
+        for id in (200..211).chain([APPLY_CONTROLS, PLAYERS]) {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
         if saving {

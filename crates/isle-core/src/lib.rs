@@ -122,7 +122,7 @@ impl Timeline {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Selection {
     pub allowed: Option<Vec<String>>,
     pub order: Vec<String>,
