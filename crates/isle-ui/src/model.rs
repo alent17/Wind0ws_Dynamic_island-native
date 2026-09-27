@@ -19,6 +19,11 @@ pub enum Hit {
     Volume,
     Timer,
     Reset,
+    Devices,
+    Device(usize),
+    DevicePrev,
+    DeviceNext,
+    Mute,
 }
 #[derive(Debug)]
 pub struct PageInstance {
@@ -26,6 +31,9 @@ pub struct PageInstance {
     pub generation: u64,
 }
 pub struct Model {
+    pub audio: Option<isle_core::AudioSnapshot>,
+    pub device_menu: bool,
+    pub device_offset: usize,
     pub media: Option<isle_core::MediaSnapshot>,
     pub media_failed: bool,
     pub edge: Edge,
@@ -54,6 +62,9 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            audio: None,
+            device_menu: false,
+            device_offset: 0,
             media: None,
             media_failed: false,
             edge: Edge::Top,
@@ -91,6 +102,11 @@ impl Model {
                 .is_some_and(|m| m.playing && m.timeline.duration_ms > 0)
     }
     pub fn enabled(&self, hit: Hit) -> bool {
+        if matches!(hit, Hit::Volume | Hit::Mute)
+            && self.audio.as_ref().is_some_and(|a| a.device.id.is_empty())
+        {
+            return false;
+        }
         self.media.as_ref().is_none_or(|m| match hit {
             Hit::Play => m.play_pause,
             Hit::Previous => m.previous,
@@ -102,6 +118,8 @@ impl Model {
         self.current.as_ref().map(|p| p.page).unwrap_or(Page::Music)
     }
     pub fn switch(&mut self, page: Page) {
+        self.device_menu = false;
+        self.device_offset = 0;
         self.title_started = self.now;
         self.expanded = true;
         self.generation += 1;
@@ -114,6 +132,7 @@ impl Model {
     }
     pub fn toggle(&mut self) {
         if self.expanded {
+            self.device_menu = false;
             self.expanded = false;
             self.current = None;
             self.scroll = 0.;
@@ -124,6 +143,12 @@ impl Model {
         }
     }
     pub fn back(&mut self) {
+        if self.device_menu {
+            self.device_menu = false;
+            self.focus = None;
+            self.retarget();
+            return;
+        }
         if self.page() != Page::Music {
             self.switch(Page::Music)
         } else {
@@ -141,6 +166,7 @@ impl Model {
             let h = match self.page() {
                 Page::Music => 160.,
                 Page::Weather => 240.,
+                Page::Volume if self.device_menu => 216.,
                 _ => 188.,
             } + bar;
             let inset = if self.attached { 32. } else { 0. };
@@ -309,15 +335,76 @@ impl Model {
                     ));
                 }
             }
-            Page::Volume => v.push((
-                Hit::Volume,
-                Rect {
-                    x: c.x,
-                    y: c.y + 44.,
-                    w: c.w,
-                    h: 56.,
-                },
-            )),
+            Page::Volume if self.device_menu => {
+                if let Some(audio) = &self.audio {
+                    for index in
+                        self.device_offset..(self.device_offset + 4).min(audio.devices.len())
+                    {
+                        v.push((
+                            Hit::Device(index),
+                            Rect {
+                                x: c.x,
+                                y: c.y + 36. + (index - self.device_offset) as f32 * 28.,
+                                w: c.w,
+                                h: 26.,
+                            },
+                        ));
+                    }
+                    if self.device_offset > 0 {
+                        v.push((
+                            Hit::DevicePrev,
+                            Rect {
+                                x: c.x + c.w - 60.,
+                                y: c.y,
+                                w: 28.,
+                                h: 28.,
+                            },
+                        ));
+                    }
+                    if self.device_offset + 4 < audio.devices.len() {
+                        v.push((
+                            Hit::DeviceNext,
+                            Rect {
+                                x: c.x + c.w - 28.,
+                                y: c.y,
+                                w: 28.,
+                                h: 28.,
+                            },
+                        ));
+                    }
+                }
+            }
+            Page::Volume => {
+                v.push((
+                    Hit::Volume,
+                    Rect {
+                        x: c.x,
+                        y: c.y + 44.,
+                        w: c.w,
+                        h: 56.,
+                    },
+                ));
+                if self.audio.is_some() {
+                    v.push((
+                        Hit::Mute,
+                        Rect {
+                            x: c.x,
+                            y: c.y + 102.,
+                            w: 80.,
+                            h: 32.,
+                        },
+                    ));
+                    v.push((
+                        Hit::Devices,
+                        Rect {
+                            x: c.x + 88.,
+                            y: c.y + 102.,
+                            w: c.w - 88.,
+                            h: 32.,
+                        },
+                    ));
+                }
+            }
             Page::Timer => {
                 v.push((
                     Hit::Timer,
@@ -419,7 +506,27 @@ impl Model {
                 self.timer_deadline = None;
                 self.timer_left = 300.;
             }
-            Hit::Volume => {}
+            Hit::Devices => {
+                self.device_menu = true;
+                self.device_offset = 0;
+                self.focus = None;
+                self.retarget();
+            }
+            Hit::DevicePrev => {
+                self.device_offset = self.device_offset.saturating_sub(4);
+                self.focus = None;
+            }
+            Hit::DeviceNext => {
+                if self
+                    .audio
+                    .as_ref()
+                    .is_some_and(|a| self.device_offset + 4 < a.devices.len())
+                {
+                    self.device_offset += 4;
+                    self.focus = None;
+                }
+            }
+            Hit::Device(_) | Hit::Mute | Hit::Volume => {}
         }
     }
 }
@@ -458,6 +565,51 @@ mod tests {
         assert!(!m.progress_tick());
         m.toggle();
         assert!(!m.progress_tick());
+    }
+    #[test]
+    fn audio_menu_pages_without_overflow_and_returns_one_level() {
+        let mut m = Model {
+            audio: Some(isle_core::AudioSnapshot {
+                devices: (0..9)
+                    .map(|i| isle_core::AudioDevice {
+                        id: i.to_string(),
+                        name: format!("Device {i}"),
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            reduced: true,
+            ..Default::default()
+        };
+        m.switch(Page::Volume);
+        assert!(!m.enabled(Hit::Volume));
+        m.activate(Hit::Devices);
+        assert_eq!(
+            m.controls()
+                .iter()
+                .filter(|(h, _)| matches!(h, Hit::Device(_)))
+                .count(),
+            4
+        );
+        m.activate(Hit::DeviceNext);
+        m.activate(Hit::DeviceNext);
+        assert_eq!(
+            m.controls()
+                .iter()
+                .filter(|(h, _)| matches!(h, Hit::Device(_)))
+                .count(),
+            1
+        );
+        m.activate(Hit::DeviceNext);
+        assert_eq!(m.device_offset, 8);
+        m.back();
+        assert!(!m.device_menu && m.page() == Page::Volume && m.expanded);
+        m.back();
+        assert_eq!(m.page(), Page::Music);
+        m.switch(Page::Volume);
+        m.activate(Hit::Devices);
+        m.toggle();
+        assert!(!m.device_menu && m.current.is_none());
     }
     #[test]
     fn keyboard_reaches_every_tool_and_page_control_then_wraps() {

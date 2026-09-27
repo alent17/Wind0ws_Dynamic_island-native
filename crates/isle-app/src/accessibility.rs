@@ -21,6 +21,7 @@ pub const FOCUS: u32 = WM_APP + 51;
 pub const VALUE: u32 = WM_APP + 52;
 #[derive(Clone)]
 pub struct Node {
+    pub key: String,
     pub enabled: bool,
     pub hit: Hit,
     pub name: String,
@@ -62,6 +63,11 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::Volume => "音量",
         Hit::Timer => "开始或暂停倒计时",
         Hit::Reset => "重置倒计时",
+        Hit::Devices => "选择输出设备",
+        Hit::Device(_) => "输出设备",
+        Hit::DevicePrev => "上一页设备",
+        Hit::DeviceNext => "下一页设备",
+        Hit::Mute => "切换静音",
     }
 }
 pub fn root(shared: &Shared) -> IAccessible {

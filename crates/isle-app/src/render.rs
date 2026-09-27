@@ -409,6 +409,7 @@ impl Renderer {
                 self.text(
                     match m.page() {
                         Page::Timer => "倒计时",
+                        Page::Volume if m.device_menu => "输出设备",
                         Page::Volume => "音量",
                         Page::Clock => "时间",
                         Page::Weather => "天气",
@@ -699,7 +700,81 @@ impl Renderer {
                         }
                     }
                 }
+                Page::Volume if m.device_menu => {
+                    if let Some(audio) = &m.audio {
+                        if audio.devices.is_empty() {
+                            self.text(
+                                "没有可用输出设备",
+                                Rect {
+                                    x: c.x,
+                                    y: c.y + 44.,
+                                    w: c.w,
+                                    h: 28.,
+                                },
+                                12,
+                                gray,
+                            )?;
+                        }
+                        for (hit, r) in m.controls() {
+                            match hit {
+                                Hit::Device(index) => {
+                                    let device = &audio.devices[index];
+                                    if hover == Some(hit) || m.focus == Some(hit) {
+                                        self.fill(r, 12., color(1., 1., 1., 0.1));
+                                    }
+                                    if device.id == audio.device.id {
+                                        self.fill(
+                                            Rect {
+                                                x: r.x + 8.,
+                                                y: r.y + 11.,
+                                                w: 5.,
+                                                h: 5.,
+                                            },
+                                            2.,
+                                            blue,
+                                        );
+                                    }
+                                    self.text(
+                                        &device.name,
+                                        Rect {
+                                            x: r.x + 22.,
+                                            y: r.y + 5.,
+                                            w: r.w - 28.,
+                                            h: 20.,
+                                        },
+                                        11,
+                                        white,
+                                    )?;
+                                }
+                                Hit::DevicePrev | Hit::DeviceNext => {
+                                    if hover == Some(hit) || m.focus == Some(hit) {
+                                        self.fill(r, 12., color(1., 1., 1., 0.1));
+                                    }
+                                    self.text(
+                                        if hit == Hit::DevicePrev { "‹" } else { "›" },
+                                        Rect {
+                                            x: r.x + 9.,
+                                            y: r.y + 2.,
+                                            w: 20.,
+                                            h: 24.,
+                                        },
+                                        18,
+                                        white,
+                                    )?;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 Page::Volume => {
+                    for (hit, r) in m.controls() {
+                        if matches!(hit, Hit::Devices | Hit::Mute)
+                            && (hover == Some(hit) || m.focus == Some(hit))
+                        {
+                            self.fill(r, 12., color(1., 1., 1., 0.1));
+                        }
+                    }
                     for i in 0..23 {
                         let x = c.x + i as f32 * c.w / 22.;
                         let h = if i % 5 == 0 { 25. } else { 14. };
@@ -718,7 +793,11 @@ impl Renderer {
                         );
                     }
                     self.text(
-                        &format!("{}%", m.volume as u32),
+                        &if m.audio.as_ref().is_some_and(|a| a.muted) {
+                            "静音".into()
+                        } else {
+                            format!("{}%", m.volume as u32)
+                        },
                         Rect {
                             x: c.x,
                             y: c.y + 95.,
@@ -729,7 +808,18 @@ impl Renderer {
                         blue,
                     )?;
                     self.text(
-                        "输出设备 · 原型数据",
+                        m.audio
+                            .as_ref()
+                            .map(|a| {
+                                if a.failed {
+                                    "音频操作暂不可用"
+                                } else if a.device.id.is_empty() {
+                                    "正在读取设备"
+                                } else {
+                                    &a.device.name
+                                }
+                            })
+                            .unwrap_or("输出设备 · 原型数据"),
                         Rect {
                             x: c.x + 90.,
                             y: c.y + 107.,

@@ -4,6 +4,7 @@ mod artwork;
 mod frame_timer;
 mod media;
 mod render;
+mod system_audio;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
@@ -23,6 +24,7 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Audio,
     Media,
     Paint,
     Tick,
@@ -54,6 +56,10 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        system_audio::UPDATED => {
+            enqueue(Event::Audio);
+            LRESULT(0)
+        }
         media::UPDATED => {
             enqueue(Event::Media);
             LRESULT(0)
@@ -185,6 +191,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
 }
 struct App {
+    audio: Option<system_audio::AudioService>,
     media: Option<media::MediaService>,
     media_error: Option<String>,
     window: HWND,
@@ -319,9 +326,32 @@ impl App {
                     rect.w = (right - rect.x).max(0.);
                 }
                 nodes.push(accessibility::Node {
+                    key: if let Hit::Device(index) = hit {
+                        self.model
+                            .audio
+                            .as_ref()
+                            .and_then(|a| a.devices.get(index))
+                            .map(|d| d.id.clone())
+                            .unwrap_or_default()
+                    } else {
+                        format!("{hit:?}")
+                    },
                     enabled: self.model.enabled(hit),
                     hit,
-                    name: accessibility::label(hit, self.model.playing).to_string(),
+                    name: match hit {
+                        Hit::Device(index) => self
+                            .model
+                            .audio
+                            .as_ref()
+                            .and_then(|a| a.devices.get(index))
+                            .map(|d| d.name.clone())
+                            .unwrap_or_default(),
+                        Hit::Back if self.model.device_menu => "返回音量".into(),
+                        Hit::Mute if self.model.audio.as_ref().is_some_and(|a| a.muted) => {
+                            "取消静音".into()
+                        }
+                        _ => accessibility::label(hit, self.model.playing).to_string(),
+                    },
                     rect: transform(rect),
                 });
             }
@@ -330,8 +360,8 @@ impl App {
         let reordered = state
             .nodes
             .iter()
-            .map(|n| n.hit)
-            .ne(nodes.iter().map(|n| n.hit));
+            .map(|n| &n.key)
+            .ne(nodes.iter().map(|n| &n.key));
         let focus_changed = state.focus != self.model.focus;
         if reordered {
             state.revision = state.revision.wrapping_add(1);
@@ -429,6 +459,11 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
+        if let Some(audio) = &self.audio {
+            audio.active(
+                !self.suspended && self.model.expanded && self.model.page() == Page::Volume,
+            );
+        }
         if let Some(service) = &self.media {
             service.set_active(
                 !self.suspended && (!self.model.expanded || self.model.page() == Page::Music),
@@ -479,6 +514,28 @@ impl App {
         if !self.model.enabled(hit) {
             return;
         }
+        if let (Some(service), Some(audio)) = (&self.audio, &self.model.audio) {
+            match hit {
+                Hit::Mute => {
+                    service.command(
+                        audio.device.id.clone(),
+                        system_audio::Action::Mute(!audio.muted),
+                    );
+                    return;
+                }
+                Hit::Device(index) => {
+                    if let Some(device) = audio.devices.get(index) {
+                        service.command(
+                            audio.device.id.clone(),
+                            system_audio::Action::Device(device.id.clone()),
+                        );
+                    }
+                    self.model.back();
+                    return;
+                }
+                _ => {}
+            }
+        }
         if let Some(service) = &self.media {
             let action = match hit {
                 Hit::Play => Some(media::Action::Toggle),
@@ -503,7 +560,7 @@ impl App {
                 );
             }
             Hit::Tool(3) => {
-                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体与封面。\n尚未读取旧版设置，频谱与设备控制仍待迁移。"),w!("原型操作"),MB_OK);
+                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体、封面和系统音量。\n--live-audio 单独启用真实音量与输出设备。\n尚未读取旧版设置，真实频谱和天气仍待迁移。"),w!("原型操作"),MB_OK);
             }
             Hit::Tool(4) => {
                 self.model.toggle();
@@ -517,6 +574,7 @@ impl App {
                 event,
                 Event::Tick
                     | Event::Media
+                    | Event::Audio
                     | Event::Diagnostic
                     | Event::Close
                     | Event::Visibility(_)
@@ -528,7 +586,39 @@ impl App {
             return Ok(true);
         }
         let mut changed = true;
+        let previous_volume = self.model.volume;
+        let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::Audio => {
+                if let Some(service) = &self.audio {
+                    let audio = service.take();
+                    if self
+                        .model
+                        .audio
+                        .as_ref()
+                        .is_some_and(|old| old.device.id != audio.device.id)
+                        && self.down.take().is_some()
+                    {
+                        let _ = ReleaseCapture();
+                        self.dragged = false;
+                    }
+                    if self.down.is_none_or(|(_, hit, _)| hit != Hit::Volume) {
+                        self.model.volume = audio.volume as f32;
+                    }
+                    if self
+                        .model
+                        .audio
+                        .as_ref()
+                        .is_some_and(|old| old.devices != audio.devices)
+                    {
+                        self.model.device_offset = 0;
+                        self.model.focus = None;
+                    }
+                    self.model.audio = Some(audio);
+                }
+                changed =
+                    !self.suspended && self.model.expanded && self.model.page() == Page::Volume;
+            }
             Event::Media => {
                 if let Some(service) = &self.media {
                     let update = service.take();
@@ -569,7 +659,9 @@ impl App {
                             SetFocus(self.window);
                             self.model.focus = if hit == Hit::Blank { None } else { Some(hit) };
                         }
-                        accessibility::VALUE if hit == Hit::Volume && value <= 100 => {
+                        accessibility::VALUE
+                            if hit == Hit::Volume && value <= 100 && self.model.enabled(hit) =>
+                        {
                             self.model.volume = value as f32
                         }
                         _ => {}
@@ -682,7 +774,7 @@ impl App {
                         if self.model.bar().contains(start) {
                             self.model.scroll = initial_scroll;
                             self.model.scroll_by(-dx);
-                        } else if hit == Hit::Volume {
+                        } else if hit == Hit::Volume && self.model.enabled(hit) {
                             let r = self.model.body();
                             self.model.volume = ((p.x - r.x) / r.w * 100.).clamp(0., 100.);
                         }
@@ -702,7 +794,7 @@ impl App {
                 let p = self.point(x, y);
                 if let Some((_, hit, _)) = self.down.take() {
                     if !self.dragged && self.model.hit(p) == Some(hit) {
-                        if hit == Hit::Volume {
+                        if hit == Hit::Volume && self.model.enabled(hit) {
                             let r = self.model.body();
                             self.model.volume = ((p.x - r.x) / r.w * 100.).clamp(0., 100.);
                         } else {
@@ -712,7 +804,13 @@ impl App {
                 }
             }
             Event::Wheel(delta) => {
-                if self.model.expanded {
+                if self.model.device_menu {
+                    self.model.activate(if delta < 0 {
+                        Hit::DeviceNext
+                    } else {
+                        Hit::DevicePrev
+                    });
+                } else if self.model.expanded {
                     self.model.scroll_by(-delta as f32 / 120. * 32.);
                 }
             }
@@ -745,7 +843,15 @@ impl App {
                     .model
                     .move_focus(GetKeyState(VK_SHIFT.0 as i32) < 0, false),
                 0x25 | 0x27 => {
-                    if self.model.focus == Some(Hit::Volume) {
+                    if self.model.device_menu {
+                        self.model.activate(if key == 0x25 {
+                            Hit::DevicePrev
+                        } else {
+                            Hit::DeviceNext
+                        });
+                    } else if self.model.focus == Some(Hit::Volume)
+                        && self.model.enabled(Hit::Volume)
+                    {
                         self.model.volume = (self.model.volume
                             + if key == 0x25 { -1. } else { 1. })
                         .clamp(0., 100.);
@@ -764,6 +870,14 @@ impl App {
             },
         }
         if changed {
+            if !audio_update && previous_volume != self.model.volume {
+                if let (Some(service), Some(audio)) = (&self.audio, &self.model.audio) {
+                    service.command(
+                        audio.device.id.clone(),
+                        system_audio::Action::Volume(self.model.volume.round() as u8),
+                    );
+                }
+            }
             self.redraw()?;
         }
         Ok(true)
@@ -790,6 +904,13 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            if let Some(service) = &self.audio {
+                text.push(',');
+                text.push_str(&service.diagnostics());
+                if let Some(audio) = &self.model.audio {
+                    text.push_str(&format!(",\"audioVolume\":{},\"audioMuted\":{},\"audioDevices\":{},\"audioError\":{},\"audioDeviceMenu\":{}", audio.volume, audio.muted, audio.devices.len(), audio.failed, self.model.device_menu));
+                }
+            }
             if let Some(service) = &self.media {
                 let media = self.model.media.as_ref().unwrap();
                 text.push_str(&format!(
@@ -864,6 +985,10 @@ unsafe fn run() -> Result<()> {
     }));
     ACCESSIBLE.with(|a| *a.borrow_mut() = Some(accessibility::root(&accessible)));
     let mut model = Model {
+        audio: args
+            .iter()
+            .any(|a| a == "--live-audio" || a == "--live-media")
+            .then(isle_core::AudioSnapshot::default),
         media: args
             .iter()
             .any(|a| a == "--live-media")
@@ -904,6 +1029,11 @@ unsafe fn run() -> Result<()> {
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let mut app = App {
+        audio: if model.audio.is_some() {
+            Some(system_audio::AudioService::new(window).map_err(|_| Error::from(E_FAIL))?)
+        } else {
+            None
+        },
         media: if model.media.is_some() {
             Some(media::MediaService::new(window, start).map_err(|_| Error::from(E_FAIL))?)
         } else {
@@ -1006,6 +1136,7 @@ unsafe fn run() -> Result<()> {
     );
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     app.media = None;
+    app.audio = None;
     DestroyWindow(window)?;
     drop(app);
     CoUninitialize();

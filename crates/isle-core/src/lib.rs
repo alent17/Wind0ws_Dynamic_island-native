@@ -1,5 +1,18 @@
 //! Platform-independent media state. Times are monotonic seconds from app start.
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct AudioDevice {
+    pub id: String,
+    pub name: String,
+}
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AudioSnapshot {
+    pub device: AudioDevice,
+    pub devices: Vec<AudioDevice>,
+    pub volume: u8,
+    pub muted: bool,
+    pub failed: bool,
+}
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct MediaSnapshot {
     pub cover: Option<std::sync::Arc<Cover>>,
     pub session: u64,
