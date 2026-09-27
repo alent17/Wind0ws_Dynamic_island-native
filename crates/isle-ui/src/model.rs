@@ -42,6 +42,10 @@ pub struct Model {
     pub media_failed: bool,
     pub edge: Edge,
     pub attached: bool,
+    pub compact_length: u16,
+    pub collapsed_shoulder_radius: u8,
+    pub expanded_shoulder_radius: u8,
+    pub expanded_corner_radius: u32,
     pub expanded: bool,
     pub reduced: bool,
     pub hovered: bool,
@@ -77,6 +81,10 @@ impl Default for Model {
             media_failed: false,
             edge: Edge::Top,
             attached: false,
+            compact_length: 80,
+            collapsed_shoulder_radius: 8,
+            expanded_shoulder_radius: 32,
+            expanded_corner_radius: 45,
             expanded: false,
             reduced: false,
             hovered: false,
@@ -193,7 +201,11 @@ impl Model {
                 Page::Volume if self.device_menu => 216.,
                 _ => 188.,
             } + bar;
-            let inset = if self.attached { 32. } else { 0. };
+            let inset = if self.attached {
+                self.expanded_shoulder_radius.min(64) as f32
+            } else {
+                0.
+            };
             (
                 if self.page() == Page::Music || vertical(self.edge) {
                     300.
@@ -201,16 +213,31 @@ impl Model {
                     300. + inset * 2.
                 },
                 h + if vertical(self.edge) { inset * 2. } else { 0. },
-                45.,
-                32.,
+                self.expanded_corner_radius.min(80) as f32,
+                self.expanded_shoulder_radius.min(64) as f32,
             )
         } else {
-            let len = if self.hovered { 90. } else { 80. };
+            let compact_length = self.compact_length.clamp(80, 300) as f32;
+            let len = if self.hovered {
+                (compact_length + 10.).min(300.)
+            } else {
+                compact_length
+            };
             let thick = if self.hovered { 30. } else { 28. };
             if vertical(self.edge) {
-                (thick, len, 14., 8.)
+                (
+                    thick,
+                    len,
+                    14.,
+                    self.collapsed_shoulder_radius.min(16) as f32,
+                )
             } else {
-                (len, thick, 14., 8.)
+                (
+                    len,
+                    thick,
+                    14.,
+                    self.collapsed_shoulder_radius.min(16) as f32,
+                )
             }
         };
         self.width.set(w, self.reduced);
@@ -620,6 +647,27 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn appearance_geometry_settings_retarget_compact_and_expanded_shapes() {
+        let mut m = Model {
+            reduced: true,
+            attached: true,
+            compact_length: 140,
+            collapsed_shoulder_radius: 12,
+            expanded_shoulder_radius: 48,
+            expanded_corner_radius: 64,
+            ..Default::default()
+        };
+        m.retarget();
+        assert_eq!(m.width.target, 140.);
+        assert_eq!(m.height.target, 28.);
+        assert_eq!(m.shoulder.target, 12.);
+        m.switch(Page::Music);
+        assert_eq!(m.width.target, 300.);
+        assert_eq!(m.height.target, 200.);
+        assert_eq!(m.radius.target, 64.);
+        assert_eq!(m.shoulder.target, 48.);
+    }
     #[test]
     fn sparse_tools_keep_identity_layout_and_navigation_without_empty_slots() {
         let mut m = Model {

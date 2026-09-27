@@ -25,6 +25,10 @@ pub struct Appearance {
     pub style: String,
     pub edge: String,
     pub edge_position: u8,
+    pub compact_length: u16,
+    pub collapsed_shoulder_radius: u8,
+    pub expanded_shoulder_radius: u8,
+    pub expanded_corner_radius: u32,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -32,6 +36,10 @@ impl Default for Appearance {
             style: "floating".into(),
             edge: "top".into(),
             edge_position: 50,
+            compact_length: 80,
+            collapsed_shoulder_radius: 8,
+            expanded_shoulder_radius: 32,
+            expanded_corner_radius: 45,
         }
     }
 }
@@ -114,6 +122,13 @@ impl Document {
         if prefs.island_edge_position > 100 {
             return Err("贴边位置必须在 0–100 之间".into());
         }
+        if !(80..=300).contains(&prefs.compact_length)
+            || prefs.collapsed_edge_shoulder_radius > 16
+            || prefs.expanded_edge_shoulder_radius > 64
+            || prefs.expanded_corner_radius > 80
+        {
+            return Err("灵动岛形状参数超出允许范围".into());
+        }
         Ok(prefs)
     }
     pub fn selection(&self) -> crate::Selection {
@@ -165,11 +180,22 @@ impl Document {
                 .and_then(|value| u8::try_from(value).ok())
                 .filter(|value| *value <= 100)
                 .unwrap_or(50),
+            compact_length: self.0["compactLength"].as_u64().unwrap_or(80) as u16,
+            collapsed_shoulder_radius: self.0["collapsedEdgeShoulderRadius"].as_u64().unwrap_or(8)
+                as u8,
+            expanded_shoulder_radius: self.0["expandedEdgeShoulderRadius"].as_u64().unwrap_or(32)
+                as u8,
+            expanded_corner_radius: self.0["expandedCornerRadius"].as_u64().unwrap_or(45) as u32,
         }
     }
     pub fn set_appearance(&mut self, appearance: &Appearance) -> Result<(), String> {
-        if appearance.edge_position > 100 {
-            return Err("贴边位置必须在 0–100 之间".into());
+        if appearance.edge_position > 100
+            || !(80..=300).contains(&appearance.compact_length)
+            || appearance.collapsed_shoulder_radius > 16
+            || appearance.expanded_shoulder_radius > 64
+            || appearance.expanded_corner_radius > 80
+        {
+            return Err("灵动岛形状参数超出允许范围".into());
         }
         self.0.insert(
             "islandStyle".into(),
@@ -180,6 +206,22 @@ impl Document {
         self.0.insert(
             "islandEdgePosition".into(),
             Value::from(appearance.edge_position),
+        );
+        self.0.insert(
+            "compactLength".into(),
+            Value::from(appearance.compact_length),
+        );
+        self.0.insert(
+            "collapsedEdgeShoulderRadius".into(),
+            Value::from(appearance.collapsed_shoulder_radius),
+        );
+        self.0.insert(
+            "expandedEdgeShoulderRadius".into(),
+            Value::from(appearance.expanded_shoulder_radius),
+        );
+        self.0.insert(
+            "expandedCornerRadius".into(),
+            Value::from(appearance.expanded_corner_radius),
         );
         Ok(())
     }
@@ -283,10 +325,15 @@ mod tests {
             Appearance {
                 style: "edge".into(),
                 edge: "right".into(),
-                edge_position: 17
+                edge_position: 17,
+                ..Appearance::default()
             }
         );
         appearance.edge_position = 83;
+        appearance.compact_length = 164;
+        appearance.collapsed_shoulder_radius = 12;
+        appearance.expanded_shoulder_radius = 54;
+        appearance.expanded_corner_radius = 70;
         doc.set_appearance(&appearance).unwrap();
         let loaded = Document::parse(&doc.bytes().unwrap()).unwrap();
         assert_eq!(loaded.appearance(), appearance);
@@ -298,6 +345,14 @@ mod tests {
             })
             .is_err());
         assert!(Document::parse(br#"{"islandEdgePosition":255}"#).is_err());
+        for invalid in [
+            br#"{"compactLength":79}"#.as_slice(),
+            br#"{"collapsedEdgeShoulderRadius":17}"#,
+            br#"{"expandedEdgeShoulderRadius":65}"#,
+            br#"{"expandedCornerRadius":81}"#,
+        ] {
+            assert!(Document::parse(invalid).is_err());
+        }
     }
     #[test]
     fn player_selection_distinguishes_all_from_none_and_preserves_unrelated_values() {

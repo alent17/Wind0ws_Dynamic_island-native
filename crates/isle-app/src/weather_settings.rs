@@ -7,7 +7,13 @@ use windows::{
         Graphics::Gdi::*,
         System::LibraryLoader::*,
         UI::{
-            Controls::EM_LIMITTEXT, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*,
+            Controls::{
+                InitCommonControlsEx, EM_LIMITTEXT, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX,
+                TBS_AUTOTICKS,
+            },
+            HiDpi::*,
+            Input::KeyboardAndMouse::*,
+            WindowsAndMessaging::*,
         },
     },
 };
@@ -18,7 +24,21 @@ pub const APPLY_CONTROLS: usize = 105;
 pub const CLOSE: usize = 2;
 pub const PLAYERS: usize = 107;
 pub const APPLY_APPEARANCE: usize = 212;
+const SHAPE_CONTROL_BASE: usize = 220;
+const SHAPE_LABEL_BASE: usize = 230;
+const SHAPE_NAMES: [&str; 4] = ["收起长度", "收起凹肩", "展开凹肩", "展开圆角"];
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_HSCROLL && lp.0 != 0 {
+        let track = HWND(lp.0);
+        let id = GetDlgCtrlID(track);
+        if (SHAPE_CONTROL_BASE as i32..(SHAPE_CONTROL_BASE + 4) as i32).contains(&id) {
+            let index = id as usize - SHAPE_CONTROL_BASE;
+            let position = SendMessageW(track, WM_USER, WPARAM(0), LPARAM(0)).0;
+            let text = HSTRING::from(format!("{}：{} px", SHAPE_NAMES[index], position));
+            let _ = SetWindowTextW(GetDlgItem(hwnd, (SHAPE_LABEL_BASE + index) as i32), &text);
+            return LRESULT(0);
+        }
+    }
     let action = match msg {
         WM_CLOSE => Some(CLOSE),
         WM_SHOWWINDOW if wp.0 == 0 => Some(CLOSE),
@@ -59,6 +79,8 @@ pub struct Settings {
     time_zones: Vec<String>,
     styles: Vec<String>,
     edges: Vec<String>,
+    shape_controls: Vec<HWND>,
+    shape_labels: Vec<HWND>,
 }
 impl Settings {
     pub unsafe fn new(
@@ -66,6 +88,11 @@ impl Settings {
         controls: &isle_core::configuration::Controls,
         appearance: &isle_core::configuration::Appearance,
     ) -> Result<Self> {
+        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_BAR_CLASSES,
+        })
+        .ok()?;
         let instance = HINSTANCE(GetModuleHandleW(None)?.0);
         let class = w!("IsleNativeWeatherSettings");
         let wc = WNDCLASSW {
@@ -82,7 +109,7 @@ impl Settings {
         let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut rect = RECT {
             right: px(540.),
-            bottom: px(680.),
+            bottom: px(860.),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -121,6 +148,8 @@ impl Settings {
             time_zones: vec![],
             styles: vec![],
             edges: vec![],
+            shape_controls: vec![],
+            shape_labels: vec![],
         };
         value.font = CreateFontW(
             -px(15.),
@@ -547,12 +576,66 @@ impl Settings {
             LPARAM(0),
         );
         child(
+            w!("STATIC"),
+            "岛体形状",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            652.,
+            480.,
+            22.,
+        )?;
+        let shape_values = [
+            (appearance.compact_length as i32, 80, 300, 20., 680.),
+            (
+                appearance.collapsed_shoulder_radius as i32,
+                0,
+                16,
+                280.,
+                680.,
+            ),
+            (appearance.expanded_shoulder_radius as i32, 0, 64, 20., 742.),
+            (appearance.expanded_corner_radius as i32, 0, 80, 280., 742.),
+        ];
+        for (index, (initial, min, max, x, y)) in shape_values.into_iter().enumerate() {
+            let label = child(
+                w!("STATIC"),
+                &format!("{}：{} px", SHAPE_NAMES[index], initial),
+                SHAPE_LABEL_BASE + index,
+                WINDOW_STYLE(0),
+                x,
+                y,
+                230.,
+                20.,
+            )?;
+            value.shape_labels.push(label);
+            let track = child(
+                w!("msctls_trackbar32"),
+                "",
+                SHAPE_CONTROL_BASE + index,
+                WS_TABSTOP | WINDOW_STYLE(TBS_AUTOTICKS),
+                x,
+                y + 22.,
+                230.,
+                30.,
+            )?;
+            SendMessageW(
+                track,
+                WM_USER + 6,
+                WPARAM(1),
+                LPARAM(((max as u32) << 16 | min as u32) as isize),
+            );
+            SendMessageW(track, WM_USER + 5, WPARAM(1), LPARAM(initial as isize));
+            SendMessageW(track, WM_USER + 20, WPARAM(10), LPARAM(0));
+            value.shape_controls.push(track);
+        }
+        child(
             w!("BUTTON"),
             "应用外观",
             APPLY_APPEARANCE,
             WS_TABSTOP,
             410.,
-            628.,
+            818.,
             110.,
             28.,
         )?;
@@ -634,10 +717,19 @@ impl Settings {
             u8::try_from(SendMessageW(self.edge_position, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0)
                 .ok()
                 .filter(|value| *value <= 100)?;
+        let shape_values = self
+            .shape_controls
+            .iter()
+            .map(|track| SendMessageW(*track, WM_USER, WPARAM(0), LPARAM(0)).0)
+            .collect::<Vec<_>>();
         Some(isle_core::configuration::Appearance {
             style: read_combo(211, &self.styles)?,
             edge: read_combo(213, &self.edges)?,
             edge_position,
+            compact_length: u16::try_from(*shape_values.first()?).ok()?,
+            collapsed_shoulder_radius: u8::try_from(*shape_values.get(1)?).ok()?,
+            expanded_shoulder_radius: u8::try_from(*shape_values.get(2)?).ok()?,
+            expanded_corner_radius: u32::try_from(*shape_values.get(3)?).ok()?,
         })
     }
     pub unsafe fn query(&self) -> String {
@@ -656,6 +748,9 @@ impl Settings {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
         EnableWindow(self.edge_position, !saving);
+        for track in &self.shape_controls {
+            EnableWindow(*track, !saving);
+        }
         if saving {
             self.message("正在保存…");
         }
