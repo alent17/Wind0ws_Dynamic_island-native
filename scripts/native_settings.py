@@ -14,7 +14,7 @@ u.GetClassNameW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 u.GetWindowTextW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 exe=ROOT/'target/release/isle-native.exe'
 config=OUT/'native-settings-test.json'
-config.write_text('{"futureTest":{"keep":[1,null,3]},"autoStart":true,"floatingFillColor":"#102030","floatingUseAlbumColor":true}',encoding='utf-8')
+config.write_text('{"futureTest":{"keep":[1,null,3]},"autoStart":true,"alwaysOnTop":true,"floatingFillColor":"#102030","floatingUseAlbumColor":true}',encoding='utf-8')
 report=OUT/'native-settings-snapshot.json'
 placements=[]
 def launch():
@@ -64,11 +64,16 @@ def apply(window,tools):
     assert state['configurationValid'];return state
 try:
     initial=snapshot();check_bounds(hwnd)
+    assert initial['islandAlwaysOnTop'] and initial['islandTopmostStyle']
     window=open_settings()
+    check(window,217,True)
     for i in range(7):check(window,201+i,i in [0,5,6])
     check(window,208,False)
+    check(window,217,False)
     sparse=apply(window,[0,5,6]);assert sparse['reducedMotion']
+    assert not sparse['islandAlwaysOnTop'] and not sparse['islandTopmostStyle']
     saved=json.loads(config.read_text(encoding='utf-8'));assert saved['autoStart'] and saved['futureTest']=={'keep':[1,None,3]}
+    assert saved['alwaysOnTop'] is False and saved['floatingWindowAlwaysOnTop'] is True
     assert saved['showTimerTool'] and saved['showClockTool'] and not saved['showSettingsTool']
     ImageGrab.grab(check_bounds(window),all_screens=True).save(OUT/'native-settings.png')
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
@@ -85,8 +90,9 @@ try:
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
     assert snapshot()['visibleTools']==[]
     window=open_settings();assert u.SendMessageW(u.GetDlgItem(window,200),0xf0,0,0)==0
-    check(window,200,True);check(window,208,True);check(window,209,True)
+    check(window,200,True);check(window,208,True);check(window,209,True);check(window,217,True)
     restored=apply(window,[0,5,6]);assert restored['reducedMotion']
+    assert restored['islandAlwaysOnTop'] and restored['islandTopmostStyle']
     clock_cases=[]
     for index in [1,2,3,4,5,0,5]:
         u.SendMessageW(u.GetDlgItem(window,210),0x14e,index,0)
@@ -129,7 +135,7 @@ try:
     u.PostMessageW(hwnd,0x100,13,0);time.sleep(.3)
     ImageGrab.grab(check_bounds(hwnd),all_screens=True).save(OUT/'native-clock.png')
     close(proc,hwnd);proc,hwnd=launch()
-    restarted=expect(lambda s:s['visibleTools']==[0,5,6] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64 and s['backgroundColor']=='#102030' and not s['albumColorEnabled']);bounds=check_bounds(hwnd)
+    restarted=expect(lambda s:s['visibleTools']==[0,5,6] and s['islandAlwaysOnTop'] and s['islandTopmostStyle'] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73 and s['compactLength']==140 and s['collapsedShoulderRadius']==12 and s['expandedShoulderRadius']==48 and s['expandedCornerRadius']==64 and s['backgroundColor']=='#102030' and not s['albumColorEnabled']);bounds=check_bounds(hwnd)
     assert bounds[2]==0 and restarted['reducedMotion'] and restarted['weatherRequests']==0
     assert restarted['clockZoneIndex']==5 and json.loads(config.read_text(encoding='utf-8'))['clockTimeZone']=='UTC'
     window=open_settings()
@@ -142,5 +148,5 @@ try:
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
     result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'appearanceApplied':placed,'restarted':restarted,'windowBounds':placements,'clockCases':clock_cases}
     (OUT/'native-settings-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
-    print('PASS: tools, animation, timezone, edge placement, shape and color settings, restart restoration and secondary-screen bounds')
+    print('PASS: topmost, tools, animation, timezone, edge placement, shape and color settings, restart restoration and secondary-screen bounds')
 finally:close(proc,hwnd)

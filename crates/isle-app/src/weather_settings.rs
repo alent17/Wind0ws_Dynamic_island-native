@@ -347,6 +347,22 @@ impl Settings {
                 LPARAM(0),
             );
         }
+        let topmost = child(
+            w!("BUTTON"),
+            "灵动岛始终置顶",
+            217,
+            WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            270.,
+            438.,
+            210.,
+            24.,
+        )?;
+        SendMessageW(
+            topmost,
+            BM_SETCHECK,
+            WPARAM(usize::from(controls.always_on_top)),
+            LPARAM(0),
+        );
         child(
             w!("BUTTON"),
             "应用设置",
@@ -733,6 +749,7 @@ impl Settings {
             tools: std::array::from_fn(|i| checked(201 + i as i32)),
             animations: checked(208),
             reduced: checked(209),
+            always_on_top: checked(217),
             time_zone: self
                 .time_zones
                 .get(
@@ -817,6 +834,7 @@ impl Settings {
         for id in (200..211).chain([211, 213, APPLY_CONTROLS, APPLY_APPEARANCE, PLAYERS]) {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
+        EnableWindow(GetDlgItem(self.hwnd, 217), !saving);
         EnableWindow(self.edge_position, !saving);
         EnableWindow(GetDlgItem(self.hwnd, 215), !saving);
         EnableWindow(GetDlgItem(self.hwnd, 216), !saving);

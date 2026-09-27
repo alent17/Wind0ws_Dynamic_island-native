@@ -237,6 +237,7 @@ struct App {
     media: Option<media::MediaService>,
     media_error: Option<String>,
     window: HWND,
+    always_on_top: bool,
     accessible: accessibility::Shared,
     renderer: Option<Renderer>,
     suspended: bool,
@@ -340,12 +341,32 @@ impl App {
         self.scale = scale;
         SetWindowPos(
             self.window,
-            HWND_TOPMOST,
+            if self.always_on_top {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            },
             bounds.x as i32,
             bounds.y as i32,
             bounds.w as i32,
             bounds.h as i32,
             SWP_NOACTIVATE,
+        )?;
+        Ok(())
+    }
+    unsafe fn apply_topmost(&self) -> Result<()> {
+        SetWindowPos(
+            self.window,
+            if self.always_on_top {
+                HWND_TOPMOST
+            } else {
+                HWND_NOTOPMOST
+            },
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )?;
         Ok(())
     }
@@ -882,6 +903,10 @@ impl App {
                             }
                             configuration::Edit::Controls(controls) => {
                                 self.model.time_zone = controls.time_zone.clone();
+                                self.always_on_top = controls.always_on_top;
+                                unsafe {
+                                    self.apply_topmost()?;
+                                }
                                 self.model.reduced = self
                                     .reduced_override
                                     .unwrap_or_else(|| system_reduced_motion())
@@ -1306,9 +1331,11 @@ impl App {
                 self.configuration.busy()
             ));
             text.push_str(&format!(
-                ",\"visibleTools\":{:?},\"reducedMotion\":{},\"islandAttached\":{},\"islandEdge\":\"{:?}\",\"islandEdgePosition\":{},\"compactLength\":{},\"collapsedShoulderRadius\":{},\"expandedShoulderRadius\":{},\"expandedCornerRadius\":{}",
+                ",\"visibleTools\":{:?},\"reducedMotion\":{},\"islandAlwaysOnTop\":{},\"islandTopmostStyle\":{},\"islandAttached\":{},\"islandEdge\":\"{:?}\",\"islandEdgePosition\":{},\"compactLength\":{},\"collapsedShoulderRadius\":{},\"expandedShoulderRadius\":{},\"expandedCornerRadius\":{}",
                 self.model.visible_tools().collect::<Vec<_>>(),
                 self.model.reduced,
+                self.always_on_top,
+                unsafe { GetWindowLongPtrW(self.window, GWL_EXSTYLE) & WS_EX_TOPMOST.0 as isize != 0 },
                 self.model.attached,
                 self.model.edge,
                 self.edge_position,
@@ -1529,6 +1556,7 @@ unsafe fn run() -> Result<()> {
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let media_selection = configuration.selection.clone();
+    let always_on_top = configuration.controls.always_on_top;
     let mut app = App {
         player_dialog: None,
         weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
@@ -1569,6 +1597,7 @@ unsafe fn run() -> Result<()> {
         test_monitor: value(&args, "--test-monitor")
             .or_else(|| std::env::var("ISLE_TEST_MONITOR").ok()),
         model,
+        always_on_top,
         edge_position: appearance.edge_position,
         scale,
         last: start,
@@ -1596,6 +1625,7 @@ unsafe fn run() -> Result<()> {
         EnableWindow(window, false);
     }
     ShowWindow(window, SW_SHOWNOACTIVATE);
+    app.apply_topmost()?;
     let mut msg = MSG::default();
     'running: loop {
         let continuous = app.continuous();
