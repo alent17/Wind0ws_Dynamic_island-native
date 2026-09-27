@@ -9,12 +9,14 @@ import hashlib
 import json
 import subprocess
 import time
+import sys
 import psutil
 from interaction import ROOT, OUT, wait_window, close, u
 
 u.ShowWindow.argtypes = [w.HWND, c.c_int]
 exe = ROOT / 'target/release/isle-native.exe'
 report = OUT / 'live-media-snapshot.json'
+require_artwork = '--require-artwork' in sys.argv
 proc = subprocess.Popen([str(exe), '--live-media', '--page', 'music', '--reduced-motion', '--benchmark', '--log', str(report)])
 hwnd = wait_window(proc)
 tracked = psutil.Process(proc.pid)
@@ -63,37 +65,66 @@ def sample(seconds):
 try:
     time.sleep(5)
     initial = expect(True)
+    if require_artwork:
+        for _ in range(100):
+            initial = expect(True)
+            if initial.get('mediaCoverBytes') == 65536 and initial['mediaDurationMs'] > 0 and not initial['artworkBusy']:
+                break
+            time.sleep(.15)
+        assert initial.get('mediaCoverBytes') == 65536 and initial['mediaDurationMs'] > 0, initial
+        from PIL import ImageGrab
+        bounds = w.RECT()
+        u.GetWindowRect(hwnd, c.byref(bounds))
+        ImageGrab.grab((bounds.left, bounds.top, bounds.right, bounds.bottom)).save(OUT / 'artwork-live.png')
     visible = sample(60)
     visible_end = snap()
     print('visible complete', visible_end, flush=True)
     u.ShowWindow(hwnd, 0)
     hidden_start = expect(False)
+    if require_artwork:
+        for _ in range(50):
+            hidden_start = snap()
+            if not hidden_start['artworkBusy']: break
+            time.sleep(.1)
+        assert not hidden_start['artworkBusy'] and not hidden_start['coverTextureAlive']
     hidden = sample(60)
     hidden_end = snap()
     assert hidden_end['mediaPolls'] == hidden_start['mediaPolls']
     assert hidden_end['frames'] == hidden_start['frames']
     assert not hidden_end['rendererAlive'] and hidden_end['livePages'] == 0
     assert hidden_end['timerIntervalMs'] == 0
+    if require_artwork:
+        assert hidden_end['artworkHttpRequests'] == hidden_start['artworkHttpRequests']
+        assert not hidden_end['artworkBusy']
     u.ShowWindow(hwnd, 4)
     expect(True)
     key(0x0d)  # Expand compact island; no media control.
     time.sleep(.2)
+    if require_artwork:
+        time.sleep(1.5)
+        for _ in range(100):
+            if not snap()['artworkBusy']: break
+            time.sleep(.1)
+    before_cycles = snap()
     cycles = []
     for _ in range(12):
         key(0x27); key(0x27); key(0x0d)  # Focus and open volume tool.
         detail = expect(False)
+        if require_artwork: assert not detail['coverTextureAlive']
         time.sleep(.15)
         assert snap()['mediaPolls'] == detail['mediaPolls']
         key(0x1b)
         music = expect(True)
+        if require_artwork: assert music['artworkCacheEntries'] <= 8
         cycles.append({'detailPolls': detail['mediaPolls'], 'musicPolls': music['mediaPolls'],
                        'privateMiB': tracked.memory_info().private/1024**2, 'handles': tracked.num_handles()})
     result = {'binarySha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
               'initial': initial, 'visibleEnd': visible_end, 'hiddenStart': hidden_start,
               'hiddenEnd': hidden_end, 'visibleSamples': visible, 'hiddenSamples': hidden,
               'cycles': cycles, 'children': [p.name() for p in tracked.children(recursive=True)],
+              'beforeCycles': before_cycles, 'afterCycles': snap(),
               'playbackCommandsSent': 0}
-    (OUT / 'live-media-results.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+    (OUT / ('artwork-media-results.json' if require_artwork else 'live-media-results.json')).write_text(json.dumps(result, indent=2), encoding='utf-8')
     for name, rows in [('visible', visible), ('hidden', hidden)]:
         print(name, {key: sum(r[key] for r in rows)/len(rows) for key in rows[0]}, flush=True)
     print('PASS: media session release/reacquire, no hidden polling or rendering, 12 cycles', flush=True)

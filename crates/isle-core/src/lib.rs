@@ -1,6 +1,7 @@
 //! Platform-independent media state. Times are monotonic seconds from app start.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MediaSnapshot {
+    pub cover: Option<std::sync::Arc<Cover>>,
     pub session: u64,
     pub source: String,
     pub title: String,
@@ -10,6 +11,29 @@ pub struct MediaSnapshot {
     pub play_pause: bool,
     pub next: bool,
     pub timeline: Timeline,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cover {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>, // Premultiplied BGRA, bounded to 128 x 128.
+}
+
+pub fn matching_song(title: &str, artist: &str, found_title: &str, found_artist: &str) -> bool {
+    fn normalize(text: &str) -> String {
+        text.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect()
+    }
+    let title = normalize(title);
+    let artist = normalize(artist);
+    // Require both fields: uncertain search matches must not become album art.
+    !title.is_empty()
+        && !artist.is_empty()
+        && title == normalize(found_title)
+        && artist == normalize(found_artist)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -143,6 +167,18 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn search_match_rejects_covers_and_missing_artist() {
+        assert!(matching_song(
+            "Song (Live)",
+            "Artist",
+            "song live",
+            "ARTIST"
+        ));
+        assert!(!matching_song("Song", "Artist", "Song (Live)", "Artist"));
+        assert!(!matching_song("Song", "Artist", "Song", "Cover Artist"));
+        assert!(!matching_song("Song", "", "Song", "Artist"));
+    }
     #[test]
     fn live_stream_does_not_inherit_a_finite_duration() {
         let mut t = Timeline {

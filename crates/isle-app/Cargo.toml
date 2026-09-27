@@ -7,6 +7,7 @@ edition.workspace = true
 isle-core = { path = "../isle-core" }
 isle-ui = { path = "../isle-ui" }
 windows = { version = "=0.52.0", features = [
+ "Web_Http", "Web_Http_Headers", "Data_Json", "Storage_Streams", "Graphics_Imaging",
  "Media_Control", "Foundation", "Foundation_Collections", "Win32_System_WinRT",
  "implement", "Win32_UI_Accessibility", "Win32_UI_Controls", "Win32_System_Ole", "Win32_System_Variant",
  "Foundation_Numerics", "Win32_Foundation", "Win32_System_SystemInformation", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_Security",

@@ -32,6 +32,7 @@ pub struct Update {
     pub error: Option<String>,
 }
 struct Shared {
+    artwork: Arc<crate::artwork::Statistics>,
     polls: AtomicU64,
     updates: AtomicU64,
     manager_alive: AtomicBool,
@@ -48,6 +49,7 @@ pub struct MediaService {
 impl MediaService {
     pub fn new(hwnd: HWND, start: Instant) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
+            artwork: Arc::default(),
             polls: AtomicU64::new(0),
             updates: AtomicU64::new(0),
             manager_alive: AtomicBool::new(false),
@@ -91,11 +93,15 @@ impl MediaService {
     }
     pub fn diagnostics(&self) -> String {
         format!(
-            "\"mediaActive\":{},\"mediaManagerAlive\":{},\"mediaPolls\":{},\"mediaUpdates\":{}",
+            "\"mediaActive\":{},\"mediaManagerAlive\":{},\"mediaPolls\":{},\"mediaUpdates\":{},\"artworkBusy\":{},\"artworkJobs\":{},\"artworkHttpRequests\":{},\"artworkCacheEntries\":{}",
             self.shared.active.load(Ordering::Acquire),
             self.shared.manager_alive.load(Ordering::Acquire),
             self.shared.polls.load(Ordering::Relaxed),
-            self.shared.updates.load(Ordering::Relaxed)
+            self.shared.updates.load(Ordering::Relaxed),
+            self.shared.artwork.busy.load(Ordering::Acquire),
+            self.shared.artwork.jobs.load(Ordering::Relaxed),
+            self.shared.artwork.requests.load(Ordering::Relaxed),
+            self.shared.artwork.entries.load(Ordering::Relaxed)
         )
     }
     pub fn control(&self, session: u64, action: Action) {
@@ -152,6 +158,7 @@ fn wait<T: RuntimeType>(operation: IAsyncOperation<T>, shared: &Shared) -> Resul
     }
 }
 struct Session {
+    thumbnail: Option<AgileReference<windows::Storage::Streams::IRandomAccessStreamReference>>,
     value: GlobalSystemMediaTransportControlsSession,
     token: EventRegistrationToken,
     dirty: Arc<AtomicBool>,
@@ -168,6 +175,7 @@ fn poll(
     sequence: &mut u64,
     shared: &Shared,
     start: Instant,
+    enrichment: &mut crate::artwork::Enricher,
 ) -> Result<MediaSnapshot> {
     let sessions = manager.GetSessions()?;
     let mut candidates = Vec::new();
@@ -214,6 +222,7 @@ fn poll(
     );
     let Some(index) = index else {
         *current = None;
+        enrichment.cancel();
         return Ok(MediaSnapshot::default());
     };
     let (selected, id, _, _) = &candidates[index];
@@ -240,6 +249,7 @@ fn poll(
             MediaSnapshot::default()
         };
         *current = Some(Session {
+            thumbnail: None,
             value: selected.clone(),
             token,
             dirty,
@@ -262,6 +272,10 @@ fn poll(
         };
         next.title = info.Title()?.to_string().chars().take(2048).collect();
         next.artist = info.Artist()?.to_string().chars().take(1024).collect();
+        current.thumbnail = info
+            .Thumbnail()
+            .ok()
+            .and_then(|r| AgileReference::new(&r).ok());
     }
     let playback = selected.GetPlaybackInfo()?;
     next.playing = playback.PlaybackStatus()?
@@ -277,6 +291,9 @@ fn poll(
         ))
     });
     let new_track = next.title != current.snapshot.title || next.artist != current.snapshot.artist;
+    if new_track {
+        next.cover = None;
+    }
     next.timeline.accept(
         timeline,
         start.elapsed().as_secs_f64(),
@@ -284,10 +301,33 @@ fn poll(
         next.playing,
         new_track,
     );
+    let source = next.source.to_lowercase();
+    let key = format!("{}\0{}\0{}", next.source, next.title, next.artist);
+    if let Some(extra) = enrichment.request(crate::artwork::Request {
+        key,
+        title: next.title.clone(),
+        artist: next.artist.clone(),
+        netease: source.contains("cloudmusic") || source.contains("netease"),
+        thumbnail: current.thumbnail.clone(),
+    }) {
+        if next.timeline.duration_ms == 0 {
+            next.timeline.duration_ms = extra.duration;
+        }
+        next.cover = extra.cover;
+    }
     current.snapshot = next.clone();
     Ok(next)
 }
 fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant) {
+    let Ok(mut enrichment) = crate::artwork::Enricher::new(shared.artwork.clone()) else {
+        publish(
+            shared,
+            hwnd,
+            MediaSnapshot::default(),
+            Some("Artwork worker unavailable".into()),
+        );
+        return;
+    };
     let mut manager = None;
     let mut current: Option<Session> = None;
     let mut sequence = 0;
@@ -295,6 +335,7 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
     while !shared.stopping.load(Ordering::Acquire) {
         let active = shared.active.load(Ordering::Acquire);
         if !active {
+            enrichment.cancel();
             current = None;
             manager = None;
             shared.manager_alive.store(false, Ordering::Release);
@@ -350,7 +391,14 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
         }
         if let Some(m) = &manager {
             shared.polls.fetch_add(1, Ordering::Relaxed);
-            match poll(m, &mut current, &mut sequence, shared, start) {
+            match poll(
+                m,
+                &mut current,
+                &mut sequence,
+                shared,
+                start,
+                &mut enrichment,
+            ) {
                 Ok(snapshot) if shared.active.load(Ordering::Acquire) => {
                     publish(shared, hwnd, snapshot, error)
                 }
@@ -358,6 +406,7 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                 Err(e) => {
                     // Stale controls must never target a disappearing/replaced session.
                     current = None;
+                    enrichment.cancel();
                     manager = None;
                     shared.manager_alive.store(false, Ordering::Release);
                     if shared.active.load(Ordering::Acquire) {

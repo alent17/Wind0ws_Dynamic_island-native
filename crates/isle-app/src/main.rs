@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 mod accessibility;
+mod artwork;
 mod frame_timer;
 mod media;
 mod render;
@@ -502,7 +503,7 @@ impl App {
                 );
             }
             Hit::Tool(3) => {
-                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体。\n尚未读取旧版设置，封面、频谱与设备控制仍待迁移。"),w!("原型操作"),MB_OK);
+                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体与封面。\n尚未读取旧版设置，频谱与设备控制仍待迁移。"),w!("原型操作"),MB_OK);
             }
             Hit::Tool(4) => {
                 self.model.toggle();
@@ -791,6 +792,14 @@ impl App {
             text.pop();
             if let Some(service) = &self.media {
                 let media = self.model.media.as_ref().unwrap();
+                text.push_str(&format!(
+                    ",\"coverTextureAlive\":{}",
+                    self.renderer.as_ref().is_some_and(|r| r.cover_alive())
+                ));
+                text.push_str(&format!(
+                    ",\"mediaCoverBytes\":{}",
+                    media.cover.as_ref().map(|c| c.pixels.len()).unwrap_or(0)
+                ));
                 text.push_str(&format!(",{},\"mediaSession\":{},\"mediaTitleChars\":{},\"mediaPlaying\":{},\"mediaPositionMs\":{},\"mediaDurationMs\":{},\"mediaError\":{}", service.diagnostics(), media.session, media.title.chars().count(), media.playing, media.timeline.position(self.start.elapsed().as_secs_f64(), media.playing), media.timeline.duration_ms, self.media_error.is_some()));
             }
             text.push('}');

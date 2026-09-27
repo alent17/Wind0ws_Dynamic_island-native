@@ -16,6 +16,7 @@ use windows::{
     },
 };
 pub struct Renderer {
+    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
@@ -46,6 +47,9 @@ fn rect(r: Rect) -> D2D_RECT_F {
     }
 }
 impl Renderer {
+    pub fn cover_alive(&self) -> bool {
+        self.cover.is_some()
+    }
     pub unsafe fn new(hwnd: HWND, scale: f32) -> Result<Self> {
         let mut device = None;
         D3D11CreateDevice(
@@ -126,6 +130,7 @@ impl Renderer {
             _visual: visual,
             brush,
             formats: HashMap::new(),
+            cover: None,
             layouts: HashMap::new(),
             frames: 0,
             title_overflow: false,
@@ -302,6 +307,7 @@ impl Renderer {
     ) -> Result<()> {
         if !m.expanded || m.page() != Page::Music {
             self.layouts.clear();
+            self.cover = None;
         }
         let white = color(0.94, 0.96, 1., 1.);
         let gray = color(0.5, 0.55, 0.6, 1.);
@@ -451,6 +457,57 @@ impl Renderer {
                         },
                         white,
                     );
+                    if let Some(cover) = m.media.as_ref().and_then(|m| m.cover.as_ref()) {
+                        if self
+                            .cover
+                            .as_ref()
+                            .is_none_or(|(old, _)| !std::sync::Arc::ptr_eq(old, cover))
+                        {
+                            let bitmap = self.ctx.CreateBitmap(
+                                D2D_SIZE_U {
+                                    width: cover.width,
+                                    height: cover.height,
+                                },
+                                Some(cover.pixels.as_ptr().cast()),
+                                cover.width * 4,
+                                &D2D1_BITMAP_PROPERTIES {
+                                    pixelFormat: D2D1_PIXEL_FORMAT {
+                                        format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                                        alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                                    },
+                                    dpiX: 96.,
+                                    dpiY: 96.,
+                                },
+                            )?;
+                            self.cover = Some((cover.clone(), bitmap));
+                        }
+                        // Clear the placeholder beneath translucent rounded corners.
+                        self.fill(
+                            Rect {
+                                x: c.x,
+                                y: c.y + 4.,
+                                w: 54.,
+                                h: 54.,
+                            },
+                            12.,
+                            color(0.015, 0.018, 0.025, 1.),
+                        );
+                        let bitmap = &self.cover.as_ref().unwrap().1;
+                        self.ctx.DrawBitmap(
+                            bitmap,
+                            Some(&rect(Rect {
+                                x: c.x,
+                                y: c.y + 4.,
+                                w: 54.,
+                                h: 54.,
+                            })),
+                            1.,
+                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                            None,
+                        );
+                    } else {
+                        self.cover = None;
+                    }
                     let title = if let Some(media) = &m.media {
                         if media.title.is_empty() {
                             "暂无媒体"
