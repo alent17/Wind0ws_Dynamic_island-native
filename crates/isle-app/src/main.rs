@@ -1,9 +1,14 @@
 #![windows_subsystem = "windows"]
+mod frame_timer;
 mod render;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
-use std::{cell::RefCell, collections::VecDeque, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 use windows::{
     core::*,
     Win32::{
@@ -25,6 +30,7 @@ enum Event {
     Leave,
     Cancel,
     Resize,
+    Preferences,
     Close,
 }
 thread_local! {static EVENTS:RefCell<VecDeque<Event>>=const{RefCell::new(VecDeque::new())};}
@@ -102,6 +108,14 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             enqueue(Event::Resize);
             LRESULT(0)
         }
+        WM_SETTINGCHANGE => {
+            enqueue(Event::Preferences);
+            LRESULT(0)
+        }
+        WM_TIMECHANGE => {
+            enqueue(Event::Paint);
+            LRESULT(0)
+        }
         WM_CLOSE => {
             enqueue(Event::Close);
             LRESULT(0)
@@ -130,6 +144,10 @@ struct App {
     scripted: bool,
     last_script: u64,
     frames_ms: Vec<f64>,
+    intervals_ms: Vec<f64>,
+    last_present: Option<Instant>,
+    frame_timer: frame_timer::FrameTimer,
+    reduced_override: Option<bool>,
 }
 impl App {
     unsafe fn position(&mut self) -> Result<()> {
@@ -196,16 +214,33 @@ impl App {
             self.renderer = Renderer::new(self.window, self.scale)?;
             self.renderer.draw(&self.model, self.hover)?;
         }
-        if self.frames_ms.len() < 36000 {
+        let presented = Instant::now();
+        if self.log.is_some() && self.model.continuous() && self.start.elapsed().as_secs() >= 5 {
+            if let Some(last) = self.last_present {
+                if self.intervals_ms.len() < 36000 {
+                    self.intervals_ms
+                        .push((presented - last).as_secs_f64() * 1000.);
+                }
+            }
+            self.last_present = Some(presented);
+        } else {
+            self.last_present = None;
+        }
+        if self.log.is_some() && self.frames_ms.len() < 36000 {
             self.frames_ms.push(start.elapsed().as_secs_f64() * 1000.);
         }
         let desired = if self.model.continuous() {
-            16
+            0
         } else if self.model.timer_deadline.is_some() || self.scripted || self.exit_after.is_some()
         {
             1000
         } else if self.model.expanded && self.model.page() == Page::Clock {
             60000
+                - (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    % 60000) as u32
         } else {
             0
         };
@@ -278,6 +313,12 @@ impl App {
                         }
                     }
                 }
+            }
+            Event::Preferences => {
+                self.model.reduced = self
+                    .reduced_override
+                    .unwrap_or_else(|| system_reduced_motion());
+                self.model.retarget();
             }
             Event::Resize => {
                 self.position()?;
@@ -359,9 +400,10 @@ impl App {
                 }
                 0x75 => {
                     self.model.reduced = !self.model.reduced;
+                    self.reduced_override = Some(self.model.reduced);
                     self.model.retarget();
                 }
-                0x76 => self.model.track = 1 - self.model.track,
+                0x76 => self.model.change_track(),
                 0x09 | 0x25 | 0x27 => {
                     if self.model.expanded && self.model.tool_count > 0 {
                         let index = if let Some(Hit::Tool(i)) = self.model.focus {
@@ -401,13 +443,39 @@ impl App {
                 .get(frames.len().saturating_sub(1) * 95 / 100)
                 .copied()
                 .unwrap_or(0.);
-            let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{}}}",self.start.elapsed().as_secs_f64(),self.renderer.frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval);
+            let mut intervals = self.intervals_ms.clone();
+            intervals.sort_by(f64::total_cmp);
+            let interval_p95 = intervals
+                .get(intervals.len().saturating_sub(1) * 95 / 100)
+                .copied()
+                .unwrap_or(0.);
+            let interval_mean = if intervals.is_empty() {
+                0.
+            } else {
+                intervals.iter().sum::<f64>() / intervals.len() as f64
+            };
+            let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{}}}",self.start.elapsed().as_secs_f64(),self.renderer.frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.renderer.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len());
             let _ = std::fs::write(path, text);
         }
     }
 }
 fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
+}
+unsafe fn system_reduced_motion() -> bool {
+    let mut animate = BOOL(1);
+    if SystemParametersInfoW(
+        SPI_GETCLIENTAREAANIMATION,
+        0,
+        Some((&mut animate as *mut BOOL).cast()),
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+    )
+    .is_ok()
+    {
+        !animate.as_bool()
+    } else {
+        false
+    }
 }
 unsafe fn run() -> Result<()> {
     CoInitializeEx(None, COINIT_APARTMENTTHREADED)?;
@@ -443,7 +511,7 @@ unsafe fn run() -> Result<()> {
         return Err(Error::from_win32());
     }
     let mut model = Model {
-        reduced: args.iter().any(|a| a == "--reduced-motion"),
+        reduced: args.iter().any(|a| a == "--reduced-motion") || system_reduced_motion(),
         playing: !args.iter().any(|a| a == "--paused"),
         attached: args.iter().any(|a| a == "--attached"),
         edge: match value(&args, "--edge").as_deref() {
@@ -488,6 +556,10 @@ unsafe fn run() -> Result<()> {
         scripted: args.iter().any(|a| a == "--scripted"),
         last_script: 0,
         frames_ms: vec![],
+        intervals_ms: vec![],
+        last_present: None,
+        frame_timer: frame_timer::FrameTimer::new()?,
+        reduced_override: args.iter().any(|a| a == "--reduced-motion").then_some(true),
     };
     app.position()?;
     if app.scale != app.renderer.scale {
@@ -502,15 +574,34 @@ unsafe fn run() -> Result<()> {
     ShowWindow(window, SW_SHOWNOACTIVATE);
     let mut msg = MSG::default();
     'running: loop {
-        let result = GetMessageW(&mut msg, None, 0, 0).0;
-        if result == 0 {
-            break;
+        let continuous = app.model.continuous();
+        if continuous {
+            let deadline = app.last + Duration::from_nanos(16_666_667);
+            app.frame_timer
+                .arm(deadline.saturating_duration_since(Instant::now()))?;
+        } else {
+            app.frame_timer.cancel();
         }
-        if result < 0 {
+        let handles = if continuous {
+            vec![app.frame_timer.handle]
+        } else {
+            vec![]
+        };
+        let result =
+            MsgWaitForMultipleObjectsEx(Some(&handles), u32::MAX, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        if result == WAIT_FAILED {
             return Err(Error::from_win32());
         }
-        TranslateMessage(&msg);
-        DispatchMessageW(&msg);
+        if continuous && result == WAIT_OBJECT_0 {
+            enqueue(Event::Tick);
+        }
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            if msg.message == WM_QUIT {
+                break 'running;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
         loop {
             let event = EVENTS.with(|q| q.borrow_mut().pop_front());
             if let Some(event) = event {

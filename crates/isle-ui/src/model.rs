@@ -45,6 +45,7 @@ pub struct Model {
     pub timer_left: f64,
     pub now: f64,
     pub track: usize,
+    pub title_started: f64,
     pub tool_count: usize,
 }
 impl Default for Model {
@@ -69,6 +70,7 @@ impl Default for Model {
             timer_left: 300.,
             now: 0.,
             track: 0,
+            title_started: 0.,
             tool_count: 7,
         }
     }
@@ -78,6 +80,7 @@ impl Model {
         self.current.as_ref().map(|p| p.page).unwrap_or(Page::Music)
     }
     pub fn switch(&mut self, page: Page) {
+        self.title_started = self.now;
         self.expanded = true;
         self.generation += 1;
         self.current = Some(PageInstance {
@@ -105,7 +108,12 @@ impl Model {
             self.toggle()
         }
     }
+    pub fn change_track(&mut self) {
+        self.track = 1 - self.track;
+        self.title_started = self.now;
+    }
     pub fn retarget(&mut self) {
+        self.title_started = self.now;
         let (w, h, r, s) = if self.expanded {
             let bar = if self.tool_count > 0 { 40. } else { 0. };
             let h = match self.page() {
@@ -330,7 +338,7 @@ impl Model {
             Hit::Blank => self.toggle(),
             Hit::Back => self.back(),
             Hit::Play => self.playing = !self.playing,
-            Hit::Previous | Hit::Next => self.track = 1 - self.track,
+            Hit::Previous | Hit::Next => self.change_track(),
             Hit::Tool(i) => match i {
                 0 => self.switch(Page::Timer),
                 1 => self.switch(Page::Volume),

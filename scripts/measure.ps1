@@ -1,8 +1,9 @@
-param([int]$Seconds = 60, [int]$Repetitions = 3)
+param([int]$Seconds = 60, [int]$Repetitions = 3,
+    [string]$Scene = 'all', [string]$OutputName = 'measurement-v3')
 $ErrorActionPreference = 'Stop'
 $nativeRoot = Split-Path $PSScriptRoot
 $exe = Join-Path $nativeRoot 'target/release/isle-native.exe'
-$outputDir = Join-Path $nativeRoot 'artifacts/measurement-v2'
+$outputDir = Join-Path (Join-Path $nativeRoot 'artifacts') $OutputName
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 $scenarios = @(
     @{ Name = 'compact-paused'; Args = @('--paused') },
@@ -10,6 +11,10 @@ $scenarios = @(
     @{ Name = 'page-cycle'; Args = @('--scripted') }
 )
 $rows = @()
+if ($Scene -ne 'all') {
+    $scenarios = @($scenarios | Where-Object { $_.Name -eq $Scene })
+    if (!$scenarios.Count) { throw "Unknown scenario: $Scene" }
+}
 foreach ($scenario in $scenarios) {
     for ($run = 1; $run -le $Repetitions; $run++) {
         $log = Join-Path $outputDir "$($scenario.Name)-$run.json"

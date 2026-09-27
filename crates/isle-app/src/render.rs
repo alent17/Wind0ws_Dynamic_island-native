@@ -19,13 +19,15 @@ pub struct Renderer {
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
+    fonts: Option<IDWriteFontCollection>,
+    pub font_family: &'static str,
     swap: IDXGISwapChain1,
     _composition: IDCompositionDevice,
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
     brush: ID2D1SolidColorBrush,
     formats: HashMap<u32, IDWriteTextFormat>,
-    layouts: HashMap<String, IDWriteTextLayout>,
+    layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub scale: f32,
 }
@@ -106,7 +108,15 @@ impl Renderer {
         composition.Commit()?;
         let brush = ctx.CreateSolidColorBrush(&color(1., 1., 1., 1.), None)?;
         let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+        let fonts = load_fonts(&write);
+        let font_family = if fonts.is_some() {
+            "MiSans"
+        } else {
+            "Segoe UI"
+        };
         Ok(Self {
+            fonts,
+            font_family,
             ctx,
             factory,
             write,
@@ -145,9 +155,15 @@ impl Renderer {
             return Ok(f.clone());
         }
         let f = self.write.CreateTextFormat(
-            w!("Segoe UI"),
-            None,
-            DWRITE_FONT_WEIGHT_NORMAL,
+            &HSTRING::from(self.font_family),
+            self.fonts.as_ref(),
+            if size >= 26 {
+                DWRITE_FONT_WEIGHT_BOLD
+            } else if size == 13 {
+                DWRITE_FONT_WEIGHT_MEDIUM
+            } else {
+                DWRITE_FONT_WEIGHT_NORMAL
+            },
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             size as f32,
@@ -411,22 +427,23 @@ impl Renderer {
                         w: (c.w - 100.).max(24.),
                         h: 22.,
                     };
-                    let layout = if let Some(l) = self.layouts.get(title) {
+                    let (layout, title_width) = if let Some(l) = self.layouts.get(title) {
                         l.clone()
                     } else {
                         let f = self.format(13)?;
                         let wide: Vec<u16> = title.encode_utf16().collect();
                         let l = self.write.CreateTextLayout(&wide, &f, 2000., 24.)?;
-                        self.layouts.insert(title.to_string(), l.clone());
-                        l
+                        let mut metrics = DWRITE_TEXT_METRICS::default();
+                        l.GetMetrics(&mut metrics)?;
+                        let cached = (l, metrics.width);
+                        self.layouts.insert(title.to_string(), cached.clone());
+                        cached
                     };
-                    let mut metrics = DWRITE_TEXT_METRICS::default();
-                    layout.GetMetrics(&mut metrics)?;
-                    let distance = (metrics.width - title_rect.w).max(0.);
+                    let distance = (title_width - title_rect.w).max(0.);
                     let shift = if m.reduced {
                         0.
                     } else {
-                        marquee(distance, m.now)
+                        marquee(distance, m.now - m.title_started)
                     };
                     self.ctx
                         .PushAxisAlignedClip(&rect(title_rect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
@@ -776,4 +793,23 @@ impl Renderer {
             );
         }
     }
+}
+
+/// A private DirectWrite collection; never installs fonts into Windows.
+unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
+    let factory: IDWriteFactory5 = write.cast().ok()?;
+    let builder = factory.CreateFontSetBuilder2().ok()?;
+    let folder = std::env::current_exe().ok()?.parent()?.join("fonts");
+    for weight in ["Regular", "Medium", "Bold"] {
+        let path = folder.join(format!("MiSans-{weight}.ttf"));
+        let file = factory
+            .CreateFontFileReference(&HSTRING::from(path.as_os_str()), None)
+            .ok()?;
+        builder.AddFontFile(&file).ok()?;
+    }
+    factory
+        .CreateFontCollectionFromFontSet(&builder.CreateFontSet().ok()?)
+        .ok()?
+        .cast()
+        .ok()
 }
