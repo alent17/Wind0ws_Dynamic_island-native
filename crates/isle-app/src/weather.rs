@@ -1,6 +1,5 @@
 use isle_core::weather::{self, Cache, City, Forecast};
 use std::{
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -368,53 +367,4 @@ fn search(query: &str, ctx: &Context<'_>) -> Result<Vec<City>> {
     cities.truncate(16);
     cities.sort_by_key(|city| std::cmp::Reverse(city.rank));
     Ok(cities.into_iter().map(|candidate| candidate.city).collect())
-}
-pub fn config_path() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("IsleNative")
-        .join("settings.json")
-}
-pub fn load(path: &std::path::Path, legacy: bool) -> Option<City> {
-    fn read(path: &std::path::Path) -> Option<City> {
-        if std::fs::metadata(path).ok()?.len() > 65536 {
-            return None;
-        }
-        weather::settings(&std::fs::read(path).ok()?)
-    }
-    if path.exists() {
-        return read(path);
-    }
-    if legacy {
-        read(
-            &std::env::var_os("APPDATA")
-                .map(PathBuf::from)?
-                .join("com.isle-app.isle/settings.json"),
-        )
-    } else {
-        None
-    }
-}
-pub fn save(path: &std::path::Path, city: &City) -> Result<()> {
-    if !city.valid() {
-        return Err(E_INVALIDARG.into());
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| Error::from(E_FAIL))?;
-    }
-    let pending = path.with_extension(format!("{}.pending", std::process::id()));
-    std::fs::write(&pending, weather::settings_bytes(city)).map_err(|_| Error::from(E_FAIL))?;
-    use windows::Win32::Storage::FileSystem::*;
-    let result = unsafe {
-        MoveFileExW(
-            &HSTRING::from(pending.as_os_str()),
-            &HSTRING::from(path.as_os_str()),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result.is_err() {
-        let _ = std::fs::remove_file(pending);
-    }
-    result
 }

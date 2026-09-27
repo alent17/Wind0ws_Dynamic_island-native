@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod accessibility;
 mod artwork;
+mod configuration;
 mod frame_timer;
 mod media;
 mod render;
@@ -27,6 +28,7 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    ConfigSaved,
     Weather,
     City(usize, isize),
     Spectrum,
@@ -62,6 +64,10 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        configuration::UPDATED => {
+            enqueue(Event::ConfigSaved);
+            LRESULT(0)
+        }
         weather::UPDATED => {
             enqueue(Event::Weather);
             LRESULT(0)
@@ -211,7 +217,8 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 struct App {
     weather: weather::Service,
     settings: Option<weather_settings::Settings>,
-    config_path: std::path::PathBuf,
+    configuration: configuration::Service,
+    saving_window: Option<isize>,
     audio: Option<system_audio::AudioService>,
     spectrum: Option<spectrum::SpectrumService>,
     media: Option<media::MediaService>,
@@ -601,6 +608,10 @@ impl App {
                 match weather_settings::Settings::new(self.window) {
                     Ok(settings) => {
                         self.weather.request(None);
+                        if let Some(error) = &self.configuration.load_error {
+                            settings.message(error);
+                        }
+                        settings.saving(self.configuration.busy());
                         self.settings = Some(settings);
                     }
                     Err(_) => {
@@ -673,6 +684,7 @@ impl App {
                     | Event::Audio
                     | Event::Spectrum
                     | Event::Weather
+                    | Event::ConfigSaved
                     | Event::City(_, _)
                     | Event::Diagnostic
                     | Event::Close
@@ -691,7 +703,7 @@ impl App {
             Event::City(action, hwnd) => {
                 if self.settings.as_ref().is_some_and(|s| s.hwnd.0 == hwnd) {
                     match action {
-                        weather_settings::SEARCH => {
+                        weather_settings::SEARCH if !self.configuration.busy() => {
                             let settings = self.settings.as_mut().unwrap();
                             let query = settings.query();
                             self.weather.request(None);
@@ -702,21 +714,11 @@ impl App {
                                 settings.message("请输入 2–80 个字符");
                             }
                         }
-                        weather_settings::APPLY => {
+                        weather_settings::APPLY if !self.configuration.busy() => {
                             if let Some(city) = self.settings.as_ref().and_then(|s| s.selected()) {
-                                if weather::save(&self.config_path, &city).is_ok() {
-                                    self.model.weather = isle_core::weather::View {
-                                        city: Some(city),
-                                        ..Default::default()
-                                    };
-                                    self.settings = None;
-                                    self.weather.request(None);
-                                    self.model.switch(Page::Weather);
-                                } else {
-                                    self.settings
-                                        .as_ref()
-                                        .unwrap()
-                                        .message("保存失败，原配置未改变，请重试");
+                                if self.configuration.save(city) {
+                                    self.saving_window = Some(hwnd);
+                                    self.settings.as_ref().unwrap().saving(true);
                                 }
                             }
                         }
@@ -727,6 +729,40 @@ impl App {
                         _ => {}
                     }
                 }
+            }
+            Event::ConfigSaved => {
+                if let Some(outcome) = self.configuration.take() {
+                    let same_window = self
+                        .settings
+                        .as_ref()
+                        .is_some_and(|s| Some(s.hwnd.0) == self.saving_window);
+                    self.saving_window = None;
+                    match outcome.result {
+                        Ok(()) => {
+                            self.model.weather = isle_core::weather::View {
+                                city: Some(outcome.city),
+                                ..Default::default()
+                            };
+                            if same_window {
+                                self.settings = None;
+                                self.weather.request(None);
+                                if !self.suspended {
+                                    self.model.switch(Page::Weather);
+                                }
+                            } else if let Some(settings) = &self.settings {
+                                settings.saving(false);
+                                settings.message("城市已保存");
+                            }
+                        }
+                        Err(error) => {
+                            if let Some(settings) = &self.settings {
+                                settings.saving(false);
+                                settings.message(&error);
+                            }
+                        }
+                    }
+                }
+                changed = !self.suspended;
             }
             Event::Weather => {
                 if let Some(output) = self.weather.take() {
@@ -1077,6 +1113,11 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            text.push_str(&format!(
+                ",\"configurationValid\":{},\"configurationSaving\":{}",
+                self.configuration.load_error.is_none(),
+                self.configuration.busy()
+            ));
             text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
             if let Some(service) = &self.audio {
                 text.push(',');
@@ -1171,10 +1212,20 @@ unsafe fn run() -> Result<()> {
     let config_path = config_override
         .as_ref()
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(weather::config_path);
+        .unwrap_or_else(configuration::config_path);
+    let configuration = configuration::Service::new(
+        window,
+        config_path,
+        if config_override.is_none() {
+            configuration::legacy_path()
+        } else {
+            None
+        },
+    )
+    .map_err(|_| Error::from(E_FAIL))?;
     let mut model = Model {
         weather: isle_core::weather::View {
-            city: weather::load(&config_path, config_override.is_none()),
+            city: configuration.city.clone(),
             ..Default::default()
         },
         spectrum: args
@@ -1227,7 +1278,8 @@ unsafe fn run() -> Result<()> {
     let mut app = App {
         weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
         settings: None,
-        config_path,
+        configuration,
+        saving_window: None,
         spectrum: if model.spectrum.is_some() {
             Some(spectrum::SpectrumService::new(window)?)
         } else {

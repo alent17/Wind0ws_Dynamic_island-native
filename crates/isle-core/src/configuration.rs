@@ -1,0 +1,166 @@
+//! Preserve the complete JSON document, including fields not yet used by native UI.
+use crate::{preferences::AppPreferences, weather::City};
+use serde_json::{Map, Value};
+
+pub const MAX_BYTES: usize = 1024 * 1024;
+#[derive(Clone, Debug)]
+pub struct Document(Map<String, Value>);
+impl Default for Document {
+    fn default() -> Self {
+        Self(
+            serde_json::to_value(AppPreferences::default())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+    }
+}
+impl Document {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() > MAX_BYTES {
+            return Err("配置超过 1 MiB".into());
+        }
+        let value: Value = serde_json::from_slice(bytes).map_err(|_| "配置不是有效 JSON")?;
+        let mut fields = value.as_object().ok_or("配置根节点必须为对象")?.clone();
+        for (alias, canonical) in [
+            ("edgeShoulderRadius", "collapsedEdgeShoulderRadius"),
+            ("autoHide", "captureHideOnFullscreen"),
+        ] {
+            if !fields.contains_key(canonical) {
+                if let Some(v) = fields.get(alias).cloned() {
+                    fields.insert(canonical.into(), v);
+                }
+            }
+        }
+        if !fields.contains_key("floatingWindowAlwaysOnTop") {
+            if let Some(v) = fields.get("alwaysOnTop").cloned() {
+                fields.insert("floatingWindowAlwaysOnTop".into(), v);
+            }
+        }
+        for (key, value) in Self::default().0 {
+            fields.entry(key).or_insert(value);
+        }
+        let doc = Self(fields);
+        doc.preferences()?;
+        Ok(doc)
+    }
+    pub fn preferences(&self) -> Result<AppPreferences, String> {
+        let mut known = self.0.clone();
+        // Keep aliases in the saved document, but canonical values win during typed decoding.
+        known.remove("edgeShoulderRadius");
+        known.remove("autoHide");
+        let prefs: AppPreferences = serde_json::from_value(Value::Object(known))
+            .map_err(|_| "配置字段类型或数值范围无效".to_string())?;
+        if let Some(city) = &prefs.weather_location {
+            if !(City {
+                name: city.name.clone(),
+                latitude: city.latitude,
+                longitude: city.longitude,
+            })
+            .valid()
+            {
+                return Err("天气城市配置无效".into());
+            }
+        }
+        Ok(prefs)
+    }
+    pub fn city(&self) -> Option<City> {
+        serde_json::from_value(self.0.get("weatherLocation")?.clone())
+            .ok()
+            .filter(City::valid)
+    }
+    pub fn set_city(&mut self, city: &City) -> Result<(), String> {
+        if !city.valid() {
+            return Err("天气城市配置无效".into());
+        }
+        let mut value = self
+            .0
+            .get("weatherLocation")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (key, value_new) in serde_json::to_value(city).unwrap().as_object().unwrap() {
+            value.insert(key.clone(), value_new.clone());
+        }
+        self.0
+            .insert("weatherLocation".into(), Value::Object(value));
+        Ok(())
+    }
+    pub fn bytes(&self) -> Result<Vec<u8>, String> {
+        let bytes = serde_json::to_vec_pretty(&self.0).map_err(|_| "配置序列化失败")?;
+        if bytes.len() > MAX_BYTES {
+            return Err("保存的配置超过 1 MiB".into());
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[allow(dead_code)]
+    mod legacy {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../src-tauri/src/models/settings.rs"
+        ));
+    }
+    #[test]
+    fn defaults_match_every_legacy_field() {
+        assert_eq!(
+            serde_json::to_value(AppPreferences::default()).unwrap(),
+            serde_json::to_value(legacy::AppPreferences::default()).unwrap()
+        );
+    }
+    #[test]
+    fn edits_preserve_unknown_root_nested_and_unused_fields() {
+        let mut doc = Document::parse(br#"{"playerOrderIds":["b","a"],"autoStart":true,"future":{"list":[null,{"x":2}]},"weatherLocation":{"name":"A","latitude":1,"longitude":2,"provider":"custom"}}"#).unwrap();
+        doc.set_city(&City {
+            name: "B".into(),
+            latitude: 3.,
+            longitude: 4.,
+        })
+        .unwrap();
+        let saved: Value = serde_json::from_slice(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(saved["future"]["list"][1]["x"], 2);
+        assert_eq!(saved["playerOrderIds"], serde_json::json!(["b", "a"]));
+        assert_eq!(saved["autoStart"], true);
+        assert_eq!(saved["weatherLocation"]["provider"], "custom");
+        assert_eq!(
+            Document::parse(&doc.bytes().unwrap())
+                .unwrap()
+                .city()
+                .unwrap()
+                .name,
+            "B"
+        );
+    }
+    #[test]
+    fn canonical_fields_win_aliases_and_independent_topmost_is_inherited() {
+        let doc =
+            Document::parse(br#"{"autoHide":false,"edgeShoulderRadius":9,"alwaysOnTop":false}"#)
+                .unwrap();
+        let p = doc.preferences().unwrap();
+        assert!(!p.capture_hide_on_fullscreen && !p.floating_window_always_on_top);
+        assert_eq!(p.collapsed_edge_shoulder_radius, 9);
+        let doc = Document::parse(br#"{"autoHide":false,"captureHideOnFullscreen":true,"edgeShoulderRadius":9,"collapsedEdgeShoulderRadius":12,"alwaysOnTop":false,"floatingWindowAlwaysOnTop":true}"#).unwrap();
+        let p = doc.preferences().unwrap();
+        assert!(p.capture_hide_on_fullscreen && p.floating_window_always_on_top);
+        assert_eq!(p.collapsed_edge_shoulder_radius, 12);
+    }
+    #[test]
+    fn invalid_documents_cannot_be_silently_defaulted_and_saved() {
+        for bytes in [
+            b"null".as_slice(),
+            b"[]",
+            b"{",
+            br#"{"windowOpacity":999}"#,
+            br#"{"showClockTool":"yes"}"#,
+            br#"{"weatherLocation":{"name":"bad","latitude":91,"longitude":0}}"#,
+        ] {
+            assert!(Document::parse(bytes).is_err());
+        }
+        assert!(Document::parse(&vec![b' '; MAX_BYTES + 1]).is_err());
+    }
+}

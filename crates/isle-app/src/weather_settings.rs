@@ -289,6 +289,15 @@ impl Settings {
             .trim()
             .to_string()
     }
+    pub unsafe fn saving(&self, saving: bool) {
+        for control in [self.query, self.list, GetDlgItem(self.hwnd, SEARCH as i32)] {
+            EnableWindow(control, !saving);
+        }
+        EnableWindow(self.apply, !saving && !self.cities.is_empty());
+        if saving {
+            self.message("正在保存…");
+        }
+    }
     pub unsafe fn message(&self, text: &str) {
         let _ = SetWindowTextW(self.status, &HSTRING::from(text));
     }

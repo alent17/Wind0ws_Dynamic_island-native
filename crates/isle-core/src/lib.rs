@@ -1,4 +1,6 @@
 //! Platform-independent media state. Times are monotonic seconds from app start.
+pub mod configuration;
+pub mod preferences;
 pub mod spectrum;
 pub mod weather;
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -63,6 +63,8 @@ cargo build --release --manifest-path native/Cargo.toml
 
 天气验证：`python native/scripts/live_weather.py`，天气可见、隐藏各采样 60 秒并循环打开/关闭城市设置 12 次；`--quick` 使用 5 秒样本。只写 `native/artifacts/` 中的测试配置，不修改安装版配置。需要能访问 Open-Meteo，阶段结果见 [天气与城市设置](../docs/native-ui-weather.md)。
 
+配置保存已迁移到独立后台线程，保留旧版完整字段及未知嵌套数据。首次从旧版迁移并保存时写入原始备份，后续保存保留上一版；损坏文件和外部修改会阻止覆盖。当前仅天气字段接入运行时，其余设置等待 Studio 迁移。`python native/scripts/configuration_faults.py` 验证隔离配置的启动保护；天气脚本同时验证保存保真、备份和重启。详见 [原生配置兼容](../docs/native-ui-configuration.md)。
+
 测试显示器：`--test-monitor '\\.\DISPLAY2'` 或设置进程环境变量 `ISLE_TEST_MONITOR`，启动前选定目标显示器；城市设置跟随主窗口所在屏幕。无效显示器名称报错，不回落到主屏。自动化测试使用 `--benchmark` 配合窗口消息，窗口显示和再次打开设置均不抢前台焦点。按用户要求，本机后续 UI 测试使用左侧 `DISPLAY2`，右侧主屏留给用户。
 
 系统音量服务仅在可见音量页采集，每秒更新；切页、收起或隐藏释放 COM 端点与枚举器并停止轮询。拖动命令合并且队列最多 8 条，执行前核对默认设备身份，丢弃超过 2 秒的命令。设备列表有独立无障碍名称，设备重排后旧控件引用失效。默认设备切换沿用旧后端的非公开 `IPolicyConfig` 接口，仍需多系统版本和真实切换验收。

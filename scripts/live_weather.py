@@ -17,7 +17,9 @@ u.GetWindowTextW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 u.ShowWindow.argtypes=[w.HWND,c.c_int]
 exe=ROOT/'target/release/isle-native.exe'
 config=OUT/'weather-test-settings.json'
-config.write_text('{}',encoding='utf-8')
+fixture={'playerOrderIds':['second','first'],'autoStart':True,'futureNativeTest':{'nested':[None,{'value':42}]}}
+original=json.dumps(fixture).encode('utf-8')
+config.write_bytes(original)
 report=OUT/'weather-snapshot.json'
 proc=subprocess.Popen([str(exe),'--page','weather','--paused','--reduced-motion','--benchmark',
                        '--settings-path',str(config),'--log',str(report)])
@@ -106,7 +108,10 @@ try:
     u.SendMessageW(u.GetDlgItem(window,104),0xf5,0,0)
     ready=expect(lambda s:s['weatherData'] and not s['weatherBusy'] and not s['settingsWindowAlive'])
     assert ready['weatherDays']==3 and not ready['weatherError']
-    assert json.loads(config.read_text(encoding='utf-8'))['weatherLocation']['name']
+    saved=json.loads(config.read_text(encoding='utf-8'))
+    assert saved['weatherLocation']['name']
+    assert all(saved[k]==v for k,v in fixture.items())
+    assert config.with_suffix('.previous.json').read_bytes()==original
     screenshot(hwnd,'weather-live.png')
     time.sleep(5)
     visible=sample();visible_end=snap();print('visible sample complete',flush=True)
@@ -132,7 +137,15 @@ try:
             'initial':initial,'ready':ready,'visibleEnd':visible_end,'visibleSamples':visible,
             'hiddenStart':hidden_start,'hiddenEnd':hidden_end,'hiddenSamples':hidden,
             'cycles':cycles,'windowBounds':placements,'final':snap(),'children':[p.name() for p in tracked.children(recursive=True)]}
+    close(proc,hwnd)
+    before_restart=config.read_bytes()
+    proc=subprocess.Popen([str(exe),'--page','music','--paused','--reduced-motion','--benchmark',
+                           '--settings-path',str(config),'--log',str(report)])
+    hwnd=wait_window(proc)
+    check_monitor(hwnd)
+    result['restarted']=expect(lambda s:s['weatherConfigured'] and s['configurationValid'])
+    assert result['restarted']['weatherRequests']==0 and config.read_bytes()==before_restart
     (OUT/('live-weather-quick.json' if seconds==5 else 'live-weather-results.json')).write_text(json.dumps(result,indent=2),encoding='utf-8')
     for label,rows in [('visible',visible),('hidden',hidden)]:print(label,{k:sum(r[k] for r in rows)/len(rows) for k in rows[0]},flush=True)
-    print('PASS: Chinese search, isolated save, forecast, cache, hide and 12 settings-window cycles',flush=True)
+    print('PASS: Chinese search, preserving save, backup, restart, forecast, cache, hide and 12 settings-window cycles',flush=True)
 finally:close(proc,hwnd)
