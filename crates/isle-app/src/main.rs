@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod accessibility;
 mod artwork;
+mod clock;
 mod configuration;
 mod frame_timer;
 mod media;
@@ -766,6 +767,7 @@ impl App {
                                 }
                             }
                             configuration::Edit::Controls(controls) => {
+                                self.model.time_zone = controls.time_zone.clone();
                                 self.model.reduced = self
                                     .reduced_override
                                     .unwrap_or_else(|| system_reduced_motion())
@@ -1144,6 +1146,16 @@ impl App {
             let mut text = text;
             text.pop();
             text.push_str(&format!(
+                ",\"clockZoneIndex\":{},\"clockZoneSupported\":{}",
+                clock::ZONES
+                    .iter()
+                    .position(|(id, _)| *id == self.model.time_zone)
+                    .map(|i| i as i32)
+                    .unwrap_or(-1),
+                clock::now(&self.model.time_zone).is_some()
+            ));
+
+            text.push_str(&format!(
                 ",\"configurationValid\":{},\"configurationSaving\":{}",
                 self.configuration.load_error.is_none(),
                 self.configuration.busy()
@@ -1258,7 +1270,9 @@ unsafe fn run() -> Result<()> {
         },
     )
     .map_err(|_| Error::from(E_FAIL))?;
+    clock::warm_up();
     let mut model = Model {
+        time_zone: configuration.controls.time_zone.clone(),
         weather: isle_core::weather::View {
             city: configuration.city.clone(),
             ..Default::default()

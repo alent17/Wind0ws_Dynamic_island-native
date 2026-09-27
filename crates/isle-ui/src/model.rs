@@ -33,6 +33,7 @@ pub struct PageInstance {
 }
 pub struct Model {
     pub weather: isle_core::weather::View,
+    pub time_zone: String,
     pub spectrum: Option<SpectrumVisual>,
     pub audio: Option<isle_core::AudioSnapshot>,
     pub device_menu: bool,
@@ -67,6 +68,7 @@ impl Default for Model {
     fn default() -> Self {
         Self {
             weather: isle_core::weather::View::default(),
+            time_zone: "system".into(),
             spectrum: None,
             audio: None,
             device_menu: false,

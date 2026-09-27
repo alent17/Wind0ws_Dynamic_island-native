@@ -18,6 +18,7 @@ pub struct Controls {
     pub tools: [bool; 7],
     pub animations: bool,
     pub reduced: bool,
+    pub time_zone: String,
 }
 impl Default for Controls {
     fn default() -> Self {
@@ -26,6 +27,7 @@ impl Default for Controls {
             tools: [true; 7],
             animations: true,
             reduced: false,
+            time_zone: "system".into(),
         }
     }
 }
@@ -107,9 +109,14 @@ impl Document {
             tools: TOOL_KEYS.map(|key| self.0[key].as_bool().unwrap_or(true)),
             animations: self.0["enableAnimations"].as_bool().unwrap_or(true),
             reduced: self.0["reduceAnimations"].as_bool().unwrap_or(false),
+            time_zone: self.0["clockTimeZone"].as_str().unwrap_or("system").into(),
         }
     }
     pub fn set_controls(&mut self, controls: &Controls) {
+        self.0.insert(
+            "clockTimeZone".into(),
+            Value::String(controls.time_zone.clone()),
+        );
         for (key, value) in TOOL_KEYS.into_iter().zip(controls.tools).chain([
             ("showCustomFunctionPanel", controls.panel),
             ("enableAnimations", controls.animations),
@@ -173,6 +180,7 @@ mod tests {
             tools: [true, false, true, false, true, false, true],
             animations: false,
             reduced: true,
+            time_zone: "America/New_York".into(),
         };
         doc.set_controls(&controls);
         let again = Document::parse(&doc.bytes().unwrap()).unwrap();
@@ -180,6 +188,20 @@ mod tests {
         assert_eq!(again.city(), before);
         assert_eq!(again.0["future"], serde_json::json!([1, 2]));
         assert_eq!(controls.mask(), [false; 7]);
+    }
+    #[test]
+    fn editing_other_controls_keeps_unrecognized_legacy_timezone() {
+        let mut doc = Document::parse(br#"{"clockTimeZone":"Unknown/Legacy"}"#).unwrap();
+        let mut controls = doc.controls();
+        controls.animations = false;
+        doc.set_controls(&controls);
+        assert_eq!(
+            Document::parse(&doc.bytes().unwrap())
+                .unwrap()
+                .controls()
+                .time_zone,
+            "Unknown/Legacy"
+        );
     }
     #[test]
     fn edits_preserve_unknown_root_nested_and_unused_fields() {

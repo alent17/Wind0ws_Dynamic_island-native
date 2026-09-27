@@ -84,11 +84,23 @@ try:
     window=open_settings();assert u.SendMessageW(u.GetDlgItem(window,200),0xf0,0,0)==0
     check(window,200,True);check(window,208,True);check(window,209,True)
     restored=apply(window,[0,5,6]);assert restored['reducedMotion']
+    clock_cases=[]
+    for index in [1,2,3,4,5,0,5]:
+        u.SendMessageW(u.GetDlgItem(window,210),0x14e,index,0)
+        u.SendMessageW(u.GetDlgItem(window,105),0xf5,0,0)
+        state=expect(lambda s:not s['configurationSaving'] and s['clockZoneIndex']==index)
+        assert state['clockZoneSupported']
+        clock_cases.append(state)
+
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
+    for _ in range(2):u.PostMessageW(hwnd,0x100,0x27,0)
+    u.PostMessageW(hwnd,0x100,13,0);time.sleep(.3)
+    ImageGrab.grab(check_bounds(hwnd),all_screens=True).save(OUT/'native-clock.png')
     close(proc,hwnd);proc,hwnd=launch()
     restarted=expect(lambda s:s['visibleTools']==[0,5,6]);check_bounds(hwnd)
     assert restarted['reducedMotion'] and restarted['weatherRequests']==0
-    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'restarted':restarted,'windowBounds':placements}
+    assert restarted['clockZoneIndex']==5 and json.loads(config.read_text(encoding='utf-8'))['clockTimeZone']=='UTC'
+    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'restarted':restarted,'windowBounds':placements,'clockCases':clock_cases}
     (OUT/'native-settings-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
-    print('PASS: sparse tools, all-off recovery, F8, discard, animation settings, restart and secondary-screen bounds')
+    print('PASS: sparse tools, all-off recovery, F8, discard, animation settings, restart, all six timezones and secondary-screen bounds')
 finally:close(proc,hwnd)

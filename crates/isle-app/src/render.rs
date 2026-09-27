@@ -872,9 +872,14 @@ impl Renderer {
                     );
                 }
                 Page::Clock => {
-                    let st = windows::Win32::System::SystemInformation::GetLocalTime();
+                    let time = crate::clock::now(&m.time_zone);
+                    let st = time.unwrap_or_default();
                     self.text(
-                        &format!("{:02}:{:02}", st.wHour, st.wMinute),
+                        &if time.is_some() {
+                            format!("{:02}:{:02}", st.wHour, st.wMinute)
+                        } else {
+                            "--:--".into()
+                        },
                         Rect {
                             x: c.x,
                             y: c.y + 42.,
@@ -885,7 +890,11 @@ impl Renderer {
                         white,
                     )?;
                     self.text(
-                        &format!("{} 年 {} 月 {} 日", st.wYear, st.wMonth, st.wDay),
+                        &if time.is_some() {
+                            format!("{} 年 {} 月 {} 日", st.wYear, st.wMonth, st.wDay)
+                        } else {
+                            "无法读取所选时区".into()
+                        },
                         Rect {
                             x: c.x,
                             y: c.y + 108.,
@@ -893,6 +902,17 @@ impl Renderer {
                             h: 22.,
                         },
                         13,
+                        gray,
+                    )?;
+                    self.text(
+                        crate::clock::label(&m.time_zone),
+                        Rect {
+                            x: c.x,
+                            y: c.y + 140.,
+                            w: c.w,
+                            h: 20.,
+                        },
+                        11,
                         gray,
                     )?;
                 }

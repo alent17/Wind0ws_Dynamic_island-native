@@ -51,6 +51,7 @@ pub struct Settings {
     apply: HWND,
     font: HFONT,
     pub cities: Vec<City>,
+    time_zones: Vec<String>,
 }
 impl Settings {
     pub unsafe fn new(owner: HWND, controls: &isle_core::configuration::Controls) -> Result<Self> {
@@ -70,7 +71,7 @@ impl Settings {
         let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut rect = RECT {
             right: px(540.),
-            bottom: px(508.),
+            bottom: px(552.),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -105,6 +106,7 @@ impl Settings {
             apply: HWND(0),
             font: HFONT(0),
             cities: vec![],
+            time_zones: vec![],
         };
         value.font = CreateFontW(
             -px(15.),
@@ -306,7 +308,7 @@ impl Settings {
             APPLY_CONTROLS,
             WS_TABSTOP,
             410.,
-            472.,
+            516.,
             110.,
             28.,
         )?;
@@ -316,10 +318,56 @@ impl Settings {
             0,
             WINDOW_STYLE(0),
             20.,
-            476.,
+            520.,
             375.,
             22.,
         )?;
+        child(
+            w!("STATIC"),
+            "时钟时区",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            477.,
+            80.,
+            22.,
+        )?;
+        let zone = child(
+            w!("COMBOBOX"),
+            "时钟时区",
+            210,
+            WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            105.,
+            472.,
+            300.,
+            180.,
+        )?;
+        let mut names = crate::clock::ZONES
+            .iter()
+            .map(|(id, label)| (id.to_string(), format!("{label} · {id}")))
+            .collect::<Vec<_>>();
+        if !names.iter().any(|(id, _)| id == &controls.time_zone) {
+            names.push((
+                controls.time_zone.clone(),
+                format!("未支持：{}", controls.time_zone),
+            ));
+        }
+        for (id, label) in &names {
+            let text = HSTRING::from(label);
+            SendMessageW(
+                zone,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+            value.time_zones.push(id.clone());
+        }
+        let selected = value
+            .time_zones
+            .iter()
+            .position(|id| id == &controls.time_zone)
+            .unwrap_or(0);
+        SendMessageW(zone, CB_SETCURSEL, WPARAM(selected), LPARAM(0));
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -365,6 +413,19 @@ impl Settings {
             tools: std::array::from_fn(|i| checked(201 + i as i32)),
             animations: checked(208),
             reduced: checked(209),
+            time_zone: self
+                .time_zones
+                .get(
+                    SendMessageW(
+                        GetDlgItem(self.hwnd, 210),
+                        CB_GETCURSEL,
+                        WPARAM(0),
+                        LPARAM(0),
+                    )
+                    .0 as usize,
+                )
+                .cloned()
+                .unwrap_or_else(|| "system".into()),
         }
     }
     pub unsafe fn query(&self) -> String {
@@ -379,7 +440,7 @@ impl Settings {
             EnableWindow(control, !saving);
         }
         EnableWindow(self.apply, !saving && !self.cities.is_empty());
-        for id in (200..210).chain(std::iter::once(APPLY_CONTROLS)) {
+        for id in (200..211).chain(std::iter::once(APPLY_CONTROLS)) {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
         if saving {
