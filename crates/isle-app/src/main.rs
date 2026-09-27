@@ -6,6 +6,8 @@ mod media;
 mod render;
 mod spectrum;
 mod system_audio;
+mod weather;
+mod weather_settings;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
@@ -25,6 +27,8 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Weather,
+    City(usize, isize),
     Spectrum,
     Audio,
     Media,
@@ -58,6 +62,14 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        weather::UPDATED => {
+            enqueue(Event::Weather);
+            LRESULT(0)
+        }
+        weather_settings::COMMAND => {
+            enqueue(Event::City(wp.0, lp.0));
+            LRESULT(0)
+        }
         spectrum::UPDATED => {
             enqueue(Event::Spectrum);
             LRESULT(0)
@@ -197,6 +209,9 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
 }
 struct App {
+    weather: weather::Service,
+    settings: Option<weather_settings::Settings>,
+    config_path: std::path::PathBuf,
     audio: Option<system_audio::AudioService>,
     spectrum: Option<spectrum::SpectrumService>,
     media: Option<media::MediaService>,
@@ -210,6 +225,7 @@ struct App {
     font_family: &'static str,
     test_dpi: Option<u32>,
     test_work: Option<(u32, u32)>,
+    test_monitor: Option<String>,
     model: Model,
     scale: f32,
     last: Instant,
@@ -234,7 +250,41 @@ impl App {
         self.position_for(None, None)
     }
     unsafe fn position_for(&mut self, dpi: Option<u32>, suggested: Option<RECT>) -> Result<()> {
-        let monitor = if let Some(r) = suggested {
+        let monitor = if let Some(name) = &self.test_monitor {
+            unsafe extern "system" fn select(
+                monitor: HMONITOR,
+                _: HDC,
+                _: *mut RECT,
+                data: LPARAM,
+            ) -> BOOL {
+                let selected = &mut *(data.0 as *mut (&str, HMONITOR));
+                let mut info = MONITORINFOEXW::default();
+                info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+                if GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
+                    let end = info
+                        .szDevice
+                        .iter()
+                        .position(|v| *v == 0)
+                        .unwrap_or(info.szDevice.len());
+                    if String::from_utf16_lossy(&info.szDevice[..end]) == selected.0 {
+                        selected.1 = monitor;
+                    }
+                }
+                BOOL(1)
+            }
+            let mut selected = (name.as_str(), HMONITOR(0));
+            EnumDisplayMonitors(
+                None,
+                None,
+                Some(select),
+                LPARAM((&mut selected as *mut (&str, HMONITOR)) as isize),
+            )
+            .ok()?;
+            if selected.1 .0 == 0 {
+                return Err(E_INVALIDARG.into());
+            }
+            selected.1
+        } else if let Some(r) = suggested {
             MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST)
         } else {
             MonitorFromWindow(self.window, MONITOR_DEFAULTTONEAREST)
@@ -469,6 +519,15 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
+        if self.settings.is_none() {
+            let job =
+                if !self.suspended && self.model.expanded && self.model.page() == Page::Weather {
+                    self.model.weather.city.clone().map(weather::Job::Forecast)
+                } else {
+                    None
+                };
+            self.weather.request(job);
+        }
         if let Some(service) = &self.spectrum {
             let active = self.spectrum_visible();
             service.active(active);
@@ -500,7 +559,7 @@ impl App {
             || self.model.progress_tick()
         {
             1000
-        } else if self.model.expanded && self.model.page() == Page::Clock {
+        } else if self.model.expanded && matches!(self.model.page(), Page::Clock | Page::Weather) {
             60000
                 - (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -533,6 +592,24 @@ impl App {
             && self.model.media.as_ref().is_none_or(|media| media.playing)
     }
     unsafe fn action(&mut self, hit: Hit) {
+        if matches!(hit, Hit::WeatherSettings | Hit::Tool(3)) {
+            if let Some(settings) = &self.settings {
+                if IsWindowEnabled(self.window).as_bool() {
+                    SetForegroundWindow(settings.hwnd);
+                }
+            } else {
+                match weather_settings::Settings::new(self.window) {
+                    Ok(settings) => {
+                        self.weather.request(None);
+                        self.settings = Some(settings);
+                    }
+                    Err(_) => {
+                        MessageBoxW(self.window, w!("无法打开天气设置"), w!("Isle"), MB_OK);
+                    }
+                }
+            }
+            return;
+        }
         if !self.model.enabled(hit) {
             return;
         }
@@ -581,9 +658,6 @@ impl App {
                     MB_OK,
                 );
             }
-            Hit::Tool(3) => {
-                MessageBoxW(self.window,w!("F1–F4：四边贴靠\nF5：悬浮/贴边\nF6：减少动画\nF7：演示模式切换长歌名\n空白：展开/收起\n方向键：功能选择；Enter：打开\nEscape：返回\nAlt+F4：退出\n\n默认演示数据；--live-media 连接真实媒体、封面、频谱和系统音量。\n--live-audio 单独启用真实音量与输出设备。\n--live-spectrum 单独验证系统输出频谱。\n尚未读取旧版设置，天气仍待迁移。"),w!("原型操作"),MB_OK);
-            }
             Hit::Tool(4) => {
                 self.model.toggle();
             }
@@ -598,6 +672,8 @@ impl App {
                     | Event::Media
                     | Event::Audio
                     | Event::Spectrum
+                    | Event::Weather
+                    | Event::City(_, _)
                     | Event::Diagnostic
                     | Event::Close
                     | Event::Visibility(_)
@@ -612,6 +688,65 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::City(action, hwnd) => {
+                if self.settings.as_ref().is_some_and(|s| s.hwnd.0 == hwnd) {
+                    match action {
+                        weather_settings::SEARCH => {
+                            let settings = self.settings.as_mut().unwrap();
+                            let query = settings.query();
+                            self.weather.request(None);
+                            if (2..=80).contains(&query.chars().count()) {
+                                settings.loading();
+                                self.weather.request(Some(weather::Job::Search(query)));
+                            } else {
+                                settings.message("请输入 2–80 个字符");
+                            }
+                        }
+                        weather_settings::APPLY => {
+                            if let Some(city) = self.settings.as_ref().and_then(|s| s.selected()) {
+                                if weather::save(&self.config_path, &city).is_ok() {
+                                    self.model.weather = isle_core::weather::View {
+                                        city: Some(city),
+                                        ..Default::default()
+                                    };
+                                    self.settings = None;
+                                    self.weather.request(None);
+                                    self.model.switch(Page::Weather);
+                                } else {
+                                    self.settings
+                                        .as_ref()
+                                        .unwrap()
+                                        .message("保存失败，原配置未改变，请重试");
+                                }
+                            }
+                        }
+                        weather_settings::CLOSE => {
+                            self.settings = None;
+                            self.weather.request(None);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::Weather => {
+                if let Some(output) = self.weather.take() {
+                    match output {
+                        weather::Output::Forecast(city, data, failed) => {
+                            if self.model.weather.city.as_ref() == Some(&city) {
+                                self.model.weather.data = data;
+                                self.model.weather.failed = failed;
+                            }
+                        }
+                        weather::Output::Search(cities, failed) => {
+                            if let Some(settings) = &mut self.settings {
+                                settings.results(cities, failed);
+                            }
+                        }
+                    }
+                }
+                changed =
+                    !self.suspended && self.model.expanded && self.model.page() == Page::Weather;
+            }
             Event::Spectrum => {
                 if let Some(service) = &self.spectrum {
                     let frame = service.take();
@@ -719,7 +854,8 @@ impl App {
                     || self.model.progress_tick()
                     || self.model.timer_deadline.is_some()
                     || self.scripted
-                    || (self.model.expanded && self.model.page() == Page::Clock);
+                    || (self.model.expanded
+                        && matches!(self.model.page(), Page::Clock | Page::Weather));
                 if self.scripted && !self.suspended {
                     let step = (elapsed / 0.35) as u64;
                     if step != self.last_script {
@@ -941,6 +1077,7 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
             if let Some(service) = &self.audio {
                 text.push(',');
                 text.push_str(&service.diagnostics());
@@ -1030,7 +1167,16 @@ unsafe fn run() -> Result<()> {
         ..Default::default()
     }));
     ACCESSIBLE.with(|a| *a.borrow_mut() = Some(accessibility::root(&accessible)));
+    let config_override = value(&args, "--settings-path");
+    let config_path = config_override
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(weather::config_path);
     let mut model = Model {
+        weather: isle_core::weather::View {
+            city: weather::load(&config_path, config_override.is_none()),
+            ..Default::default()
+        },
         spectrum: args
             .iter()
             .any(|a| a == "--live-spectrum" || a == "--live-media")
@@ -1079,6 +1225,9 @@ unsafe fn run() -> Result<()> {
     let scale = GetDpiForWindow(window) as f32 / 96.;
     let start = Instant::now();
     let mut app = App {
+        weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
+        settings: None,
+        config_path,
         spectrum: if model.spectrum.is_some() {
             Some(spectrum::SpectrumService::new(window)?)
         } else {
@@ -1107,6 +1256,8 @@ unsafe fn run() -> Result<()> {
             let (w, h) = v.split_once('x')?;
             Some((w.parse::<u32>().ok()?.max(1), h.parse::<u32>().ok()?.max(1)))
         }),
+        test_monitor: value(&args, "--test-monitor")
+            .or_else(|| std::env::var("ISLE_TEST_MONITOR").ok()),
         model,
         scale,
         last: start,
@@ -1161,6 +1312,13 @@ unsafe fn run() -> Result<()> {
             if msg.message == WM_QUIT {
                 break 'running;
             }
+            if app
+                .settings
+                .as_ref()
+                .is_some_and(|settings| settings.route(&msg))
+            {
+                continue;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -1192,6 +1350,8 @@ unsafe fn run() -> Result<()> {
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     app.media = None;
     app.audio = None;
+    app.settings = None;
+    app.weather.request(None);
     app.spectrum = None;
     DestroyWindow(window)?;
     drop(app);

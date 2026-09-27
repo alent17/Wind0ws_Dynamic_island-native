@@ -24,6 +24,7 @@ pub enum Hit {
     DevicePrev,
     DeviceNext,
     Mute,
+    WeatherSettings,
 }
 #[derive(Debug)]
 pub struct PageInstance {
@@ -31,6 +32,7 @@ pub struct PageInstance {
     pub generation: u64,
 }
 pub struct Model {
+    pub weather: isle_core::weather::View,
     pub spectrum: Option<SpectrumVisual>,
     pub audio: Option<isle_core::AudioSnapshot>,
     pub device_menu: bool,
@@ -63,6 +65,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            weather: isle_core::weather::View::default(),
             spectrum: None,
             audio: None,
             device_menu: false,
@@ -434,6 +437,15 @@ impl Model {
                     },
                 ));
             }
+            Page::Weather => v.push((
+                Hit::WeatherSettings,
+                Rect {
+                    x: c.x + c.w - 28.,
+                    y: c.y,
+                    w: 28.,
+                    h: 28.,
+                },
+            )),
             _ => {}
         }
         v
@@ -535,7 +547,7 @@ impl Model {
                     self.focus = None;
                 }
             }
-            Hit::Device(_) | Hit::Mute | Hit::Volume => {}
+            Hit::Device(_) | Hit::Mute | Hit::Volume | Hit::WeatherSettings => {}
         }
     }
 }

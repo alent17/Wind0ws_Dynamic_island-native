@@ -46,7 +46,7 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
             "倒计时",
             "音量",
             "悬浮播放器（原型说明）",
-            "设置（原型说明）",
+            "设置（天气）",
             "收起",
             "时间",
             "天气",
@@ -68,6 +68,7 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::DevicePrev => "上一页设备",
         Hit::DeviceNext => "下一页设备",
         Hit::Mute => "切换静音",
+        Hit::WeatherSettings => "设置天气城市",
     }
 }
 pub fn root(shared: &Shared) -> IAccessible {

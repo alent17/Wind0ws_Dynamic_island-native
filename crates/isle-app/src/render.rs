@@ -897,61 +897,134 @@ impl Renderer {
                     )?;
                 }
                 Page::Weather => {
-                    self.text(
-                        "上海  23°",
-                        Rect {
-                            x: c.x,
-                            y: c.y + 42.,
-                            w: c.w,
-                            h: 42.,
-                        },
-                        28,
-                        white,
-                    )?;
-                    self.text(
-                        "晴 · 天气原型数据",
-                        Rect {
-                            x: c.x,
-                            y: c.y + 83.,
-                            w: c.w,
-                            h: 22.,
-                        },
-                        12,
-                        gray,
-                    )?;
-                    for i in 0..3 {
-                        let x = c.x + i as f32 * c.w / 3.;
+                    use isle_core::weather::description;
+                    for (hit, r) in m.controls() {
+                        if hit == Hit::WeatherSettings {
+                            if hover == Some(hit) || m.focus == Some(hit) {
+                                self.fill(r, 12., color(1., 1., 1., 0.1));
+                            }
+                            self.glyph(3, r, white);
+                        }
+                    }
+                    if let Some(city) = &m.weather.city {
                         self.text(
-                            ["明天", "后天", "第三天"][i],
+                            &city.name,
                             Rect {
-                                x,
-                                y: c.y + 121.,
-                                w: 70.,
-                                h: 20.,
+                                x: c.x,
+                                y: c.y + 38.,
+                                w: c.w,
+                                h: 24.,
+                            },
+                            16,
+                            white,
+                        )?;
+                        if let Some(data) = &m.weather.data {
+                            self.text(
+                                &format!("{:.0}°  {}", data.temperature, description(data.code)),
+                                Rect {
+                                    x: c.x,
+                                    y: c.y + 66.,
+                                    w: c.w,
+                                    h: 40.,
+                                },
+                                26,
+                                white,
+                            )?;
+                            for (i, day) in data.days.iter().take(3).enumerate() {
+                                let x = c.x + i as f32 * c.w / 3.;
+                                let width = c.w / 3. - 4.;
+                                self.text(
+                                    &day.date[5..],
+                                    Rect {
+                                        x,
+                                        y: c.y + 121.,
+                                        w: width,
+                                        h: 20.,
+                                    },
+                                    12,
+                                    gray,
+                                )?;
+                                self.text(
+                                    description(day.code),
+                                    Rect {
+                                        x,
+                                        y: c.y + 149.,
+                                        w: width,
+                                        h: 20.,
+                                    },
+                                    12,
+                                    blue,
+                                )?;
+                                self.text(
+                                    &format!("{:.0}° / {:.0}°", day.high, day.low),
+                                    Rect {
+                                        x,
+                                        y: c.y + 178.,
+                                        w: width,
+                                        h: 20.,
+                                    },
+                                    12,
+                                    white,
+                                )?;
+                            }
+                            self.text(
+                                &format!(
+                                    "{} {} · Open-Meteo",
+                                    if m.weather.failed {
+                                        "更新失败，缓存"
+                                    } else {
+                                        "更新"
+                                    },
+                                    &data.observed[11..]
+                                ),
+                                Rect {
+                                    x: c.x,
+                                    y: c.y + 207.,
+                                    w: c.w,
+                                    h: 16.,
+                                },
+                                10,
+                                gray,
+                            )?;
+                        } else {
+                            self.text(
+                                if m.weather.failed {
+                                    "天气读取失败，将自动重试"
+                                } else {
+                                    "正在获取天气…"
+                                },
+                                Rect {
+                                    x: c.x,
+                                    y: c.y + 85.,
+                                    w: c.w,
+                                    h: 28.,
+                                },
+                                14,
+                                gray,
+                            )?;
+                        }
+                    } else {
+                        self.text(
+                            "还没有设置城市",
+                            Rect {
+                                x: c.x,
+                                y: c.y + 55.,
+                                w: c.w,
+                                h: 32.,
+                            },
+                            20,
+                            white,
+                        )?;
+                        self.text(
+                            "点击右上角设置，搜索天气城市",
+                            Rect {
+                                x: c.x,
+                                y: c.y + 97.,
+                                w: c.w,
+                                h: 26.,
                             },
                             12,
                             gray,
-                        )?;
-                        self.glyph(
-                            6,
-                            Rect {
-                                x,
-                                y: c.y + 146.,
-                                w: 28.,
-                                h: 28.,
-                            },
-                            blue,
-                        );
-                        self.text(
-                            "25° / 18°",
-                            Rect {
-                                x,
-                                y: c.y + 183.,
-                                w: 75.,
-                                h: 20.,
-                            },
-                            12,
-                            white,
                         )?;
                     }
                 }
