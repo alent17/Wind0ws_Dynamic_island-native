@@ -1396,7 +1396,7 @@ impl App {
                     ",\"mediaCoverBytes\":{}",
                     media.cover.as_ref().map(|c| c.pixels.len()).unwrap_or(0)
                 ));
-                text.push_str(&format!(",{},\"mediaSession\":{},\"mediaTitleChars\":{},\"mediaPlaying\":{},\"mediaPositionMs\":{},\"mediaDurationMs\":{},\"mediaError\":{}", service.diagnostics(), media.session, media.title.chars().count(), media.playing, media.timeline.position(self.start.elapsed().as_secs_f64(), media.playing), media.timeline.duration_ms, self.media_error.is_some()));
+                text.push_str(&format!(",{},\"mediaSession\":{},\"mediaTitleChars\":{},\"mediaPlaying\":{},\"mediaPositionKnown\":{},\"mediaPositionMs\":{},\"mediaDurationMs\":{},\"mediaError\":{}", service.diagnostics(), media.session, media.title.chars().count(), media.playing, media.timeline.position_known, media.timeline.position(self.start.elapsed().as_secs_f64(), media.playing), media.timeline.duration_ms, self.media_error.is_some()));
             }
             if let Some(settings) = &self.settings {
                 if let Some(draft) = unsafe { settings.appearance() } {

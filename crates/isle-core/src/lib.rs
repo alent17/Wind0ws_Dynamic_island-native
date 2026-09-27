@@ -58,9 +58,13 @@ pub struct Timeline {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub received_at: f64,
+    pub position_known: bool,
 }
 impl Timeline {
     pub fn position(&self, now: f64, playing: bool) -> u64 {
+        if !self.position_known {
+            return 0;
+        }
         let elapsed = if playing && now.is_finite() {
             ((now - self.received_at).max(0.) * 1000.) as u64
         } else {
@@ -100,6 +104,15 @@ impl Timeline {
                 };
                 return;
             }
+            // NetEase can keep returning an empty timeline while playing. An
+            // empty sample is not evidence that playback just returned to 0.
+            if position == 0 && duration == 0 {
+                if was_playing != playing && self.position_known {
+                    self.position_ms = projected;
+                    self.received_at = now;
+                }
+                return;
+            }
             let effective = if duration > 0 {
                 duration
             } else {
@@ -110,11 +123,16 @@ impl Timeline {
             } else {
                 position
             };
-            if new_track || position != self.position_ms || was_playing != playing {
+            if !self.position_known
+                || new_track
+                || position != self.position_ms
+                || was_playing != playing
+            {
                 self.position_ms = position;
                 self.received_at = now;
             }
             self.duration_ms = effective;
+            self.position_known = true;
         } else if was_playing != playing {
             self.position_ms = projected;
             self.received_at = now;
@@ -202,6 +220,7 @@ mod tests {
             position_ms: 5000,
             duration_ms: 10000,
             received_at: 0.,
+            position_known: true,
         };
         t.accept(Some((9000, u64::MAX)), 1., true, true, false);
         assert_eq!(t.duration_ms, 0);
@@ -217,10 +236,23 @@ mod tests {
         assert_eq!(t.position(100., true), 10000);
     }
     #[test]
+    fn empty_playing_timeline_stays_unknown_instead_of_inventing_progress() {
+        let mut t = Timeline::default();
+        t.accept(Some((0, 0)), 1., false, true, true);
+        t.duration_ms = 321_000; // Duration can arrive from artwork metadata.
+        t.accept(Some((0, 0)), 2., true, true, false);
+        assert!(!t.position_known);
+        assert_eq!(t.position(120., true), 0);
+
+        t.accept(Some((15_000, 321_000)), 121., true, true, false);
+        assert!(t.position_known);
+        assert_eq!(t.position(122., true), 16_000);
+    }
+    #[test]
     fn seek_and_track_change_are_authoritative() {
         let mut t = Timeline::default();
         t.accept(Some((8000, 10000)), 0., false, true, true);
-        t.accept(Some((0, 0)), 2., true, true, false);
+        t.accept(Some((0, 10000)), 2., true, true, false);
         assert_eq!(t.position(2., true), 0);
         t.accept(None, 3., true, true, true);
         assert_eq!(t.duration_ms, 0);
@@ -231,6 +263,7 @@ mod tests {
             position_ms: 2000,
             duration_ms: 10000,
             received_at: 0.,
+            position_known: true,
         };
         t.accept(None, 2., true, false, false);
         assert_eq!(t.position(20., false), 4000);

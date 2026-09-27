@@ -128,10 +128,9 @@ impl Model {
     pub fn progress_tick(&self) -> bool {
         self.expanded
             && self.page() == Page::Music
-            && self
-                .media
-                .as_ref()
-                .is_some_and(|m| m.playing && m.timeline.duration_ms > 0)
+            && self.media.as_ref().is_some_and(|m| {
+                m.playing && m.timeline.position_known && m.timeline.duration_ms > 0
+            })
     }
     pub fn enabled(&self, hit: Hit) -> bool {
         if matches!(hit, Hit::Volume | Hit::Mute)
@@ -735,6 +734,7 @@ mod tests {
         m.media.as_mut().unwrap().playing = true;
         assert!(!m.progress_tick());
         m.media.as_mut().unwrap().timeline.duration_ms = 10000;
+        m.media.as_mut().unwrap().timeline.position_known = true;
         assert!(m.progress_tick());
         m.switch(Page::Volume);
         assert!(!m.progress_tick());

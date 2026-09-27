@@ -16,7 +16,7 @@ use windows::{
     },
 };
 pub struct Renderer {
-    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
+    cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
     write: IDWriteFactory,
@@ -46,9 +46,245 @@ fn rect(r: Rect) -> D2D_RECT_F {
         bottom: r.y + r.h,
     }
 }
-fn format_media_time(milliseconds: u64) -> String {
+fn write_media_time(milliseconds: u64, output: &mut [u16]) -> usize {
     let seconds = milliseconds / 1_000;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
+    let mut minutes = seconds / 60;
+    let mut reversed = [0_u16; 20];
+    let mut minute_count = 0;
+    loop {
+        reversed[minute_count] = u16::from(b'0') + (minutes % 10) as u16;
+        minute_count += 1;
+        minutes /= 10;
+        if minutes == 0 {
+            break;
+        }
+    }
+    if output.len() < minute_count + 3 {
+        return 0;
+    }
+    for index in 0..minute_count {
+        output[index] = reversed[minute_count - index - 1];
+    }
+    output[minute_count] = u16::from(b':');
+    output[minute_count + 1] = u16::from(b'0') + (seconds % 60 / 10) as u16;
+    output[minute_count + 2] = u16::from(b'0') + (seconds % 10) as u16;
+    minute_count + 3
+}
+
+#[cfg(test)]
+fn format_media_time(milliseconds: u64) -> String {
+    let mut output = [0_u16; 24];
+    let length = write_media_time(milliseconds, &mut output);
+    String::from_utf16(&output[..length]).unwrap()
+}
+
+fn rgb_to_hsl([r, g, b]: [f32; 3]) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let lightness = (max + min) / 2.;
+    if max == min {
+        return (0., 0., lightness);
+    }
+    let delta = max - min;
+    let saturation = if lightness > 0.5 {
+        delta / (2. - max - min)
+    } else {
+        delta / (max + min)
+    };
+    let hue = if max == r {
+        (g - b) / delta + if g < b { 6. } else { 0. }
+    } else if max == g {
+        (b - r) / delta + 2.
+    } else {
+        (r - g) / delta + 4.
+    } * 60.;
+    (hue, saturation, lightness)
+}
+
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
+    if saturation == 0. {
+        return [lightness; 3];
+    }
+    let hue = hue.rem_euclid(360.) / 360.;
+    let q = if lightness < 0.5 {
+        lightness * (1. + saturation)
+    } else {
+        lightness + saturation - lightness * saturation
+    };
+    let p = 2. * lightness - q;
+    let hue_to_channel = |mut channel: f32| {
+        if channel < 0. {
+            channel += 1.;
+        }
+        if channel > 1. {
+            channel -= 1.;
+        }
+        if channel < 1. / 6. {
+            p + (q - p) * 6. * channel
+        } else if channel < 0.5 {
+            q
+        } else if channel < 2. / 3. {
+            p + (q - p) * (2. / 3. - channel) * 6.
+        } else {
+            p
+        }
+    };
+    [
+        hue_to_channel(hue + 1. / 3.),
+        hue_to_channel(hue),
+        hue_to_channel(hue - 1. / 3.),
+    ]
+}
+
+fn cover_spectrum_palette(cover: &isle_core::Cover) -> [[f32; 3]; 2] {
+    const CHANNEL_BINS: usize = 12;
+    let mut bins = [0_f32; CHANNEL_BINS * CHANNEL_BINS * CHANNEL_BINS];
+    let step_x = (cover.width / 24).max(1) as usize;
+    let step_y = (cover.height / 24).max(1) as usize;
+    let width = cover.width as usize;
+    let height = cover.height as usize;
+    for y in (0..height).step_by(step_y) {
+        for x in (0..width).step_by(step_x) {
+            let offset = (y * width + x) * 4;
+            let Some(pixel) = cover.pixels.get(offset..offset + 4) else {
+                continue;
+            };
+            let alpha = pixel[3] as u32;
+            if alpha < 128 {
+                continue;
+            }
+            let channel = |value: u8| {
+                ((value as u32 * 255 / alpha).min(255) as f32 / 24.)
+                    .round()
+                    .mul_add(24., 0.)
+                    .clamp(0., 255.)
+                    / 24.
+            };
+            let blue = channel(pixel[0]) as usize;
+            let green = channel(pixel[1]) as usize;
+            let red = channel(pixel[2]) as usize;
+            let bin = (red * CHANNEL_BINS + green) * CHANNEL_BINS + blue;
+            let nx = (x as f32 + 0.5) / width.max(1) as f32 - 0.5;
+            let ny = (y as f32 + 0.5) / height.max(1) as f32 - 0.5;
+            let weight = 1. + (0.3 - nx.hypot(ny) * 0.42).max(0.);
+            bins[bin] += weight;
+        }
+    }
+
+    let candidate = |index: usize| {
+        let bucket = [
+            index / (CHANNEL_BINS * CHANNEL_BINS),
+            (index / CHANNEL_BINS) % CHANNEL_BINS,
+            index % CHANNEL_BINS,
+        ];
+        let rgb = bucket.map(|value| {
+            if value == 10 {
+                1.
+            } else {
+                value as f32 * 24. / 255.
+            }
+        });
+        let (hue, saturation, lightness) = rgb_to_hsl(rgb);
+        let midtone = (1. - (lightness - 0.5).abs() * 1.35).clamp(0.22, 1.);
+        (
+            rgb,
+            hue,
+            saturation,
+            lightness,
+            bins[index] * (0.32 + saturation * 1.18) * midtone,
+        )
+    };
+
+    let mut primary = None;
+    for (index, weight) in bins.iter().enumerate() {
+        if *weight == 0. {
+            continue;
+        }
+        let option = candidate(index);
+        if primary.is_none_or(|best: ([f32; 3], f32, f32, f32, f32)| option.4 > best.4) {
+            primary = Some(option);
+        }
+    }
+    let Some(primary) = primary else {
+        return [[0.53; 3], [0.9; 3]];
+    };
+
+    let hue_distance = |a: f32, b: f32| ((b - a + 540.).rem_euclid(360.) - 180.).abs() / 180.;
+    let mut secondary: Option<([f32; 3], f32, f32, f32, f32)> = None;
+    let mut secondary_score = 0.;
+    for (index, weight) in bins.iter().enumerate() {
+        if *weight == 0. {
+            continue;
+        }
+        let option = candidate(index);
+        if option.0 == primary.0 {
+            continue;
+        }
+        let distance =
+            hue_distance(primary.1, option.1) * 0.58 + (primary.3 - option.3).abs() * 0.42;
+        let score = option.4 * (0.42 + distance);
+        if secondary.is_none() || score > secondary_score {
+            secondary = Some(option);
+            secondary_score = score;
+        }
+    }
+
+    let mut secondary = secondary.unwrap_or(primary);
+    let separation =
+        hue_distance(primary.1, secondary.1) * 0.55 + (primary.3 - secondary.3).abs() * 0.45;
+    if separation < 0.1 {
+        let companion_lightness = if primary.3 > 0.58 {
+            primary.3 - 0.2
+        } else {
+            primary.3 + 0.2
+        }
+        .clamp(0.18, 0.82);
+        secondary.0 = hsl_to_rgb(primary.1, primary.2, companion_lightness);
+        secondary.3 = companion_lightness;
+    }
+
+    let (top, bottom) = if primary.3 >= secondary.3 {
+        (primary, secondary)
+    } else {
+        (secondary, primary)
+    };
+    let has_color = top.2.max(bottom.2) >= 0.08;
+    let hue = if top.2 >= bottom.2 { top.1 } else { bottom.1 };
+    let top_hue = if top.2 >= 0.08 { top.1 } else { hue };
+    let bottom_hue = if bottom.2 >= 0.08 { bottom.1 } else { hue };
+    let minimum_saturation = if has_color {
+        bottom.2.min(top.2).max(0.16)
+    } else {
+        0.
+    };
+    let lightness_gap = (top.3 - bottom.3).abs();
+    let gap_boost = if lightness_gap < 0.18 { 0.1 } else { 0. };
+    let readable_bottom =
+        (bottom.3.min(top.3) - gap_boost * 0.35).clamp(if has_color { 0.3 } else { 0.48 }, 0.72);
+    let readable_top =
+        (bottom.3.max(top.3) + gap_boost).clamp(if has_color { 0.48 } else { 0.58 }, 0.9);
+    let palette_color = |amount: f32| {
+        let saturation = bottom.2 + (top.2 - bottom.2) * amount;
+        let saturation = if has_color {
+            (saturation + amount * 0.08)
+                .min(0.92)
+                .max(minimum_saturation)
+        } else {
+            0.
+        };
+        let color_hue = if has_color {
+            let delta = (top_hue - bottom_hue + 540.).rem_euclid(360.) - 180.;
+            bottom_hue + delta * amount
+        } else {
+            0.
+        };
+        hsl_to_rgb(
+            color_hue,
+            saturation,
+            readable_bottom + (readable_top - readable_bottom) * amount,
+        )
+    };
+    [palette_color(0.), palette_color(1.)]
 }
 
 impl Renderer {
@@ -205,11 +441,21 @@ impl Renderer {
         weight: DWRITE_FONT_WEIGHT,
         c: D2D1_COLOR_F,
     ) -> Result<()> {
-        let f = self.format_with_weight(size, weight)?;
         let wide: Vec<u16> = text.encode_utf16().collect();
+        self.text_utf16(&wide, r, size, weight, c)
+    }
+    unsafe fn text_utf16(
+        &mut self,
+        wide: &[u16],
+        r: Rect,
+        size: u32,
+        weight: DWRITE_FONT_WEIGHT,
+        c: D2D1_COLOR_F,
+    ) -> Result<()> {
+        let f = self.format_with_weight(size, weight)?;
         self.ink(c);
         self.ctx.DrawText(
-            &wide,
+            wide,
             &f,
             &rect(r),
             &self.brush,
@@ -358,7 +604,7 @@ impl Renderer {
             if self
                 .cover
                 .as_ref()
-                .is_none_or(|(old, _)| !std::sync::Arc::ptr_eq(old, cover))
+                .is_none_or(|(old, _, _)| !std::sync::Arc::ptr_eq(old, cover))
             {
                 let bitmap = self.ctx.CreateBitmap(
                     D2D_SIZE_U {
@@ -376,7 +622,7 @@ impl Renderer {
                         dpiY: 96.,
                     },
                 )?;
-                self.cover = Some((cover.clone(), bitmap));
+                self.cover = Some((cover.clone(), bitmap, cover_spectrum_palette(cover)));
             }
         } else {
             self.cover = None;
@@ -395,6 +641,10 @@ impl Renderer {
         sink.Close()?;
         self.ink(background_color);
         self.ctx.FillGeometry(&shape, &self.brush, None);
+        if m.expanded {
+            self.ink(color(1., 1., 1., 0.1));
+            self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
+        }
         let c = m.body();
         if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
             // Focus and press feedback share the same hit rectangles as input.
@@ -658,22 +908,25 @@ impl Renderer {
                         color(0.68, 0.68, 0.68, 1.),
                     )?;
                     self.spectrum(c.x + c.w - 28., c.y + 30., m);
-                    let (elapsed_ms, duration_ms) = m
+                    let (elapsed_ms, duration_ms, position_known) = m
                         .media
                         .as_ref()
                         .map(|media| {
                             (
                                 media.timeline.position(m.now, media.playing),
                                 media.timeline.duration_ms,
+                                media.timeline.position_known,
                             )
                         })
-                        .unwrap_or((0, 0));
+                        .unwrap_or((0, 0, false));
                     let progress = if duration_ms == 0 {
                         if m.media.is_none() {
                             0.46
                         } else {
                             0.
                         }
+                    } else if !position_known {
+                        0.
                     } else {
                         (elapsed_ms as f32 / duration_ms as f32).clamp(0., 1.)
                     };
@@ -682,8 +935,21 @@ impl Renderer {
                     let progress_width = (c.w - 76.).max(24.);
                     let progress_color = color(1., 1., 1., 0.19);
                     let time_color = color(0.55, 0.55, 0.55, 1.);
-                    self.text_with_weight(
-                        &format_media_time(elapsed_ms),
+                    let mut elapsed_label = [0_u16; 24];
+                    let elapsed_label_len = if position_known || m.media.is_none() {
+                        write_media_time(elapsed_ms, &mut elapsed_label)
+                    } else {
+                        elapsed_label[..5].copy_from_slice(&[
+                            b'-' as u16,
+                            b'-' as u16,
+                            b':' as u16,
+                            b'-' as u16,
+                            b'-' as u16,
+                        ]);
+                        5
+                    };
+                    self.text_utf16(
+                        &elapsed_label[..elapsed_label_len],
                         Rect {
                             x: c.x,
                             y: progress_y - 5.,
@@ -694,11 +960,25 @@ impl Renderer {
                         DWRITE_FONT_WEIGHT_SEMI_BOLD,
                         time_color,
                     )?;
-                    self.text_with_weight(
-                        &format!(
-                            "-{}",
-                            format_media_time(duration_ms.saturating_sub(elapsed_ms))
-                        ),
+                    let mut remaining_label = [0_u16; 25];
+                    let remaining_label_len = if position_known || m.media.is_none() {
+                        remaining_label[0] = u16::from(b'-');
+                        1 + write_media_time(
+                            duration_ms.saturating_sub(elapsed_ms),
+                            &mut remaining_label[1..],
+                        )
+                    } else {
+                        remaining_label[..5].copy_from_slice(&[
+                            b'-' as u16,
+                            b'-' as u16,
+                            b':' as u16,
+                            b'-' as u16,
+                            b'-' as u16,
+                        ]);
+                        5
+                    };
+                    self.text_utf16(
+                        &remaining_label[..remaining_label_len],
                         Rect {
                             x: c.x + c.w - 34.,
                             y: progress_y - 5.,
@@ -1177,7 +1457,13 @@ impl Renderer {
         Ok(())
     }
     unsafe fn spectrum(&self, x: f32, y: f32, m: &Model) {
+        let palette = self
+            .cover
+            .as_ref()
+            .map(|(_, _, palette)| *palette)
+            .unwrap_or([[0.53; 3], [0.9; 3]]);
         for i in 0..6 {
+            let sample = palette[if i >= 3 { 1 } else { 0 }];
             let h = if let Some(spectrum) = &m.spectrum {
                 2. + 15. * spectrum.values[i].clamp(0., 1.)
             } else if !m.playing || m.media.is_some() {
@@ -1195,7 +1481,7 @@ impl Renderer {
                     h,
                 },
                 1.,
-                color(0.85, 0.95, 1., 1.),
+                color(sample[0], sample[1], sample[2], 1.),
             );
         }
     }
@@ -1222,12 +1508,26 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 
 #[cfg(test)]
 mod tests {
-    use super::format_media_time;
+    use super::{cover_spectrum_palette, format_media_time};
 
     #[test]
     fn progress_time_labels_use_the_legacy_minute_second_format() {
         assert_eq!(format_media_time(0), "0:00");
         assert_eq!(format_media_time(129_999), "2:09");
         assert_eq!(format_media_time(3_600_000), "60:00");
+    }
+
+    #[test]
+    fn artwork_spectrum_palette_preserves_the_cover_hue_without_heap_caches() {
+        let cover = isle_core::Cover {
+            width: 2,
+            height: 1,
+            pixels: vec![0, 0, 255, 255, 0, 0, 255, 255],
+        };
+        let palette = cover_spectrum_palette(&cover);
+        for color in palette {
+            assert!(color[0] > 0.7);
+            assert!(color[0] > color[1] * 1.5 && color[0] > color[2] * 1.5);
+        }
     }
 }
