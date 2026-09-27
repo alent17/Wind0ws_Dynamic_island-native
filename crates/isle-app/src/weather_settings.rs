@@ -17,6 +17,7 @@ pub const APPLY: usize = 104;
 pub const APPLY_CONTROLS: usize = 105;
 pub const CLOSE: usize = 2;
 pub const PLAYERS: usize = 107;
+pub const APPLY_APPEARANCE: usize = 212;
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let action = match msg {
         WM_CLOSE => Some(CLOSE),
@@ -27,8 +28,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let notify = wp.0 >> 16;
             if id == 103 && notify == LBN_DBLCLK as usize {
                 Some(APPLY)
-            } else if matches!(id, SEARCH | APPLY | APPLY_CONTROLS | PLAYERS | CLOSE)
-                && notify == BN_CLICKED as usize
+            } else if matches!(
+                id,
+                SEARCH | APPLY | APPLY_CONTROLS | APPLY_APPEARANCE | PLAYERS | CLOSE
+            ) && notify == BN_CLICKED as usize
             {
                 Some(id)
             } else {
@@ -50,12 +53,19 @@ pub struct Settings {
     list: HWND,
     status: HWND,
     apply: HWND,
+    edge_position: HWND,
     font: HFONT,
     pub cities: Vec<City>,
     time_zones: Vec<String>,
+    styles: Vec<String>,
+    edges: Vec<String>,
 }
 impl Settings {
-    pub unsafe fn new(owner: HWND, controls: &isle_core::configuration::Controls) -> Result<Self> {
+    pub unsafe fn new(
+        owner: HWND,
+        controls: &isle_core::configuration::Controls,
+        appearance: &isle_core::configuration::Appearance,
+    ) -> Result<Self> {
         let instance = HINSTANCE(GetModuleHandleW(None)?.0);
         let class = w!("IsleNativeWeatherSettings");
         let wc = WNDCLASSW {
@@ -72,7 +82,7 @@ impl Settings {
         let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut rect = RECT {
             right: px(540.),
-            bottom: px(552.),
+            bottom: px(680.),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -105,9 +115,12 @@ impl Settings {
             list: HWND(0),
             status: HWND(0),
             apply: HWND(0),
+            edge_position: HWND(0),
             font: HFONT(0),
             cities: vec![],
             time_zones: vec![],
+            styles: vec![],
+            edges: vec![],
         };
         value.font = CreateFontW(
             -px(15.),
@@ -379,6 +392,170 @@ impl Settings {
             106.,
             28.,
         )?;
+        child(
+            w!("STATIC"),
+            "灵动岛外观与位置",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            560.,
+            480.,
+            22.,
+        )?;
+        child(
+            w!("STATIC"),
+            "样式",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            592.,
+            42.,
+            22.,
+        )?;
+        let style = child(
+            w!("COMBOBOX"),
+            "灵动岛样式",
+            211,
+            WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            64.,
+            586.,
+            130.,
+            150.,
+        )?;
+        for (id, label) in [("floating", "悬浮"), ("edge", "贴边")] {
+            let text = HSTRING::from(label);
+            SendMessageW(
+                style,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+            value.styles.push(id.into());
+        }
+        if !value.styles.iter().any(|id| id == &appearance.style) {
+            let text = HSTRING::from(format!("其他：{}", appearance.style));
+            SendMessageW(
+                style,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+            value.styles.push(appearance.style.clone());
+        }
+        SendMessageW(
+            style,
+            CB_SETCURSEL,
+            WPARAM(
+                value
+                    .styles
+                    .iter()
+                    .position(|id| id == &appearance.style)
+                    .unwrap_or(0),
+            ),
+            LPARAM(0),
+        );
+        child(
+            w!("STATIC"),
+            "贴边方向",
+            0,
+            WINDOW_STYLE(0),
+            210.,
+            592.,
+            58.,
+            22.,
+        )?;
+        let edge = child(
+            w!("COMBOBOX"),
+            "贴边方向",
+            213,
+            WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            270.,
+            586.,
+            120.,
+            150.,
+        )?;
+        for (id, label) in [
+            ("top", "上"),
+            ("right", "右"),
+            ("bottom", "下"),
+            ("left", "左"),
+        ] {
+            let text = HSTRING::from(label);
+            SendMessageW(
+                edge,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+            value.edges.push(id.into());
+        }
+        if !value.edges.iter().any(|id| id == &appearance.edge) {
+            let text = HSTRING::from(format!("其他：{}", appearance.edge));
+            SendMessageW(
+                edge,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+            value.edges.push(appearance.edge.clone());
+        }
+        SendMessageW(
+            edge,
+            CB_SETCURSEL,
+            WPARAM(
+                value
+                    .edges
+                    .iter()
+                    .position(|id| id == &appearance.edge)
+                    .unwrap_or(0),
+            ),
+            LPARAM(0),
+        );
+        child(
+            w!("STATIC"),
+            "沿边位置",
+            0,
+            WINDOW_STYLE(0),
+            408.,
+            592.,
+            50.,
+            22.,
+        )?;
+        value.edge_position = child(
+            w!("COMBOBOX"),
+            "沿边位置",
+            214,
+            WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
+            460.,
+            586.,
+            78.,
+            180.,
+        )?;
+        for position in 0..=100 {
+            let text = HSTRING::from(format!("{position}%"));
+            SendMessageW(
+                value.edge_position,
+                CB_ADDSTRING,
+                WPARAM(0),
+                LPARAM(text.as_ptr() as isize),
+            );
+        }
+        SendMessageW(
+            value.edge_position,
+            CB_SETCURSEL,
+            WPARAM(appearance.edge_position as usize),
+            LPARAM(0),
+        );
+        child(
+            w!("BUTTON"),
+            "应用外观",
+            APPLY_APPEARANCE,
+            WS_TABSTOP,
+            410.,
+            628.,
+            110.,
+            28.,
+        )?;
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -439,6 +616,30 @@ impl Settings {
                 .unwrap_or_else(|| "system".into()),
         }
     }
+    pub unsafe fn appearance(&self) -> Option<isle_core::configuration::Appearance> {
+        let read_combo = |id, values: &[String]| {
+            values
+                .get(
+                    SendMessageW(
+                        GetDlgItem(self.hwnd, id),
+                        CB_GETCURSEL,
+                        WPARAM(0),
+                        LPARAM(0),
+                    )
+                    .0 as usize,
+                )
+                .cloned()
+        };
+        let edge_position =
+            u8::try_from(SendMessageW(self.edge_position, CB_GETCURSEL, WPARAM(0), LPARAM(0)).0)
+                .ok()
+                .filter(|value| *value <= 100)?;
+        Some(isle_core::configuration::Appearance {
+            style: read_combo(211, &self.styles)?,
+            edge: read_combo(213, &self.edges)?,
+            edge_position,
+        })
+    }
     pub unsafe fn query(&self) -> String {
         let mut text = [0u16; 81];
         let len = GetWindowTextW(self.query, &mut text);
@@ -451,9 +652,10 @@ impl Settings {
             EnableWindow(control, !saving);
         }
         EnableWindow(self.apply, !saving && !self.cities.is_empty());
-        for id in (200..211).chain([APPLY_CONTROLS, PLAYERS]) {
+        for id in (200..211).chain([211, 213, APPLY_CONTROLS, APPLY_APPEARANCE, PLAYERS]) {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
+        EnableWindow(self.edge_position, !saving);
         if saving {
             self.message("正在保存…");
         }

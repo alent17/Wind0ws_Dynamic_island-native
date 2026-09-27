@@ -20,6 +20,21 @@ pub struct Controls {
     pub reduced: bool,
     pub time_zone: String,
 }
+#[derive(Clone, Debug, PartialEq)]
+pub struct Appearance {
+    pub style: String,
+    pub edge: String,
+    pub edge_position: u8,
+}
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            style: "floating".into(),
+            edge: "top".into(),
+            edge_position: 50,
+        }
+    }
+}
 impl Default for Controls {
     fn default() -> Self {
         Self {
@@ -96,6 +111,9 @@ impl Document {
                 return Err("天气城市配置无效".into());
             }
         }
+        if prefs.island_edge_position > 100 {
+            return Err("贴边位置必须在 0–100 之间".into());
+        }
         Ok(prefs)
     }
     pub fn selection(&self) -> crate::Selection {
@@ -137,6 +155,33 @@ impl Document {
             reduced: self.0["reduceAnimations"].as_bool().unwrap_or(false),
             time_zone: self.0["clockTimeZone"].as_str().unwrap_or("system").into(),
         }
+    }
+    pub fn appearance(&self) -> Appearance {
+        Appearance {
+            style: self.0["islandStyle"].as_str().unwrap_or("floating").into(),
+            edge: self.0["islandEdge"].as_str().unwrap_or("top").into(),
+            edge_position: self.0["islandEdgePosition"]
+                .as_u64()
+                .and_then(|value| u8::try_from(value).ok())
+                .filter(|value| *value <= 100)
+                .unwrap_or(50),
+        }
+    }
+    pub fn set_appearance(&mut self, appearance: &Appearance) -> Result<(), String> {
+        if appearance.edge_position > 100 {
+            return Err("贴边位置必须在 0–100 之间".into());
+        }
+        self.0.insert(
+            "islandStyle".into(),
+            Value::String(appearance.style.clone()),
+        );
+        self.0
+            .insert("islandEdge".into(), Value::String(appearance.edge.clone()));
+        self.0.insert(
+            "islandEdgePosition".into(),
+            Value::from(appearance.edge_position),
+        );
+        Ok(())
     }
     pub fn set_controls(&mut self, controls: &Controls) {
         self.0.insert(
@@ -228,6 +273,31 @@ mod tests {
                 .time_zone,
             "Unknown/Legacy"
         );
+    }
+    #[test]
+    fn appearance_roundtrip_preserves_unrelated_values_and_checks_position() {
+        let mut doc = Document::parse(br#"{"future":{"keep":true},"islandStyle":"edge","islandEdge":"right","islandEdgePosition":17}"#).unwrap();
+        let mut appearance = doc.appearance();
+        assert_eq!(
+            appearance,
+            Appearance {
+                style: "edge".into(),
+                edge: "right".into(),
+                edge_position: 17
+            }
+        );
+        appearance.edge_position = 83;
+        doc.set_appearance(&appearance).unwrap();
+        let loaded = Document::parse(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(loaded.appearance(), appearance);
+        assert_eq!(loaded.0["future"]["keep"], true);
+        assert!(doc
+            .set_appearance(&Appearance {
+                edge_position: 101,
+                ..appearance
+            })
+            .is_err());
+        assert!(Document::parse(br#"{"islandEdgePosition":255}"#).is_err());
     }
     #[test]
     fn player_selection_distinguishes_all_from_none_and_preserves_unrelated_values() {

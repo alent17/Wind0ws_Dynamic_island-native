@@ -1,6 +1,6 @@
 //! Independent native persistence. No registry or legacy-file writes.
 use isle_core::{
-    configuration::{Controls, Document, MAX_BYTES},
+    configuration::{Appearance, Controls, Document, MAX_BYTES},
     weather::City,
 };
 use std::{
@@ -132,6 +132,7 @@ impl Store {
             Edit::City(city) => document.set_city(city)?,
             Edit::Controls(controls) => document.set_controls(controls),
             Edit::Players(selection) => document.set_selection(selection)?,
+            Edit::Appearance(appearance) => document.set_appearance(appearance)?,
         }
         let bytes = document.bytes()?;
         let parent = self
@@ -181,6 +182,7 @@ pub enum Edit {
     City(City),
     Controls(Controls),
     Players(isle_core::Selection),
+    Appearance(Appearance),
 }
 pub struct Outcome {
     pub edit: Edit,
@@ -189,6 +191,7 @@ pub struct Outcome {
 pub struct Service {
     pub city: Option<City>,
     pub controls: Controls,
+    pub appearance: Appearance,
     pub selection: isle_core::Selection,
     pub load_error: Option<String>,
     busy: bool,
@@ -205,6 +208,12 @@ impl Service {
             .as_ref()
             .ok()
             .map(Document::controls)
+            .unwrap_or_default();
+        let appearance = store
+            .document
+            .as_ref()
+            .ok()
+            .map(Document::appearance)
             .unwrap_or_default();
         let selection = store
             .document
@@ -232,6 +241,7 @@ impl Service {
         Ok(Self {
             city,
             controls,
+            appearance,
             selection,
             load_error,
             busy: false,
@@ -259,6 +269,7 @@ impl Service {
                 Edit::City(city) => self.city = Some(city.clone()),
                 Edit::Controls(controls) => self.controls = controls.clone(),
                 Edit::Players(selection) => self.selection = selection.clone(),
+                Edit::Appearance(appearance) => self.appearance = appearance.clone(),
             }
         }
         Some(out)

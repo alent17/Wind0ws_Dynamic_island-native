@@ -247,6 +247,7 @@ struct App {
     test_work: Option<(u32, u32)>,
     test_monitor: Option<String>,
     model: Model,
+    edge_position: u8,
     scale: f32,
     last: Instant,
     start: Instant,
@@ -330,7 +331,12 @@ impl App {
             work.w = work.w.min(w as f32);
             work.h = work.h.min(h as f32);
         }
-        let (bounds, scale) = window_placement(work, dpi, HOST, self.model.edge);
+        let (mut bounds, scale) = window_placement(work, dpi, HOST, self.model.edge);
+        let along = f32::from(self.edge_position.min(100)) / 100.;
+        match self.model.edge {
+            Edge::Top | Edge::Bottom => bounds.x = work.x + (work.w - bounds.w) * along,
+            Edge::Left | Edge::Right => bounds.y = work.y + (work.h - bounds.h) * along,
+        }
         self.scale = scale;
         SetWindowPos(
             self.window,
@@ -618,7 +624,11 @@ impl App {
                     SetForegroundWindow(settings.hwnd);
                 }
             } else {
-                match weather_settings::Settings::new(self.window, &self.configuration.controls) {
+                match weather_settings::Settings::new(
+                    self.window,
+                    &self.configuration.controls,
+                    &self.configuration.appearance,
+                ) {
                     Ok(settings) => {
                         self.weather.request(None);
                         if let Some(error) = &self.configuration.load_error {
@@ -785,6 +795,19 @@ impl App {
                                 self.settings.as_ref().unwrap().saving(true);
                             }
                         }
+                        weather_settings::APPLY_APPEARANCE if !self.configuration.busy() => {
+                            if let Some(appearance) = self.settings.as_ref().unwrap().appearance() {
+                                if self
+                                    .configuration
+                                    .save(configuration::Edit::Appearance(appearance))
+                                {
+                                    self.saving_window = Some(hwnd);
+                                    self.settings.as_ref().unwrap().saving(true);
+                                }
+                            } else if let Some(settings) = &self.settings {
+                                settings.message("位置请输入 0–100 的整数");
+                            }
+                        }
                         weather_settings::PLAYERS if !self.configuration.busy() => {
                             if let Some(dialog) = &self.player_dialog {
                                 if IsWindowEnabled(self.window).as_bool() {
@@ -868,6 +891,22 @@ impl App {
                                 if let Some(settings) = &self.settings {
                                     settings.saving(false);
                                     settings.message("设置已应用");
+                                }
+                            }
+                            configuration::Edit::Appearance(appearance) => {
+                                self.edge_position = appearance.edge_position;
+                                self.model.attached = appearance.style == "edge";
+                                self.model.edge = match appearance.edge.as_str() {
+                                    "right" => Edge::Right,
+                                    "bottom" => Edge::Bottom,
+                                    "left" => Edge::Left,
+                                    _ => Edge::Top,
+                                };
+                                self.model.retarget();
+                                let _ = self.position();
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("外观已应用");
                                 }
                             }
                         },
@@ -1257,9 +1296,12 @@ impl App {
                 self.configuration.busy()
             ));
             text.push_str(&format!(
-                ",\"visibleTools\":{:?},\"reducedMotion\":{}",
+                ",\"visibleTools\":{:?},\"reducedMotion\":{},\"islandAttached\":{},\"islandEdge\":\"{:?}\",\"islandEdgePosition\":{}",
                 self.model.visible_tools().collect::<Vec<_>>(),
-                self.model.reduced
+                self.model.reduced,
+                self.model.attached,
+                self.model.edge,
+                self.edge_position,
             ));
             text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
             if let Some(service) = &self.audio {
@@ -1289,6 +1331,12 @@ impl App {
                     media.cover.as_ref().map(|c| c.pixels.len()).unwrap_or(0)
                 ));
                 text.push_str(&format!(",{},\"mediaSession\":{},\"mediaTitleChars\":{},\"mediaPlaying\":{},\"mediaPositionMs\":{},\"mediaDurationMs\":{},\"mediaError\":{}", service.diagnostics(), media.session, media.title.chars().count(), media.playing, media.timeline.position(self.start.elapsed().as_secs_f64(), media.playing), media.timeline.duration_ms, self.media_error.is_some()));
+            }
+            if let Some(settings) = &self.settings {
+                let draft_position = unsafe { settings.appearance() }
+                    .map(|appearance| appearance.edge_position)
+                    .unwrap_or(255);
+                text.push_str(&format!(",\"settingsDraftPosition\":{draft_position}"));
             }
             text.push('}');
             let _ = std::fs::write(path, text);
@@ -1367,6 +1415,13 @@ unsafe fn run() -> Result<()> {
     )
     .map_err(|_| Error::from(E_FAIL))?;
     clock::warm_up();
+    let appearance = configuration.appearance.clone();
+    let configured_edge = match appearance.edge.as_str() {
+        "right" => Edge::Right,
+        "bottom" => Edge::Bottom,
+        "left" => Edge::Left,
+        _ => Edge::Top,
+    };
     let mut model = Model {
         time_zone: configuration.controls.time_zone.clone(),
         weather: isle_core::weather::View {
@@ -1391,12 +1446,13 @@ unsafe fn run() -> Result<()> {
             || configuration.controls.reduced,
         tool_mask: configuration.controls.mask(),
         playing: !args.iter().any(|a| a == "--paused"),
-        attached: args.iter().any(|a| a == "--attached"),
+        attached: args.iter().any(|a| a == "--attached") || appearance.style == "edge",
         edge: match value(&args, "--edge").as_deref() {
             Some("right") => Edge::Right,
             Some("bottom") => Edge::Bottom,
             Some("left") => Edge::Left,
-            _ => Edge::Top,
+            Some("top") => Edge::Top,
+            _ => configured_edge,
         },
         tool_count: value(&args, "--tools")
             .and_then(|v| v.parse::<usize>().ok())
@@ -1465,6 +1521,7 @@ unsafe fn run() -> Result<()> {
         test_monitor: value(&args, "--test-monitor")
             .or_else(|| std::env::var("ISLE_TEST_MONITOR").ok()),
         model,
+        edge_position: appearance.edge_position,
         scale,
         last: start,
         start,

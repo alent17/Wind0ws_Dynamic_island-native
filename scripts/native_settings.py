@@ -92,15 +92,28 @@ try:
         assert state['clockZoneSupported']
         clock_cases.append(state)
 
+    # Native appearance controls apply immediately and preserve along-edge placement.
+    u.SendMessageW(u.GetDlgItem(window,211),0x14e,1,0)  # attached style
+    u.SendMessageW(u.GetDlgItem(window,213),0x14e,1,0)  # right edge
+    u.SendMessageW(u.GetDlgItem(window,214),0x14e,73,0)
+    draft=snapshot()
+    assert draft.get('settingsDraftPosition')==73,draft
+    u.SendMessageW(u.GetDlgItem(window,212),0xf5,0,0)
+    placed=expect(lambda s:not s['configurationSaving'] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73)
+    bounds=check_bounds(hwnd)
+    assert bounds[2]==0 and bounds[1]>0
+    saved=json.loads(config.read_text(encoding='utf-8'))
+    assert saved['islandStyle']=='edge' and saved['islandEdge']=='right' and saved['islandEdgePosition']==73
+
     u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['settingsWindowAlive'])
     for _ in range(2):u.PostMessageW(hwnd,0x100,0x27,0)
     u.PostMessageW(hwnd,0x100,13,0);time.sleep(.3)
     ImageGrab.grab(check_bounds(hwnd),all_screens=True).save(OUT/'native-clock.png')
     close(proc,hwnd);proc,hwnd=launch()
-    restarted=expect(lambda s:s['visibleTools']==[0,5,6]);check_bounds(hwnd)
-    assert restarted['reducedMotion'] and restarted['weatherRequests']==0
+    restarted=expect(lambda s:s['visibleTools']==[0,5,6] and s['islandAttached'] and s['islandEdge']=='Right' and s['islandEdgePosition']==73);bounds=check_bounds(hwnd)
+    assert bounds[2]==0 and restarted['reducedMotion'] and restarted['weatherRequests']==0
     assert restarted['clockZoneIndex']==5 and json.loads(config.read_text(encoding='utf-8'))['clockTimeZone']=='UTC'
-    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'restarted':restarted,'windowBounds':placements,'clockCases':clock_cases}
+    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'sparse':sparse,'empty':empty,'restored':restored,'appearanceApplied':placed,'restarted':restarted,'windowBounds':placements,'clockCases':clock_cases}
     (OUT/'native-settings-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
-    print('PASS: sparse tools, all-off recovery, F8, discard, animation settings, restart, all six timezones and secondary-screen bounds')
+    print('PASS: tools, animation and timezone settings, attached style and edge position apply/restart, and secondary-screen bounds')
 finally:close(proc,hwnd)
