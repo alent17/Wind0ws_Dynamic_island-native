@@ -30,6 +30,7 @@ cargo build --release --manifest-path native/Cargo.toml
 | F5 | 切换悬浮和贴边 |
 | F6 | 切换减少动画 |
 | F7 | 切换长短标题 |
+| F8 | 打开原生设置（全部工具关闭时仍可用） |
 | 方向键，Enter | 选择并打开工具；聚焦音量刻度尺时调节音量 |
 | Tab / Shift+Tab，Enter / Space | 遍历并激活工具与页面控件 |
 | Escape | 详情返回音乐，音乐收起 |
@@ -63,7 +64,7 @@ cargo build --release --manifest-path native/Cargo.toml
 
 天气验证：`python native/scripts/live_weather.py`，天气可见、隐藏各采样 60 秒并循环打开/关闭城市设置 12 次；`--quick` 使用 5 秒样本。只写 `native/artifacts/` 中的测试配置，不修改安装版配置。需要能访问 Open-Meteo，阶段结果见 [天气与城市设置](../docs/native-ui-weather.md)。
 
-配置保存已迁移到独立后台线程，保留旧版完整字段及未知嵌套数据。首次从旧版迁移并保存时写入原始备份，后续保存保留上一版；损坏文件和外部修改会阻止覆盖。当前仅天气字段接入运行时，其余设置等待 Studio 迁移。`python native/scripts/configuration_faults.py` 验证隔离配置的启动保护；天气脚本同时验证保存保真、备份和重启。详见 [原生配置兼容](../docs/native-ui-configuration.md)。
+配置保存已迁移到独立后台线程，保留旧版完整字段及未知嵌套数据。首次从旧版迁移并保存时写入原始备份，后续保存保留上一版；损坏文件和外部修改会阻止覆盖。天气、顶部工具栏开关及动画偏好已接入运行时，其余设置等待 Studio 迁移。`python native/scripts/configuration_faults.py` 验证隔离配置的启动保护；天气脚本同时验证保存保真、备份和重启。详见 [原生配置兼容](../docs/native-ui-configuration.md)。
 
 测试显示器：`--test-monitor '\\.\DISPLAY2'` 或设置进程环境变量 `ISLE_TEST_MONITOR`，启动前选定目标显示器；城市设置跟随主窗口所在屏幕。无效显示器名称报错，不回落到主屏。自动化测试使用 `--benchmark` 配合窗口消息，窗口显示和再次打开设置均不抢前台焦点。按用户要求，本机后续 UI 测试使用左侧 `DISPLAY2`，右侧主屏留给用户。
 
@@ -102,3 +103,5 @@ python native/scripts/visibility_resources.py
 `presentCallIntervalMeanMs/P95Ms` 是预热 5 秒后连续动画期间相邻绘制/Present 返回的间隔，不代表 DWM 最终上屏时间。`highResolutionTimer` 记录是否使用了高精度路径；不支持时回退普通等待计时器。日志采样数组有上限，未指定 `--log` 时不收集逐帧数据。
 
 实现与验收进展见 [首轮记录](../docs/native-ui-prototype-results.md)、[帧调度改进记录](../docs/native-ui-frame-timing-results.md) 和 [显示、生命周期与无障碍记录](../docs/native-ui-display-accessibility-results.md)。
+
+原生设置新增功能栏总开关、七个工具开关、启用动画和减少动画；点击“应用设置”保存并实时生效，关闭窗口丢弃未应用草稿。`python native/scripts/native_settings.py` 验证稀疏工具、全关闭恢复、草稿取消、重启及副屏边界。阶段记录见 [原生工具与动画设置](../docs/native-ui-settings.md)。

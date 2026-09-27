@@ -14,6 +14,7 @@ use windows::{
 pub const COMMAND: u32 = WM_APP + 74;
 pub const SEARCH: usize = 102;
 pub const APPLY: usize = 104;
+pub const APPLY_CONTROLS: usize = 105;
 pub const CLOSE: usize = 2;
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let action = match msg {
@@ -25,7 +26,9 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let notify = wp.0 >> 16;
             if id == 103 && notify == LBN_DBLCLK as usize {
                 Some(APPLY)
-            } else if matches!(id, SEARCH | APPLY | CLOSE) && notify == BN_CLICKED as usize {
+            } else if matches!(id, SEARCH | APPLY | APPLY_CONTROLS | CLOSE)
+                && notify == BN_CLICKED as usize
+            {
                 Some(id)
             } else {
                 None
@@ -50,7 +53,7 @@ pub struct Settings {
     pub cities: Vec<City>,
 }
 impl Settings {
-    pub unsafe fn new(owner: HWND) -> Result<Self> {
+    pub unsafe fn new(owner: HWND, controls: &isle_core::configuration::Controls) -> Result<Self> {
         let instance = HINSTANCE(GetModuleHandleW(None)?.0);
         let class = w!("IsleNativeWeatherSettings");
         let wc = WNDCLASSW {
@@ -67,7 +70,7 @@ impl Settings {
         let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
         let mut rect = RECT {
             right: px(540.),
-            bottom: px(348.),
+            bottom: px(508.),
             ..Default::default()
         };
         AdjustWindowRectExForDpi(
@@ -80,7 +83,7 @@ impl Settings {
         let hwnd = CreateWindowExW(
             WS_EX_CONTROLPARENT,
             class,
-            w!("Isle 原生设置 · 天气"),
+            w!("Isle 原生设置"),
             style,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -245,6 +248,78 @@ impl Settings {
             28.,
         )?;
         EnableWindow(value.apply, false);
+        child(
+            w!("STATIC"),
+            "顶部工具栏与动画",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            356.,
+            480.,
+            22.,
+        )?;
+        let labels = [
+            "启用功能栏",
+            "倒计时",
+            "音量",
+            "悬浮播放器",
+            "设置",
+            "隐藏",
+            "时间",
+            "天气",
+            "启用动画",
+            "减少动画",
+        ];
+        let states = [
+            controls.panel,
+            controls.tools[0],
+            controls.tools[1],
+            controls.tools[2],
+            controls.tools[3],
+            controls.tools[4],
+            controls.tools[5],
+            controls.tools[6],
+            controls.animations,
+            controls.reduced,
+        ];
+        for (i, label) in labels.iter().enumerate() {
+            let checkbox = child(
+                w!("BUTTON"),
+                label,
+                200 + i,
+                WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+                20. + (i % 4) as f32 * 125.,
+                382. + (i / 4) as f32 * 28.,
+                124.,
+                24.,
+            )?;
+            SendMessageW(
+                checkbox,
+                BM_SETCHECK,
+                WPARAM(usize::from(states[i])),
+                LPARAM(0),
+            );
+        }
+        child(
+            w!("BUTTON"),
+            "应用设置",
+            APPLY_CONTROLS,
+            WS_TABSTOP,
+            410.,
+            472.,
+            110.,
+            28.,
+        )?;
+        child(
+            w!("STATIC"),
+            "关闭功能栏后，可在岛上按 F8 打开设置",
+            0,
+            WINDOW_STYLE(0),
+            20.,
+            476.,
+            375.,
+            22.,
+        )?;
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -282,6 +357,16 @@ impl Settings {
         }
         Ok(value)
     }
+    pub unsafe fn controls(&self) -> isle_core::configuration::Controls {
+        let checked =
+            |i| SendMessageW(GetDlgItem(self.hwnd, i), BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1;
+        isle_core::configuration::Controls {
+            panel: checked(200),
+            tools: std::array::from_fn(|i| checked(201 + i as i32)),
+            animations: checked(208),
+            reduced: checked(209),
+        }
+    }
     pub unsafe fn query(&self) -> String {
         let mut text = [0u16; 81];
         let len = GetWindowTextW(self.query, &mut text);
@@ -294,6 +379,9 @@ impl Settings {
             EnableWindow(control, !saving);
         }
         EnableWindow(self.apply, !saving && !self.cities.is_empty());
+        for id in (200..210).chain(std::iter::once(APPLY_CONTROLS)) {
+            EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
+        }
         if saving {
             self.message("正在保存…");
         }

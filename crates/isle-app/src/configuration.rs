@@ -1,6 +1,6 @@
 //! Independent native persistence. No registry or legacy-file writes.
 use isle_core::{
-    configuration::{Document, MAX_BYTES},
+    configuration::{Controls, Document, MAX_BYTES},
     weather::City,
 };
 use std::{
@@ -122,9 +122,16 @@ impl Store {
         })();
         store
     }
+    #[cfg(test)]
     fn save_city(&mut self, city: &City) -> Result<(), String> {
+        self.save(&Edit::City(city.clone()))
+    }
+    fn save(&mut self, edit: &Edit) -> Result<(), String> {
         let mut document = self.document.clone()?;
-        document.set_city(city)?;
+        match edit {
+            Edit::City(city) => document.set_city(city)?,
+            Edit::Controls(controls) => document.set_controls(controls),
+        }
         let bytes = document.bytes()?;
         let parent = self
             .path
@@ -168,15 +175,21 @@ impl Store {
     }
 }
 
+#[derive(Clone)]
+pub enum Edit {
+    City(City),
+    Controls(Controls),
+}
 pub struct Outcome {
-    pub city: City,
+    pub edit: Edit,
     pub result: Result<(), String>,
 }
 pub struct Service {
     pub city: Option<City>,
+    pub controls: Controls,
     pub load_error: Option<String>,
     busy: bool,
-    sender: SyncSender<Option<City>>,
+    sender: SyncSender<Option<Edit>>,
     outcome: Arc<Mutex<Option<Outcome>>>,
     worker: Option<JoinHandle<()>>,
 }
@@ -184,6 +197,12 @@ impl Service {
     pub fn new(hwnd: HWND, path: PathBuf, legacy: Option<PathBuf>) -> std::io::Result<Self> {
         let mut store = Store::open(path, legacy);
         let city = store.document.as_ref().ok().and_then(Document::city);
+        let controls = store
+            .document
+            .as_ref()
+            .ok()
+            .map(Document::controls)
+            .unwrap_or_default();
         let load_error = store.document.as_ref().err().cloned();
         let (sender, receiver) = sync_channel(1);
         let outcome = Arc::new(Mutex::new(None));
@@ -192,10 +211,10 @@ impl Service {
         let worker = std::thread::Builder::new()
             .name("isle-config".into())
             .spawn(move || {
-                while let Ok(Some(city)) = receiver.recv() {
-                    let result = store.save_city(&city);
+                while let Ok(Some(edit)) = receiver.recv() {
+                    let result = store.save(&edit);
                     *result_slot.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some(Outcome { city, result });
+                        Some(Outcome { edit, result });
                     unsafe {
                         let _ = PostMessageW(HWND(hwnd), UPDATED, WPARAM(0), LPARAM(0));
                     }
@@ -203,6 +222,7 @@ impl Service {
             })?;
         Ok(Self {
             city,
+            controls,
             load_error,
             busy: false,
             sender,
@@ -210,11 +230,11 @@ impl Service {
             worker: Some(worker),
         })
     }
-    pub fn save(&mut self, city: City) -> bool {
+    pub fn save(&mut self, edit: Edit) -> bool {
         if self.busy {
             return false;
         }
-        self.busy = self.sender.try_send(Some(city)).is_ok();
+        self.busy = self.sender.try_send(Some(edit)).is_ok();
         self.busy
     }
     pub fn take(&mut self) -> Option<Outcome> {
@@ -225,7 +245,10 @@ impl Service {
             .take()?;
         self.busy = false;
         if out.result.is_ok() {
-            self.city = Some(out.city.clone());
+            match &out.edit {
+                Edit::City(city) => self.city = Some(city.clone()),
+                Edit::Controls(controls) => self.controls = controls.clone(),
+            }
         }
         Some(out)
     }

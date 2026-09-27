@@ -3,6 +3,37 @@ use crate::{preferences::AppPreferences, weather::City};
 use serde_json::{Map, Value};
 
 pub const MAX_BYTES: usize = 1024 * 1024;
+pub const TOOL_KEYS: [&str; 7] = [
+    "showTimerTool",
+    "showVolumeTool",
+    "showFloatingTool",
+    "showSettingsTool",
+    "showHideTool",
+    "showClockTool",
+    "showWeatherTool",
+];
+#[derive(Clone, Debug, PartialEq)]
+pub struct Controls {
+    pub panel: bool,
+    pub tools: [bool; 7],
+    pub animations: bool,
+    pub reduced: bool,
+}
+impl Default for Controls {
+    fn default() -> Self {
+        Self {
+            panel: true,
+            tools: [true; 7],
+            animations: true,
+            reduced: false,
+        }
+    }
+}
+impl Controls {
+    pub fn mask(&self) -> [bool; 7] {
+        self.tools.map(|enabled| enabled && self.panel)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Document(Map<String, Value>);
 impl Default for Document {
@@ -70,6 +101,23 @@ impl Document {
             .ok()
             .filter(City::valid)
     }
+    pub fn controls(&self) -> Controls {
+        Controls {
+            panel: self.0["showCustomFunctionPanel"].as_bool().unwrap_or(true),
+            tools: TOOL_KEYS.map(|key| self.0[key].as_bool().unwrap_or(true)),
+            animations: self.0["enableAnimations"].as_bool().unwrap_or(true),
+            reduced: self.0["reduceAnimations"].as_bool().unwrap_or(false),
+        }
+    }
+    pub fn set_controls(&mut self, controls: &Controls) {
+        for (key, value) in TOOL_KEYS.into_iter().zip(controls.tools).chain([
+            ("showCustomFunctionPanel", controls.panel),
+            ("enableAnimations", controls.animations),
+            ("reduceAnimations", controls.reduced),
+        ]) {
+            self.0.insert(key.into(), Value::Bool(value));
+        }
+    }
     pub fn set_city(&mut self, city: &City) -> Result<(), String> {
         if !city.valid() {
             return Err("天气城市配置无效".into());
@@ -112,6 +160,26 @@ mod tests {
             serde_json::to_value(AppPreferences::default()).unwrap(),
             serde_json::to_value(legacy::AppPreferences::default()).unwrap()
         );
+    }
+    #[test]
+    fn controls_roundtrip_without_changing_city_or_unknown_fields() {
+        let mut doc = Document::parse(
+            br#"{"future":[1,2],"weatherLocation":{"name":"Test","latitude":1,"longitude":2}}"#,
+        )
+        .unwrap();
+        let before = doc.city();
+        let controls = Controls {
+            panel: false,
+            tools: [true, false, true, false, true, false, true],
+            animations: false,
+            reduced: true,
+        };
+        doc.set_controls(&controls);
+        let again = Document::parse(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(again.controls(), controls);
+        assert_eq!(again.city(), before);
+        assert_eq!(again.0["future"], serde_json::json!([1, 2]));
+        assert_eq!(controls.mask(), [false; 7]);
     }
     #[test]
     fn edits_preserve_unknown_root_nested_and_unused_fields() {

@@ -361,10 +361,10 @@ impl Renderer {
                     );
                 }
             }
-            if m.tool_count > 0 {
+            if m.visible_tools().next().is_some() {
                 self.ctx
                     .PushAxisAlignedClip(&rect(m.bar()), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                for i in 0..m.tool_count {
+                for i in m.visible_tools() {
                     let r = m.tool(i);
                     if hover == Some(Hit::Tool(i)) || m.focus == Some(Hit::Tool(i)) {
                         self.fill(r, 12., color(1., 1., 1., 0.1));

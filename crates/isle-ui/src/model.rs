@@ -61,6 +61,7 @@ pub struct Model {
     pub title_started: f64,
     pub title_overflow: bool,
     pub tool_count: usize,
+    pub tool_mask: [bool; 7],
 }
 impl Default for Model {
     fn default() -> Self {
@@ -94,10 +95,22 @@ impl Default for Model {
             title_started: 0.,
             title_overflow: false,
             tool_count: 7,
+            tool_mask: [true; 7],
         }
     }
 }
 impl Model {
+    pub fn visible_tools(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.tool_count.min(7)).filter(|i| self.tool_mask[*i])
+    }
+    pub fn set_tool_mask(&mut self, mask: [bool; 7]) {
+        self.tool_mask = mask;
+        self.scroll_by(0.);
+        if matches!(self.focus,Some(Hit::Tool(i)) if !self.visible_tools().any(|id|id==i)) {
+            self.focus = None;
+        }
+        self.retarget();
+    }
     pub fn progress_tick(&self) -> bool {
         self.expanded
             && self.page() == Page::Music
@@ -167,7 +180,11 @@ impl Model {
     pub fn retarget(&mut self) {
         self.title_started = self.now;
         let (w, h, r, s) = if self.expanded {
-            let bar = if self.tool_count > 0 { 40. } else { 0. };
+            let bar = if self.visible_tools().next().is_some() {
+                40.
+            } else {
+                0.
+            };
             let h = match self.page() {
                 Page::Music => 160.,
                 Page::Weather => 240.,
@@ -281,17 +298,19 @@ impl Model {
     }
     pub fn bar(&self) -> Rect {
         let c = self.content();
+        let width = (self.visible_tools().count().min(5) as f32 * 32. - 4.).max(0.);
         Rect {
-            x: c.x + (c.w - 156.) / 2.,
+            x: c.x + (c.w - width) / 2.,
             y: c.y + 6.,
-            w: 156.,
+            w: width,
             h: 28.,
         }
     }
     pub fn tool(&self, i: usize) -> Rect {
         let b = self.bar();
         Rect {
-            x: b.x + i as f32 * 32. - self.scroll,
+            x: b.x + self.visible_tools().position(|id| id == i).unwrap_or(0) as f32 * 32.
+                - self.scroll,
             y: b.y,
             w: 28.,
             h: 28.,
@@ -299,7 +318,11 @@ impl Model {
     }
     pub fn body(&self) -> Rect {
         let mut c = self.content();
-        let bar = if self.tool_count > 0 { 40. } else { 0. };
+        let bar = if self.visible_tools().next().is_some() {
+            40.
+        } else {
+            0.
+        };
         c.y += bar + 12.;
         c.h -= bar + 12.;
         c
@@ -310,7 +333,7 @@ impl Model {
         }
         let c = self.body();
         let mut v = vec![];
-        for i in 0..self.tool_count {
+        for i in self.visible_tools() {
             let r = self.tool(i);
             if self.bar().contains(Point {
                 x: r.x + 14.,
@@ -468,7 +491,7 @@ impl Model {
         if !self.expanded {
             return;
         }
-        let mut targets: Vec<Hit> = (0..self.tool_count).map(Hit::Tool).collect();
+        let mut targets: Vec<Hit> = self.visible_tools().map(Hit::Tool).collect();
         if !tools_only {
             targets.extend(
                 self.controls()
@@ -492,13 +515,15 @@ impl Model {
         };
         self.focus = Some(targets[next]);
         if let Hit::Tool(i) = targets[next] {
-            let x = i as f32 * 32.;
+            let x = self.visible_tools().position(|id| id == i).unwrap_or(0) as f32 * 32.;
             self.scroll = self.scroll.clamp((x + 28. - 156.).max(0.), x);
         }
     }
     pub fn scroll_by(&mut self, delta: f32) {
-        self.scroll =
-            (self.scroll + delta).clamp(0., self.tool_count.saturating_sub(5) as f32 * 32.);
+        self.scroll = (self.scroll + delta).clamp(
+            0.,
+            self.visible_tools().count().saturating_sub(5) as f32 * 32.,
+        );
     }
     pub fn activate(&mut self, hit: Hit) {
         match hit {
@@ -593,6 +618,36 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sparse_tools_keep_identity_layout_and_navigation_without_empty_slots() {
+        let mut m = Model {
+            reduced: true,
+            ..Default::default()
+        };
+        m.switch(Page::Music);
+        m.set_tool_mask([true, false, false, false, false, true, true]);
+        assert_eq!(m.visible_tools().collect::<Vec<_>>(), vec![0, 5, 6]);
+        assert_eq!(m.tool(5).x - m.tool(0).x, 32.);
+        assert_eq!(m.bar().w, 92.);
+        for id in [0, 5, 6, 0] {
+            m.move_focus(false, true);
+            assert_eq!(m.focus, Some(Hit::Tool(id)));
+        }
+        m.activate(Hit::Tool(5));
+        assert_eq!(m.page(), Page::Clock);
+        m.scroll = 300.;
+        m.set_tool_mask([false; 7]);
+        assert_eq!(m.scroll, 0.);
+        assert_eq!(m.focus, None);
+        assert_eq!(m.bar().w, 0.);
+        assert!(m
+            .controls()
+            .iter()
+            .all(|(hit, _)| !matches!(hit, Hit::Tool(_))));
+        m.set_tool_mask([false, false, false, true, false, false, false]);
+        assert_eq!(m.visible_tools().collect::<Vec<_>>(), vec![3]);
+        assert_eq!(m.bar().w, 28.);
+    }
     #[test]
     fn live_spectrum_settles_and_hidden_pages_do_not_request_animation_frames() {
         let mut m = Model {

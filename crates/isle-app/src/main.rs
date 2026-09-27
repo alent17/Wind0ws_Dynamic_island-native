@@ -605,7 +605,7 @@ impl App {
                     SetForegroundWindow(settings.hwnd);
                 }
             } else {
-                match weather_settings::Settings::new(self.window) {
+                match weather_settings::Settings::new(self.window, &self.configuration.controls) {
                     Ok(settings) => {
                         self.weather.request(None);
                         if let Some(error) = &self.configuration.load_error {
@@ -716,10 +716,20 @@ impl App {
                         }
                         weather_settings::APPLY if !self.configuration.busy() => {
                             if let Some(city) = self.settings.as_ref().and_then(|s| s.selected()) {
-                                if self.configuration.save(city) {
+                                if self.configuration.save(configuration::Edit::City(city)) {
                                     self.saving_window = Some(hwnd);
                                     self.settings.as_ref().unwrap().saving(true);
                                 }
+                            }
+                        }
+                        weather_settings::APPLY_CONTROLS if !self.configuration.busy() => {
+                            let controls = self.settings.as_ref().unwrap().controls();
+                            if self
+                                .configuration
+                                .save(configuration::Edit::Controls(controls))
+                            {
+                                self.saving_window = Some(hwnd);
+                                self.settings.as_ref().unwrap().saving(true);
                             }
                         }
                         weather_settings::CLOSE => {
@@ -738,22 +748,36 @@ impl App {
                         .is_some_and(|s| Some(s.hwnd.0) == self.saving_window);
                     self.saving_window = None;
                     match outcome.result {
-                        Ok(()) => {
-                            self.model.weather = isle_core::weather::View {
-                                city: Some(outcome.city),
-                                ..Default::default()
-                            };
-                            if same_window {
-                                self.settings = None;
-                                self.weather.request(None);
-                                if !self.suspended {
-                                    self.model.switch(Page::Weather);
+                        Ok(()) => match outcome.edit {
+                            configuration::Edit::City(city) => {
+                                self.model.weather = isle_core::weather::View {
+                                    city: Some(city),
+                                    ..Default::default()
+                                };
+                                if same_window {
+                                    self.settings = None;
+                                    self.weather.request(None);
+                                    if !self.suspended {
+                                        self.model.switch(Page::Weather);
+                                    }
+                                } else if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("城市已保存");
                                 }
-                            } else if let Some(settings) = &self.settings {
-                                settings.saving(false);
-                                settings.message("城市已保存");
                             }
-                        }
+                            configuration::Edit::Controls(controls) => {
+                                self.model.reduced = self
+                                    .reduced_override
+                                    .unwrap_or_else(|| system_reduced_motion())
+                                    || !controls.animations
+                                    || controls.reduced;
+                                self.model.set_tool_mask(controls.mask());
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("设置已应用");
+                                }
+                            }
+                        },
                         Err(error) => {
                             if let Some(settings) = &self.settings {
                                 settings.saving(false);
@@ -776,6 +800,7 @@ impl App {
                         weather::Output::Search(cities, failed) => {
                             if let Some(settings) = &mut self.settings {
                                 settings.results(cities, failed);
+                                settings.saving(self.configuration.busy());
                             }
                         }
                     }
@@ -916,7 +941,9 @@ impl App {
                 }
                 self.model.reduced = self
                     .reduced_override
-                    .unwrap_or_else(|| system_reduced_motion());
+                    .unwrap_or_else(|| system_reduced_motion())
+                    || !self.configuration.controls.animations
+                    || self.configuration.controls.reduced;
                 self.model.retarget();
             }
             Event::Visibility(visible) => {
@@ -1024,6 +1051,7 @@ impl App {
                 }
             }
             Event::Key(key) => match key {
+                0x77 => self.action(Hit::Tool(3)),
                 0x1b => self.model.back(),
                 0x20 => {
                     if let Some(hit) = self.model.focus {
@@ -1043,7 +1071,9 @@ impl App {
                     self.model.retarget();
                 }
                 0x75 => {
-                    self.model.reduced = !self.model.reduced;
+                    self.model.reduced = !self.model.reduced
+                        || !self.configuration.controls.animations
+                        || self.configuration.controls.reduced;
                     self.reduced_override = Some(self.model.reduced);
                     self.model.retarget();
                 }
@@ -1117,6 +1147,11 @@ impl App {
                 ",\"configurationValid\":{},\"configurationSaving\":{}",
                 self.configuration.load_error.is_none(),
                 self.configuration.busy()
+            ));
+            text.push_str(&format!(
+                ",\"visibleTools\":{:?},\"reducedMotion\":{}",
+                self.model.visible_tools().collect::<Vec<_>>(),
+                self.model.reduced
             ));
             text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
             if let Some(service) = &self.audio {
@@ -1240,7 +1275,11 @@ unsafe fn run() -> Result<()> {
             .iter()
             .any(|a| a == "--live-media")
             .then(isle_core::MediaSnapshot::default),
-        reduced: args.iter().any(|a| a == "--reduced-motion") || system_reduced_motion(),
+        reduced: args.iter().any(|a| a == "--reduced-motion")
+            || system_reduced_motion()
+            || !configuration.controls.animations
+            || configuration.controls.reduced,
+        tool_mask: configuration.controls.mask(),
         playing: !args.iter().any(|a| a == "--paused"),
         attached: args.iter().any(|a| a == "--attached"),
         edge: match value(&args, "--edge").as_deref() {
