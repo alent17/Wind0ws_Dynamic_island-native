@@ -1,0 +1,4 @@
+[package]
+name = "isle-ui"
+version.workspace = true
+edition.workspace = true
