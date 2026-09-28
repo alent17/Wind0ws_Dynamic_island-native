@@ -13,8 +13,8 @@ use windows::{
         System::LibraryLoader::*,
         UI::{
             Controls::{
-                InitCommonControlsEx, EM_LIMITTEXT, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX,
-                TBS_AUTOTICKS,
+                InitCommonControlsEx, DRAWITEMSTRUCT, EM_LIMITTEXT, ICC_BAR_CLASSES,
+                INITCOMMONCONTROLSEX, ODS_FOCUS, ODS_SELECTED, TBS_AUTOTICKS,
             },
             HiDpi::*,
             Input::KeyboardAndMouse::*,
@@ -39,6 +39,63 @@ fn control_clip(y: i32, height: i32, top: i32, bottom: i32) -> Option<(i32, i32)
     let clip_top = (top - y).clamp(0, height);
     let clip_bottom = (bottom - y).clamp(0, height);
     (clip_bottom > clip_top).then_some((clip_top, clip_bottom))
+}
+unsafe fn draw_preview_choice(
+    item: &DRAWITEMSTRUCT,
+    active: bool,
+    font: HFONT,
+    scale: f32,
+    surface: HBRUSH,
+) {
+    let dc = item.hDC;
+    let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
+    let background = if active {
+        COLORREF(0x00f7f6f5)
+    } else if selected {
+        COLORREF(0x003a3330)
+    } else {
+        COLORREF(0x00120f0e)
+    };
+    let brush = CreateSolidBrush(background);
+    let old_brush = SelectObject(dc, brush);
+    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    let r = item.rcItem;
+    FillRect(dc, &r, surface);
+    let radius = (8. * scale).round() as i32;
+    let _ = RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(brush);
+    let old_font = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(
+        dc,
+        if active {
+            COLORREF(0x00121611)
+        } else {
+            STUDIO_TEXT
+        },
+    );
+    let labels = ["收起", "悬停", "展开", "隐藏"];
+    let mut text = labels[item.CtlID as usize - 240]
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    let mut text_rect = r;
+    let _ = DrawTextW(
+        dc,
+        &mut text,
+        &mut text_rect,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+    );
+    let _ = SelectObject(dc, old_font);
+    if item.itemState.0 & ODS_FOCUS.0 != 0 {
+        let mut focus = r;
+        focus.left += 2;
+        focus.top += 2;
+        focus.right -= 2;
+        focus.bottom -= 2;
+        let _ = DrawFocusRect(dc, &focus);
+    }
 }
 struct Theme {
     background: HBRUSH,
@@ -262,6 +319,19 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     return LRESULT(0);
                 }
             }
+            WM_DRAWITEM if lp.0 != 0 => {
+                let item = &*(lp.0 as *const DRAWITEMSTRUCT);
+                if (240..244).contains(&(item.CtlID as usize)) {
+                    draw_preview_choice(
+                        item,
+                        item.CtlID as usize - 240 == (*theme).preview_mode,
+                        (*theme).font,
+                        (*theme).scale,
+                        (*theme).surface,
+                    );
+                    return LRESULT(1);
+                }
+            }
             WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
                 let dc = HDC(wp.0 as isize);
                 SetTextColor(dc, STUDIO_TEXT);
@@ -304,12 +374,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let theme = &mut *(theme as *mut Theme);
             theme.preview_mode = id - 240;
             for index in 0..4 {
-                SendMessageW(
-                    GetDlgItem(hwnd, 240 + index as i32),
-                    BM_SETCHECK,
-                    WPARAM(usize::from(index == theme.preview_mode)),
-                    LPARAM(0),
-                );
+                let _ = InvalidateRect(GetDlgItem(hwnd, 240 + index), None, true);
             }
             redraw_preview(hwnd, theme);
             return LRESULT(0);
@@ -632,24 +697,13 @@ impl Settings {
                 w!("BUTTON"),
                 label,
                 240 + index,
-                WS_TABSTOP
-                    | WINDOW_STYLE(BS_AUTORADIOBUTTON as u32)
-                    | if index == 0 {
-                        WS_GROUP
-                    } else {
-                        WINDOW_STYLE(0)
-                    },
+                WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
                 20. + index as f32 * 125.,
                 48.,
                 120.,
                 28.,
             )?;
-            SendMessageW(
-                button,
-                BM_SETCHECK,
-                WPARAM(usize::from(index == 2)),
-                LPARAM(0),
-            );
+            let _ = button;
         }
         child(
             w!("STATIC"),
