@@ -18,6 +18,13 @@ use windows::{
     },
 };
 pub const COMMAND: u32 = WM_APP + 74;
+const STUDIO_BG: COLORREF = COLORREF(0x00120f0e);
+const STUDIO_SURFACE: COLORREF = COLORREF(0x002a2522);
+const STUDIO_TEXT: COLORREF = COLORREF(0x00f7f6f5);
+struct Theme {
+    background: HBRUSH,
+    surface: HBRUSH,
+}
 pub const SEARCH: usize = 102;
 pub const APPLY: usize = 104;
 pub const APPLY_CONTROLS: usize = 105;
@@ -28,6 +35,36 @@ const SHAPE_CONTROL_BASE: usize = 220;
 const SHAPE_LABEL_BASE: usize = 230;
 const SHAPE_NAMES: [&str; 4] = ["收起长度", "收起凹肩", "展开凹肩", "展开圆角"];
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let theme = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Theme;
+    if !theme.is_null() {
+        match msg {
+            WM_ERASEBKGND => {
+                let mut r = RECT::default();
+                let _ = GetClientRect(hwnd, &mut r);
+                FillRect(HDC(wp.0 as isize), &r, (*theme).background);
+                return LRESULT(1);
+            }
+            WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+                let dc = HDC(wp.0 as isize);
+                SetTextColor(dc, STUDIO_TEXT);
+                let brush = if msg == WM_CTLCOLORSTATIC {
+                    (*theme).background
+                } else {
+                    (*theme).surface
+                };
+                SetBkColor(
+                    dc,
+                    if msg == WM_CTLCOLORSTATIC {
+                        STUDIO_BG
+                    } else {
+                        STUDIO_SURFACE
+                    },
+                );
+                return LRESULT(brush.0);
+            }
+            _ => {}
+        }
+    }
     if msg == WM_HSCROLL && lp.0 != 0 {
         let track = HWND(lp.0);
         let id = GetDlgCtrlID(track);
@@ -75,6 +112,7 @@ pub struct Settings {
     apply: HWND,
     edge_position: HWND,
     font: HFONT,
+    private_fonts: Vec<HSTRING>,
     pub cities: Vec<City>,
     time_zones: Vec<String>,
     styles: Vec<String>,
@@ -120,15 +158,44 @@ impl Settings {
             WS_EX_CONTROLPARENT,
             GetDpiForWindow(owner),
         )?;
+        // Open beside the island on its monitor, so desktop testing and daily
+        // use do not steal the user's other display.
+        let mut monitor = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let found = GetMonitorInfoW(
+            MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST),
+            &mut monitor,
+        )
+        .as_bool();
+        let (x, y, width, height) = if found {
+            let work = monitor.rcWork;
+            let width = (rect.right - rect.left).min(work.right - work.left);
+            let height = (rect.bottom - rect.top).min(work.bottom - work.top);
+            (
+                work.left + ((work.right - work.left - width) / 2),
+                work.top + ((work.bottom - work.top - height) / 2),
+                width,
+                height,
+            )
+        } else {
+            (
+                CW_USEDEFAULT,
+                CW_USEDEFAULT,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+            )
+        };
         let hwnd = CreateWindowExW(
             WS_EX_CONTROLPARENT,
             class,
             w!("Isle 原生设置"),
             style,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            rect.right - rect.left,
-            rect.bottom - rect.top,
+            x,
+            y,
+            width,
+            height,
             owner,
             None,
             instance,
@@ -145,6 +212,7 @@ impl Settings {
             apply: HWND(0),
             edge_position: HWND(0),
             font: HFONT(0),
+            private_fonts: vec![],
             cities: vec![],
             time_zones: vec![],
             styles: vec![],
@@ -153,6 +221,22 @@ impl Settings {
             shape_labels: vec![],
             fill_color: HWND(0),
         };
+        let theme = Box::new(Theme {
+            background: CreateSolidBrush(STUDIO_BG),
+            surface: CreateSolidBrush(STUDIO_SURFACE),
+        });
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(theme) as isize);
+        if let Some(folder) = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.join("fonts")))
+        {
+            for weight in ["Regular", "Medium", "Bold"] {
+                let path = HSTRING::from(folder.join(format!("MiSans-{weight}.ttf")).as_os_str());
+                if AddFontResourceExW(&path, FR_PRIVATE, None) > 0 {
+                    value.private_fonts.push(path);
+                }
+            }
+        }
         value.font = CreateFontW(
             -px(15.),
             0,
@@ -167,7 +251,11 @@ impl Settings {
             CLIP_DEFAULT_PRECIS.0 as u32,
             CLEARTYPE_QUALITY.0 as u32,
             0,
-            w!("Segoe UI"),
+            if value.private_fonts.is_empty() {
+                w!("Segoe UI")
+            } else {
+                w!("MiSans")
+            },
         );
         let child = |class: PCWSTR,
                      text: &str,
@@ -895,7 +983,19 @@ impl Settings {
 impl Drop for Settings {
     fn drop(&mut self) {
         unsafe {
+            let theme = GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) as *mut Theme;
+            if !theme.is_null() {
+                SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
+            }
             let _ = DestroyWindow(self.hwnd);
+            if !theme.is_null() {
+                let theme = Box::from_raw(theme);
+                let _ = DeleteObject(theme.background);
+                let _ = DeleteObject(theme.surface);
+            }
+            for font in &self.private_fonts {
+                let _ = RemoveFontResourceExW(font, FR_PRIVATE.0, None);
+            }
             if self.font.0 != 0 {
                 let _ = DeleteObject(self.font);
             }
