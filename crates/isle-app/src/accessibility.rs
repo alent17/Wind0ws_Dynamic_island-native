@@ -46,7 +46,7 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::Tool(i) => [
             "倒计时",
             "音量",
-            "悬浮播放器（原型说明）",
+            "悬浮播放器",
             "设置",
             "收起",
             "时间",

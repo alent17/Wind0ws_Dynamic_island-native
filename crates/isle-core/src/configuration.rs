@@ -19,6 +19,7 @@ pub struct Controls {
     pub animations: bool,
     pub reduced: bool,
     pub always_on_top: bool,
+    pub floating_always_on_top: bool,
     pub time_zone: String,
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +57,7 @@ impl Default for Controls {
             animations: true,
             reduced: false,
             always_on_top: true,
+            floating_always_on_top: true,
             time_zone: "system".into(),
         }
     }
@@ -175,6 +177,9 @@ impl Document {
             animations: self.0["enableAnimations"].as_bool().unwrap_or(true),
             reduced: self.0["reduceAnimations"].as_bool().unwrap_or(false),
             always_on_top: self.0["alwaysOnTop"].as_bool().unwrap_or(true),
+            floating_always_on_top: self.0["floatingWindowAlwaysOnTop"]
+                .as_bool()
+                .unwrap_or(true),
             time_zone: self.0["clockTimeZone"].as_str().unwrap_or("system").into(),
         }
     }
@@ -259,6 +264,7 @@ impl Document {
             ("enableAnimations", controls.animations),
             ("reduceAnimations", controls.reduced),
             ("alwaysOnTop", controls.always_on_top),
+            ("floatingWindowAlwaysOnTop", controls.floating_always_on_top),
         ]) {
             self.0.insert(key.into(), Value::Bool(value));
         }
@@ -325,13 +331,14 @@ mod tests {
             animations: false,
             reduced: true,
             always_on_top: false,
+            floating_always_on_top: false,
             time_zone: "America/New_York".into(),
         };
         doc.set_controls(&controls);
         let again = Document::parse(&doc.bytes().unwrap()).unwrap();
         assert_eq!(again.controls(), controls);
         assert_eq!(again.0["alwaysOnTop"], false);
-        assert_eq!(again.0["floatingWindowAlwaysOnTop"], true);
+        assert_eq!(again.0["floatingWindowAlwaysOnTop"], false);
         assert_eq!(again.city(), before);
         assert_eq!(again.0["future"], serde_json::json!([1, 2]));
         assert_eq!(controls.mask(), [false; 7]);

@@ -849,6 +849,22 @@ impl Settings {
                 LPARAM(0),
             );
         }
+        let floating_topmost = child(
+            w!("BUTTON"),
+            "悬浮播放器始终置顶",
+            218,
+            WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            20.,
+            438.,
+            245.,
+            24.,
+        )?;
+        SendMessageW(
+            floating_topmost,
+            BM_SETCHECK,
+            WPARAM(usize::from(controls.floating_always_on_top)),
+            LPARAM(0),
+        );
         let topmost = child(
             w!("BUTTON"),
             "灵动岛始终置顶",
@@ -1255,6 +1271,7 @@ impl Settings {
             animations: checked(208),
             reduced: checked(209),
             always_on_top: checked(217),
+            floating_always_on_top: checked(218),
             time_zone: self
                 .time_zones
                 .get(

@@ -3,6 +3,7 @@ mod accessibility;
 mod artwork;
 mod clock;
 mod configuration;
+mod floating_player;
 mod frame_timer;
 mod icons;
 mod media;
@@ -31,6 +32,7 @@ use windows::{
 };
 #[derive(Debug)]
 enum Event {
+    Floating(usize, isize),
     Players(usize, isize),
     PlayersUpdated,
     ConfigSaved,
@@ -69,6 +71,10 @@ fn coordinates(lp: LPARAM) -> (i32, i32) {
 }
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
+        floating_player::COMMAND => {
+            enqueue(Event::Floating(wp.0, lp.0));
+            LRESULT(0)
+        }
         players::COMMAND => {
             enqueue(Event::Players(wp.0, lp.0));
             LRESULT(0)
@@ -233,6 +239,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
 }
 struct App {
+    floating_player: Option<floating_player::FloatingPlayer>,
     weather: weather::Service,
     settings: Option<weather_settings::Settings>,
     player_dialog: Option<players::Dialog>,
@@ -631,7 +638,9 @@ impl App {
         }
         if let Some(service) = &self.media {
             service.set_active(
-                !self.suspended && (!self.model.expanded || self.model.page() == Page::Music),
+                self.floating_player.is_some()
+                    || !self.suspended
+                        && (!self.model.expanded || self.model.page() == Page::Music),
             );
         }
         let desired = if self.suspended {
@@ -767,12 +776,18 @@ impl App {
         }
         match hit {
             Hit::Tool(2) => {
-                MessageBoxW(
+                if let Some(player) = &self.floating_player {
+                    SetForegroundWindow(player.hwnd);
+                } else if let Ok(player) = floating_player::FloatingPlayer::new(
                     self.window,
-                    w!("此阶段验证原生绘制。独立悬浮播放器将在业务接入阶段迁移。"),
-                    w!("Isle 原生原型"),
-                    MB_OK,
-                );
+                    self.model.media.as_ref(),
+                    self.start.elapsed().as_secs_f64(),
+                    self.configuration.controls.floating_always_on_top,
+                    self.test_fixture,
+                ) {
+                    self.floating_player = Some(player);
+                    let _ = self.sync_timer();
+                }
             }
             Hit::Tool(4) => {
                 self.model.toggle();
@@ -794,6 +809,7 @@ impl App {
                     | Event::ConfigSaved
                     | Event::City(_, _)
                     | Event::Diagnostic
+                    | Event::Floating(_, _)
                     | Event::Close
                     | Event::Visibility(_)
                     | Event::Dpi(_, _)
@@ -813,6 +829,29 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::Floating(action, sender)
+                if self
+                    .floating_player
+                    .as_ref()
+                    .is_some_and(|p| p.hwnd.0 == sender) =>
+            {
+                if action == floating_player::CLOSE {
+                    self.floating_player = None;
+                    self.sync_timer()?;
+                } else if let (Some(service), Some(snapshot)) = (&self.media, &self.model.media) {
+                    let control = match action {
+                        floating_player::PREVIOUS => Some(media::Action::Previous),
+                        floating_player::PLAY_PAUSE => Some(media::Action::Toggle),
+                        floating_player::NEXT => Some(media::Action::Next),
+                        _ => None,
+                    };
+                    if let Some(control) = control {
+                        service.control(snapshot.session, control);
+                    }
+                }
+                changed = false;
+            }
+            Event::Floating(_, _) => changed = false,
             Event::PlayersUpdated => {
                 if let Some(dialog) = &mut self.player_dialog {
                     dialog.take_update();
@@ -973,6 +1012,9 @@ impl App {
                                 self.always_on_top = controls.always_on_top;
                                 unsafe {
                                     self.apply_topmost()?;
+                                    if let Some(player) = &self.floating_player {
+                                        player.set_topmost(controls.floating_always_on_top)?;
+                                    }
                                 }
                                 self.model.reduced = self
                                     .reduced_override
@@ -1103,6 +1145,12 @@ impl App {
                     self.model.media = Some(update.snapshot);
                     self.model.media_failed = update.error.is_some();
                     self.media_error = update.error;
+                }
+                if let Some(player) = &self.floating_player {
+                    player.update(
+                        self.model.media.as_ref(),
+                        self.start.elapsed().as_secs_f64(),
+                    );
                 }
                 changed =
                     !self.suspended && (!self.model.expanded || self.model.page() == Page::Music);
@@ -1735,6 +1783,12 @@ unsafe fn run() -> Result<()> {
             title: "封面与弹簧测试".into(),
             artist: "独立测试数据".into(),
             playing: model.playing,
+            timeline: isle_core::Timeline {
+                position_ms: 122_000,
+                duration_ms: 244_000,
+                received_at: 0.,
+                position_known: true,
+            },
             cover: Some(std::sync::Arc::new(isle_core::Cover {
                 width: 64,
                 height: 64,
@@ -1754,6 +1808,7 @@ unsafe fn run() -> Result<()> {
     let media_selection = configuration.selection.clone();
     let always_on_top = configuration.controls.always_on_top;
     let mut app = App {
+        floating_player: None,
         player_dialog: None,
         weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
         settings: None,
@@ -1823,6 +1878,9 @@ unsafe fn run() -> Result<()> {
     }
     ShowWindow(window, SW_SHOWNOACTIVATE);
     app.apply_topmost()?;
+    if test_fixture && args.iter().any(|arg| arg == "--open-floating") {
+        app.action(Hit::Tool(2));
+    }
     let mut msg = MSG::default();
     'running: loop {
         let continuous = app.continuous();
@@ -1870,7 +1928,10 @@ unsafe fn run() -> Result<()> {
         loop {
             let event = EVENTS.with(|q| q.borrow_mut().pop_front());
             if let Some(event) = event {
-                if !app.handle(event)? {
+                let event_kind = std::mem::discriminant(&event);
+                if !app.handle(event).map_err(|error| {
+                    Error::new(error.code(), format!("{event_kind:?}: {error}").into())
+                })? {
                     break 'running;
                 }
             } else {
@@ -1895,6 +1956,7 @@ unsafe fn run() -> Result<()> {
     ACCESSIBLE.with(|a| *a.borrow_mut() = None);
     app.media = None;
     app.audio = None;
+    app.floating_player = None;
     app.player_dialog = None;
     app.settings = None;
     app.weather.request(None);
