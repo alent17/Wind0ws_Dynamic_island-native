@@ -28,11 +28,11 @@ const STUDIO_SURFACE: COLORREF = COLORREF(0x002a2522);
 const STUDIO_TEXT: COLORREF = COLORREF(0x00f7f6f5);
 fn studio_control_y(y: f32, content_y: f32) -> f32 {
     if y >= 560. {
-        y - 540. + content_y
+        y - 460. + content_y
     } else if y >= 356. {
-        y + 40. + content_y
+        y + 120. + content_y
     } else {
-        y + 590. + content_y
+        y + 670. + content_y
     }
 }
 fn control_clip(y: i32, height: i32, top: i32, bottom: i32) -> Option<(i32, i32)> {
@@ -52,9 +52,11 @@ struct Theme {
     max_scroll: i32,
     controls: Vec<(HWND, i32, i32, i32, i32)>,
     preview: Option<Preview>,
+    preview_mode: usize,
 }
 struct Preview {
-    renderer: Renderer,
+    hwnd: HWND,
+    renderer: Option<Renderer>,
     model: Model,
 }
 unsafe fn redraw_preview(hwnd: HWND, theme: &mut Theme) {
@@ -62,6 +64,24 @@ unsafe fn redraw_preview(hwnd: HWND, theme: &mut Theme) {
         return;
     };
     let checked = |id| SendMessageW(GetDlgItem(hwnd, id), BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1;
+    if theme.preview_mode == 3 {
+        preview.renderer = None;
+        ShowWindow(preview.hwnd, SW_HIDE);
+        return;
+    }
+    if preview.renderer.is_none() {
+        if let Ok(mut renderer) = Renderer::new(preview.hwnd, theme.scale) {
+            renderer.opaque_preview = true;
+            preview.renderer = Some(renderer);
+        }
+    }
+    ShowWindow(preview.hwnd, SW_SHOWNOACTIVATE);
+    match theme.preview_mode {
+        0 | 1 if preview.model.expanded => preview.model.toggle(),
+        2 if !preview.model.expanded => preview.model.toggle(),
+        _ => {}
+    }
+    preview.model.hovered = theme.preview_mode == 1;
     preview.model.tool_mask = std::array::from_fn(|i| checked(201 + i as i32));
     if !checked(200) {
         preview.model.tool_mask = [false; 7];
@@ -85,7 +105,9 @@ unsafe fn redraw_preview(hwnd: HWND, theme: &mut Theme) {
     preview.model.expanded_shoulder_radius = read(SHAPE_CONTROL_BASE as i32 + 2) as u8;
     preview.model.expanded_corner_radius = read(SHAPE_CONTROL_BASE as i32 + 3);
     preview.model.retarget();
-    let _ = preview.renderer.draw(&preview.model, None, None, false);
+    if let Some(renderer) = preview.renderer.as_mut() {
+        let _ = renderer.draw(&preview.model, None, None, false);
+    }
 }
 unsafe fn position_controls(hwnd: HWND, theme: &Theme) {
     let mut client = RECT::default();
@@ -278,6 +300,20 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     if msg == WM_COMMAND && !theme.is_null() {
         let id = wp.0 & 0xffff;
         let notify = wp.0 >> 16;
+        if (240..244).contains(&id) && notify == BN_CLICKED as usize {
+            let theme = &mut *(theme as *mut Theme);
+            theme.preview_mode = id - 240;
+            for index in 0..4 {
+                SendMessageW(
+                    GetDlgItem(hwnd, 240 + index as i32),
+                    BM_SETCHECK,
+                    WPARAM(usize::from(index == theme.preview_mode)),
+                    LPARAM(0),
+                );
+            }
+            redraw_preview(hwnd, theme);
+            return LRESULT(0);
+        }
         if (id == 211 || id == 213) && notify == CBN_SELCHANGE as usize
             || (200..=207).contains(&id) && notify == BN_CLICKED as usize
         {
@@ -442,9 +478,10 @@ impl Settings {
             scale,
             panel_x,
             scroll: 0,
-            max_scroll: (px(930. + content_y) - client.bottom).max(0),
+            max_scroll: (px(1010. + content_y) - client.bottom).max(0),
             controls: Vec::new(),
             preview: None,
+            preview_mode: 2,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(theme) as isize);
         if let Some(folder) = std::env::current_exe()
@@ -518,7 +555,11 @@ impl Settings {
                     ..Default::default()
                 };
                 model.switch(Page::Music);
-                (*theme).preview = Some(Preview { renderer, model });
+                (*theme).preview = Some(Preview {
+                    hwnd: preview_window,
+                    renderer: Some(renderer),
+                    model,
+                });
             } else {
                 let _ = DestroyWindow(preview_window);
             }
@@ -538,7 +579,11 @@ impl Settings {
                 &HSTRING::from(text),
                 WS_CHILD | WS_VISIBLE | style,
                 px(x) + panel_x,
-                px(studio_control_y(y, content_y)),
+                px(if (239..244).contains(&id) {
+                    y + content_y
+                } else {
+                    studio_control_y(y, content_y)
+                }),
                 px(w),
                 px(h),
                 hwnd,
@@ -572,6 +617,40 @@ impl Settings {
             ));
             Ok(control)
         };
+        child(
+            w!("STATIC"),
+            "预览状态",
+            239,
+            WINDOW_STYLE(0),
+            20.,
+            18.,
+            500.,
+            20.,
+        )?;
+        for (index, label) in ["收起", "悬停", "展开", "隐藏"].iter().enumerate() {
+            let button = child(
+                w!("BUTTON"),
+                label,
+                240 + index,
+                WS_TABSTOP
+                    | WINDOW_STYLE(BS_AUTORADIOBUTTON as u32)
+                    | if index == 0 {
+                        WS_GROUP
+                    } else {
+                        WINDOW_STYLE(0)
+                    },
+                20. + index as f32 * 125.,
+                48.,
+                120.,
+                28.,
+            )?;
+            SendMessageW(
+                button,
+                BM_SETCHECK,
+                WPARAM(usize::from(index == 2)),
+                LPARAM(0),
+            );
+        }
         child(
             w!("STATIC"),
             "天气城市",
@@ -1296,9 +1375,9 @@ mod tests {
     use super::{control_clip, studio_control_y};
     #[test]
     fn studio_sections_follow_reference_order_and_clip_at_panel_edges() {
-        assert_eq!(studio_control_y(560., 120.), 140.);
-        assert_eq!(studio_control_y(356., 120.), 516.);
-        assert_eq!(studio_control_y(18., 120.), 728.);
+        assert_eq!(studio_control_y(560., 120.), 220.);
+        assert_eq!(studio_control_y(356., 120.), 596.);
+        assert_eq!(studio_control_y(18., 120.), 808.);
         assert_eq!(control_clip(125, 30, 130, 900), Some((5, 30)));
         assert_eq!(control_clip(890, 40, 130, 900), Some((0, 10)));
         assert_eq!(control_clip(900, 40, 130, 900), None);
