@@ -61,6 +61,17 @@ pub struct Timeline {
     pub position_known: bool,
 }
 impl Timeline {
+    /// Some players, notably NetEase, publish song metadata but leave the
+    /// SMTC timeline empty. In that case the first observation is the only
+    /// available clock anchor. The estimate is replaced by a real position
+    /// as soon as the player publishes one.
+    pub fn start_missing_position_estimate(&mut self, now: f64) {
+        if !self.position_known {
+            self.position_ms = 0;
+            self.received_at = now;
+            self.position_known = true;
+        }
+    }
     pub fn position(&self, now: f64, playing: bool) -> u64 {
         if !self.position_known {
             return 0;
@@ -247,6 +258,23 @@ mod tests {
         t.accept(Some((15_000, 321_000)), 121., true, true, false);
         assert!(t.position_known);
         assert_eq!(t.position(122., true), 16_000);
+    }
+    #[test]
+    fn missing_player_position_uses_a_pausing_local_clock_until_corrected() {
+        let mut t = Timeline::default();
+        t.accept(Some((0, 0)), 1., false, true, true);
+        t.start_missing_position_estimate(1.);
+        assert_eq!(t.position(4., true), 3000);
+        t.duration_ms = 100_000; // Song metadata may arrive after the first poll.
+        t.accept(Some((0, 0)), 5., true, false, false);
+        assert_eq!(t.position(20., false), 4000);
+        t.accept(Some((0, 0)), 20., false, true, false);
+        assert_eq!(t.position(22., true), 6000);
+        t.accept(Some((28_000, 100_000)), 23., true, true, false);
+        assert_eq!(t.position(24., true), 29_000);
+        t.accept(Some((0, 0)), 25., true, true, true);
+        t.start_missing_position_estimate(25.);
+        assert_eq!(t.position(26., true), 1000);
     }
     #[test]
     fn seek_and_track_change_are_authoritative() {

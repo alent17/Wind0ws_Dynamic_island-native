@@ -965,18 +965,19 @@ impl Renderer {
                     let progress_color = color(1., 1., 1., 0.19);
                     let time_color = color(0.55, 0.55, 0.55, 1.);
                     let mut elapsed_label = [0_u16; 24];
-                    let elapsed_label_len = if position_known || m.media.is_none() {
-                        write_media_time(elapsed_ms, &mut elapsed_label)
-                    } else {
-                        elapsed_label[..5].copy_from_slice(&[
-                            b'-' as u16,
-                            b'-' as u16,
-                            b':' as u16,
-                            b'-' as u16,
-                            b'-' as u16,
-                        ]);
-                        5
-                    };
+                    let elapsed_label_len =
+                        if (position_known && duration_ms > 0) || m.media.is_none() {
+                            write_media_time(elapsed_ms, &mut elapsed_label)
+                        } else {
+                            elapsed_label[..5].copy_from_slice(&[
+                                b'-' as u16,
+                                b'-' as u16,
+                                b':' as u16,
+                                b'-' as u16,
+                                b'-' as u16,
+                            ]);
+                            5
+                        };
                     self.text_utf16(
                         &elapsed_label[..elapsed_label_len],
                         Rect {
@@ -990,22 +991,23 @@ impl Renderer {
                         time_color,
                     )?;
                     let mut remaining_label = [0_u16; 25];
-                    let remaining_label_len = if position_known || m.media.is_none() {
-                        remaining_label[0] = u16::from(b'-');
-                        1 + write_media_time(
-                            duration_ms.saturating_sub(elapsed_ms),
-                            &mut remaining_label[1..],
-                        )
-                    } else {
-                        remaining_label[..5].copy_from_slice(&[
-                            b'-' as u16,
-                            b'-' as u16,
-                            b':' as u16,
-                            b'-' as u16,
-                            b'-' as u16,
-                        ]);
-                        5
-                    };
+                    let remaining_label_len =
+                        if (position_known && duration_ms > 0) || m.media.is_none() {
+                            remaining_label[0] = u16::from(b'-');
+                            1 + write_media_time(
+                                duration_ms.saturating_sub(elapsed_ms),
+                                &mut remaining_label[1..],
+                            )
+                        } else {
+                            remaining_label[..5].copy_from_slice(&[
+                                b'-' as u16,
+                                b'-' as u16,
+                                b':' as u16,
+                                b'-' as u16,
+                                b'-' as u16,
+                            ]);
+                            5
+                        };
                     self.text_utf16(
                         &remaining_label[..remaining_label_len],
                         Rect {

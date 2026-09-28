@@ -312,20 +312,26 @@ fn poll(
     if new_track {
         next.cover = None;
     }
+    let source = next.source.to_lowercase();
+    let netease = source.contains("cloudmusic") || source.contains("netease");
+    let empty_timeline = timeline.is_none_or(|(position, duration)| position == 0 && duration == 0);
+    let observed_at = start.elapsed().as_secs_f64();
     next.timeline.accept(
         timeline,
-        start.elapsed().as_secs_f64(),
+        observed_at,
         current.snapshot.playing,
         next.playing,
         new_track,
     );
-    let source = next.source.to_lowercase();
+    if netease && empty_timeline && !next.title.is_empty() {
+        next.timeline.start_missing_position_estimate(observed_at);
+    }
     let key = format!("{}\0{}\0{}", next.source, next.title, next.artist);
     if let Some(extra) = enrichment.request(crate::artwork::Request {
         key,
         title: next.title.clone(),
         artist: next.artist.clone(),
-        netease: source.contains("cloudmusic") || source.contains("netease"),
+        netease,
         thumbnail: current.thumbnail.clone(),
     }) {
         if next.timeline.duration_ms == 0 {
