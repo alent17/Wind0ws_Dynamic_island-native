@@ -269,16 +269,28 @@ unsafe fn paint_studio(hwnd: HWND, theme: &Theme) {
         },
         COLORREF(0x00938f89),
     );
+    // The settings groups scroll as separate cards while the preview stage stays fixed.
+    let saved_dc = SaveDC(dc);
+    let panel_right = client.right - px(32.);
+    let panel_bottom = client.bottom - px(20.);
+    let _ = IntersectClipRect(dc, theme.panel_x, top, panel_right, panel_bottom);
     SelectObject(dc, theme.surface);
-    let _ = RoundRect(
-        dc,
-        theme.panel_x,
-        top,
-        client.right - px(32.),
-        client.bottom - px(20.),
-        px(16.),
-        px(16.),
-    );
+    for (card_top, card_bottom) in [(130., 580.), (588., 790.), (800., 1130.)] {
+        let card_top = px(card_top) - theme.scroll;
+        let card_bottom = px(card_bottom) - theme.scroll;
+        if card_bottom > top && card_top < panel_bottom {
+            let _ = RoundRect(
+                dc,
+                theme.panel_x,
+                card_top,
+                panel_right,
+                card_bottom,
+                px(16.),
+                px(16.),
+            );
+        }
+    }
+    let _ = RestoreDC(dc, saved_dc);
     let _ = SelectObject(dc, old_brush);
     let _ = SelectObject(dc, old_font);
     let _ = EndPaint(hwnd, &paint);
@@ -332,23 +344,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     return LRESULT(1);
                 }
             }
-            WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
                 let dc = HDC(wp.0 as isize);
                 SetTextColor(dc, STUDIO_TEXT);
-                let brush = if msg == WM_CTLCOLORSTATIC {
-                    (*theme).background
-                } else {
-                    (*theme).surface
-                };
-                SetBkColor(
-                    dc,
-                    if msg == WM_CTLCOLORSTATIC {
-                        STUDIO_BG
-                    } else {
-                        STUDIO_SURFACE
-                    },
-                );
-                return LRESULT(brush.0);
+                SetBkColor(dc, STUDIO_SURFACE);
+                return LRESULT((*theme).surface.0);
             }
             _ => {}
         }
