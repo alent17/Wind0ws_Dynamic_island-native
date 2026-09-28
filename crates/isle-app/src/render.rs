@@ -473,7 +473,7 @@ impl Renderer {
         );
         Ok(())
     }
-    unsafe fn glyph(&self, id: usize, r: Rect, c: D2D1_COLOR_F) -> Result<()> {
+    unsafe fn glyph(&self, id: usize, r: Rect, c: D2D1_COLOR_F, size: f32) -> Result<()> {
         let icon = [
             Icon::Timer,
             Icon::Volume,
@@ -485,9 +485,9 @@ impl Renderer {
         ][id.min(6)];
         self.icons.draw(
             icon,
-            r.x + (r.w - 16.) / 2.,
-            r.y + (r.h - 16.) / 2.,
-            16.,
+            r.x + (r.w - size) / 2.,
+            r.y + (r.h - size) / 2.,
+            size,
             1.8,
             c,
         )
@@ -604,7 +604,22 @@ impl Renderer {
             // Focus and press feedback share the same hit rectangles as input.
             for (hit, r) in m.visual_controls() {
                 if pressed == Some(hit) {
-                    self.fill(r, 12., color(1., 1., 1., 0.16));
+                    let inset = r.h
+                        * if matches!(hit, Hit::Tool(_)) {
+                            0.025
+                        } else {
+                            0.03
+                        };
+                    self.fill(
+                        Rect {
+                            x: r.x + inset,
+                            y: r.y + inset,
+                            w: r.w - inset * 2.,
+                            h: r.h - inset * 2.,
+                        },
+                        12.,
+                        color(1., 1., 1., 0.16),
+                    );
                 }
                 if m.focus == Some(hit) {
                     self.ink(blue);
@@ -641,6 +656,11 @@ impl Renderer {
                             color(145. / 255., 202. / 255., 1., 1.)
                         } else {
                             color(217. / 255., 234. / 255., 1., 1.)
+                        },
+                        if pressed == Some(Hit::Tool(i)) {
+                            15.2
+                        } else {
+                            16.
                         },
                     )?;
                 }
@@ -777,6 +797,7 @@ impl Renderer {
                             h: 28.,
                         },
                         white,
+                        16.,
                     )?;
                     if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
                         // Clear the placeholder beneath translucent rounded corners.
@@ -1029,23 +1050,28 @@ impl Renderer {
                             }
                             let x = r.x + 24.;
                             let y = r.y + 24.;
+                            let icon_scale = if pressed == Some(hit) && m.enabled(hit) {
+                                0.94
+                            } else {
+                                1.
+                            };
                             if hit == Hit::Play && m.playing {
                                 self.fill(
                                     Rect {
-                                        x: x - 6.,
-                                        y: y - 7.,
-                                        w: 4.,
-                                        h: 14.,
+                                        x: x - 6. * icon_scale,
+                                        y: y - 7. * icon_scale,
+                                        w: 4. * icon_scale,
+                                        h: 14. * icon_scale,
                                     },
                                     1.,
                                     white,
                                 );
                                 self.fill(
                                     Rect {
-                                        x: x + 2.,
-                                        y: y - 7.,
-                                        w: 4.,
-                                        h: 14.,
+                                        x: x + 2. * icon_scale,
+                                        y: y - 7. * icon_scale,
+                                        w: 4. * icon_scale,
+                                        h: 14. * icon_scale,
                                     },
                                     1.,
                                     white,
@@ -1055,12 +1081,12 @@ impl Renderer {
                                 let triangle = self.factory.CreatePathGeometry()?;
                                 let sink = triangle.Open()?;
                                 sink.BeginFigure(
-                                    point(x - 5. * direction, y - 7.),
+                                    point(x - 5. * direction * icon_scale, y - 7. * icon_scale),
                                     D2D1_FIGURE_BEGIN_FILLED,
                                 );
                                 sink.AddLines(&[
-                                    point(x + 6. * direction, y),
-                                    point(x - 5. * direction, y + 7.),
+                                    point(x + 6. * direction * icon_scale, y),
+                                    point(x - 5. * direction * icon_scale, y + 7. * icon_scale),
                                 ]);
                                 sink.EndFigure(D2D1_FIGURE_END_CLOSED);
                                 sink.Close()?;
@@ -1069,10 +1095,10 @@ impl Renderer {
                                 if hit != Hit::Play {
                                     self.fill(
                                         Rect {
-                                            x: x + 7. * direction - 1.,
-                                            y: y - 7.,
-                                            w: 2.,
-                                            h: 14.,
+                                            x: x + 7. * direction * icon_scale - icon_scale,
+                                            y: y - 7. * icon_scale,
+                                            w: 2. * icon_scale,
+                                            h: 14. * icon_scale,
                                         },
                                         1.,
                                         white,
