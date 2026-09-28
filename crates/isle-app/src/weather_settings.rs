@@ -421,7 +421,6 @@ pub struct Settings {
     apply: HWND,
     edge_position: HWND,
     font: HFONT,
-    private_fonts: Vec<HSTRING>,
     pub cities: Vec<City>,
     time_zones: Vec<String>,
     styles: Vec<String>,
@@ -521,7 +520,6 @@ impl Settings {
             apply: HWND(0),
             edge_position: HWND(0),
             font: HFONT(0),
-            private_fonts: vec![],
             cities: vec![],
             time_zones: vec![],
             styles: vec![],
@@ -549,17 +547,6 @@ impl Settings {
             preview_mode: 2,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(theme) as isize);
-        if let Some(folder) = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.join("fonts")))
-        {
-            for weight in ["Regular", "Medium", "Bold"] {
-                let path = HSTRING::from(folder.join(format!("MiSans-{weight}.ttf")).as_os_str());
-                if AddFontResourceExW(&path, FR_PRIVATE, None) > 0 {
-                    value.private_fonts.push(path);
-                }
-            }
-        }
         value.font = CreateFontW(
             -px(15.),
             0,
@@ -574,11 +561,7 @@ impl Settings {
             CLIP_DEFAULT_PRECIS.0 as u32,
             CLEARTYPE_QUALITY.0 as u32,
             0,
-            if value.private_fonts.is_empty() {
-                w!("Segoe UI")
-            } else {
-                w!("MiSans")
-            },
+            w!("MiSans"),
         );
         let theme = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Theme;
         (*theme).font = value.font;
@@ -1431,9 +1414,6 @@ impl Drop for Settings {
                 let _ = DeleteObject(theme.surface);
                 let _ = DeleteObject(theme.stage);
                 let _ = DeleteObject(theme.island);
-            }
-            for font in &self.private_fonts {
-                let _ = RemoveFontResourceExW(font, FR_PRIVATE.0, None);
             }
             if self.font.0 != 0 {
                 let _ = DeleteObject(self.font);

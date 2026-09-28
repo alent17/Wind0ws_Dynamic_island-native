@@ -11,6 +11,7 @@ mod players;
 mod render;
 mod spectrum;
 mod system_audio;
+mod timer_window;
 mod weather;
 mod weather_settings;
 const WM_MOUSELEAVE: u32 = 0x02A3;
@@ -30,9 +31,37 @@ use windows::{
         UI::{Accessibility::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
 };
+struct PrivateFonts(Vec<HSTRING>);
+impl PrivateFonts {
+    unsafe fn load() -> Self {
+        let mut fonts = Vec::new();
+        if let Some(folder) = std::env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("fonts")))
+        {
+            for weight in ["Regular", "Medium", "Bold"] {
+                let font = HSTRING::from(folder.join(format!("MiSans-{weight}.ttf")).as_os_str());
+                if AddFontResourceExW(&font, FR_PRIVATE, None) > 0 {
+                    fonts.push(font);
+                }
+            }
+        }
+        Self(fonts)
+    }
+}
+impl Drop for PrivateFonts {
+    fn drop(&mut self) {
+        unsafe {
+            for font in &self.0 {
+                let _ = RemoveFontResourceExW(font, FR_PRIVATE.0, None);
+            }
+        }
+    }
+}
 #[derive(Debug)]
 enum Event {
     Floating(usize, isize),
+    TimerWindow(usize, isize),
     Players(usize, isize),
     PlayersUpdated,
     ConfigSaved,
@@ -73,6 +102,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     match msg {
         floating_player::COMMAND => {
             enqueue(Event::Floating(wp.0, lp.0));
+            LRESULT(0)
+        }
+        timer_window::COMMAND => {
+            enqueue(Event::TimerWindow(wp.0, lp.0));
             LRESULT(0)
         }
         players::COMMAND => {
@@ -240,6 +273,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 struct App {
     floating_player: Option<floating_player::FloatingPlayer>,
+    timer_window: Option<timer_window::TimerWindow>,
     weather: weather::Service,
     settings: Option<weather_settings::Settings>,
     player_dialog: Option<players::Dialog>,
@@ -548,6 +582,9 @@ impl App {
             self.model.spectrum = Some(SpectrumVisual::default());
         }
         self.model.step(dt, (now - self.start).as_secs_f64());
+        if let Some(window) = &self.timer_window {
+            window.update(&self.model);
+        }
         if self.suspended {
             if timer_was_running && self.model.timer_deadline.is_none() {
                 self.pending_completion = true;
@@ -795,6 +832,15 @@ impl App {
             _ => self.model.activate(hit),
         }
     }
+    unsafe fn open_timer_window(&mut self) {
+        if let Some(window) = &self.timer_window {
+            SetForegroundWindow(window.hwnd);
+        } else if let Ok(window) =
+            timer_window::TimerWindow::new(self.window, &self.model, self.test_fixture)
+        {
+            self.timer_window = Some(window);
+        }
+    }
     unsafe fn handle(&mut self, event: Event) -> Result<bool> {
         if self.suspended
             && !matches!(
@@ -810,6 +856,7 @@ impl App {
                     | Event::City(_, _)
                     | Event::Diagnostic
                     | Event::Floating(_, _)
+                    | Event::TimerWindow(_, _)
                     | Event::Close
                     | Event::Visibility(_)
                     | Event::Dpi(_, _)
@@ -829,6 +876,34 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::TimerWindow(action, sender)
+                if self
+                    .timer_window
+                    .as_ref()
+                    .is_some_and(|window| window.hwnd.0 == sender) =>
+            {
+                match action {
+                    timer_window::CLOSE => {
+                        self.timer_window = None;
+                        changed = false;
+                    }
+                    timer_window::TOGGLE => {
+                        if !self.model.timer_active {
+                            if let Some(window) = &self.timer_window {
+                                if let Some(minutes) = window.selected() {
+                                    self.model.set_timer_minutes(minutes as f32);
+                                } else {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                        self.model.activate(Hit::Timer);
+                    }
+                    timer_window::RESET => self.model.activate(Hit::Reset),
+                    _ => changed = false,
+                }
+            }
+            Event::TimerWindow(_, _) => changed = false,
             Event::Floating(action, sender)
                 if self
                     .floating_player
@@ -1356,6 +1431,7 @@ impl App {
             }
             Event::Key(key) => match key {
                 0x77 => self.action(Hit::Tool(3)),
+                0x78 => self.open_timer_window(),
                 0x1b => self.model.back(),
                 0x20 => {
                     if let Some(hit) = self.model.focus {
@@ -1587,6 +1663,7 @@ unsafe fn system_reduced_motion() -> bool {
 }
 unsafe fn run() -> Result<()> {
     CoInitializeEx(None, COINIT_APARTMENTTHREADED)?;
+    let _fonts = PrivateFonts::load();
     let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     let args: Vec<String> = std::env::args().collect();
     let instance = GetModuleHandleW(None)?;
@@ -1809,6 +1886,7 @@ unsafe fn run() -> Result<()> {
     let always_on_top = configuration.controls.always_on_top;
     let mut app = App {
         floating_player: None,
+        timer_window: None,
         player_dialog: None,
         weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
         settings: None,
@@ -1880,6 +1958,9 @@ unsafe fn run() -> Result<()> {
     app.apply_topmost()?;
     if test_fixture && args.iter().any(|arg| arg == "--open-floating") {
         app.action(Hit::Tool(2));
+    }
+    if test_fixture && args.iter().any(|arg| arg == "--open-timer") {
+        app.open_timer_window();
     }
     let mut msg = MSG::default();
     'running: loop {
@@ -1957,6 +2038,7 @@ unsafe fn run() -> Result<()> {
     app.media = None;
     app.audio = None;
     app.floating_player = None;
+    app.timer_window = None;
     app.player_dialog = None;
     app.settings = None;
     app.weather.request(None);
