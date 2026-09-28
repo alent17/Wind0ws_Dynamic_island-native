@@ -43,6 +43,7 @@ pub struct Renderer {
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub title_overflow: bool,
+    pub opaque_preview: bool,
 }
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -397,6 +398,7 @@ impl Renderer {
             layouts: HashMap::new(),
             frames: 0,
             title_overflow: false,
+            opaque_preview: false,
         })
     }
     unsafe fn ink(&self, c: D2D1_COLOR_F) {
@@ -525,7 +527,11 @@ impl Renderer {
             M31: 0.,
             M32: 0.,
         });
-        self.ctx.Clear(Some(&color(0., 0., 0., 0.)));
+        self.ctx.Clear(Some(&if self.opaque_preview {
+            color(1., 1., 1., 1.)
+        } else {
+            color(0., 0., 0., 0.)
+        }));
         let media_cover = if m.cover_visible() {
             m.media.as_ref().and_then(|media| media.cover.as_ref())
         } else {

@@ -1,5 +1,10 @@
 //! Modeless Win32 controls: native edit/IME, list selection and dialog keyboard routing.
+use crate::render::Renderer;
 use isle_core::weather::City;
+use isle_ui::{
+    geometry::Edge,
+    model::{Model, Page, HOST},
+};
 use windows::{
     core::*,
     Win32::{
@@ -21,9 +26,183 @@ pub const COMMAND: u32 = WM_APP + 74;
 const STUDIO_BG: COLORREF = COLORREF(0x00120f0e);
 const STUDIO_SURFACE: COLORREF = COLORREF(0x002a2522);
 const STUDIO_TEXT: COLORREF = COLORREF(0x00f7f6f5);
+fn studio_control_y(y: f32, content_y: f32) -> f32 {
+    if y >= 560. {
+        y - 540. + content_y
+    } else if y >= 356. {
+        y + 40. + content_y
+    } else {
+        y + 590. + content_y
+    }
+}
+fn control_clip(y: i32, height: i32, top: i32, bottom: i32) -> Option<(i32, i32)> {
+    let clip_top = (top - y).clamp(0, height);
+    let clip_bottom = (bottom - y).clamp(0, height);
+    (clip_bottom > clip_top).then_some((clip_top, clip_bottom))
+}
 struct Theme {
     background: HBRUSH,
     surface: HBRUSH,
+    stage: HBRUSH,
+    island: HBRUSH,
+    font: HFONT,
+    scale: f32,
+    panel_x: i32,
+    scroll: i32,
+    max_scroll: i32,
+    controls: Vec<(HWND, i32, i32, i32, i32)>,
+    preview: Option<Preview>,
+}
+struct Preview {
+    renderer: Renderer,
+    model: Model,
+}
+unsafe fn redraw_preview(hwnd: HWND, theme: &mut Theme) {
+    let Some(preview) = theme.preview.as_mut() else {
+        return;
+    };
+    let checked = |id| SendMessageW(GetDlgItem(hwnd, id), BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1;
+    preview.model.tool_mask = std::array::from_fn(|i| checked(201 + i as i32));
+    if !checked(200) {
+        preview.model.tool_mask = [false; 7];
+    }
+    preview.model.attached =
+        SendMessageW(GetDlgItem(hwnd, 211), CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 == 1;
+    preview.model.edge =
+        match SendMessageW(GetDlgItem(hwnd, 213), CB_GETCURSEL, WPARAM(0), LPARAM(0)).0 {
+            1 => Edge::Right,
+            2 => Edge::Bottom,
+            3 => Edge::Left,
+            _ => Edge::Top,
+        };
+    let read = |id| {
+        SendMessageW(GetDlgItem(hwnd, id), WM_USER, WPARAM(0), LPARAM(0))
+            .0
+            .max(0) as u32
+    };
+    preview.model.compact_length = read(SHAPE_CONTROL_BASE as i32) as u16;
+    preview.model.collapsed_shoulder_radius = read(SHAPE_CONTROL_BASE as i32 + 1) as u8;
+    preview.model.expanded_shoulder_radius = read(SHAPE_CONTROL_BASE as i32 + 2) as u8;
+    preview.model.expanded_corner_radius = read(SHAPE_CONTROL_BASE as i32 + 3);
+    preview.model.retarget();
+    let _ = preview.renderer.draw(&preview.model, None, None, false);
+}
+unsafe fn position_controls(hwnd: HWND, theme: &Theme) {
+    let mut client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut client);
+    let top = (130. * theme.scale).round() as i32;
+    let bottom = client.bottom - (20. * theme.scale).round() as i32;
+    for &(control, x, base_y, width, height) in &theme.controls {
+        let y = base_y - theme.scroll;
+        let _ = SetWindowPos(
+            control,
+            None,
+            x,
+            y,
+            width,
+            height,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        );
+        if let Some((clip_top, clip_bottom)) = control_clip(y, height, top, bottom) {
+            let region = CreateRectRgn(0, clip_top, width, clip_bottom);
+            if SetWindowRgn(control, region, true) == 0 {
+                let _ = DeleteObject(region);
+            }
+            ShowWindow(control, SW_SHOWNOACTIVATE);
+        } else {
+            ShowWindow(control, SW_HIDE);
+        }
+    }
+    let _ = InvalidateRect(hwnd, None, false);
+}
+unsafe fn studio_text(dc: HDC, x: i32, y: i32, label: &str, color: COLORREF) {
+    SetTextColor(dc, color);
+    let text = label.encode_utf16().collect::<Vec<_>>();
+    let _ = TextOutW(dc, x, y, &text);
+}
+unsafe fn paint_studio(hwnd: HWND, theme: &Theme) {
+    let mut paint = PAINTSTRUCT::default();
+    let dc = BeginPaint(hwnd, &mut paint);
+    let mut client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut client);
+    FillRect(dc, &client, theme.background);
+    let px = |value: f32| (value * theme.scale).round() as i32;
+    let old_font = SelectObject(dc, theme.font);
+    SetBkMode(dc, TRANSPARENT);
+    studio_text(
+        dc,
+        px(32.),
+        px(22.),
+        "I S L E  /  S T U D I O",
+        COLORREF(0x00aaa49b),
+    );
+    studio_text(dc, px(32.), px(44.), "Isle Studio", STUDIO_TEXT);
+    studio_text(
+        dc,
+        px(32.),
+        px(75.),
+        "集中设置灵动岛的外观、播放和系统行为。",
+        COLORREF(0x00aaa49b),
+    );
+    let left = px(32.);
+    let top = px(130.);
+    let right = theme.panel_x - px(24.);
+    let bottom = top + px(468.);
+    let old_brush = SelectObject(dc, theme.stage);
+    let _ = RoundRect(dc, left, top, right, bottom, px(24.), px(24.));
+    studio_text(
+        dc,
+        left + px(20.),
+        top + px(18.),
+        "●  灵动岛预览",
+        COLORREF(0x00938f89),
+    );
+    let preview_width = px(300.).min(right - left - px(50.));
+    let preview_left = left + (right - left - preview_width) / 2;
+    let preview_top = top + px(76.);
+    if theme.preview.is_none() {
+        SelectObject(dc, theme.island);
+        let _ = RoundRect(
+            dc,
+            preview_left,
+            preview_top,
+            preview_left + preview_width,
+            preview_top + px(155.),
+            px(45.),
+            px(45.),
+        );
+        studio_text(
+            dc,
+            preview_left + px(26.),
+            preview_top + px(62.),
+            "♪    Midnight City",
+            COLORREF(0x00f7f6f5),
+        );
+    }
+    studio_text(
+        dc,
+        left + px(90.),
+        bottom - px(26.),
+        if theme.preview.is_some() {
+            "预览舞台 · 原生形状预览"
+        } else {
+            "预览舞台 · 暂不可用"
+        },
+        COLORREF(0x00938f89),
+    );
+    SelectObject(dc, theme.surface);
+    let _ = RoundRect(
+        dc,
+        theme.panel_x,
+        top,
+        client.right - px(32.),
+        client.bottom - px(20.),
+        px(16.),
+        px(16.),
+    );
+    let _ = SelectObject(dc, old_brush);
+    let _ = SelectObject(dc, old_font);
+    let _ = EndPaint(hwnd, &paint);
 }
 pub const SEARCH: usize = 102;
 pub const APPLY: usize = 104;
@@ -43,6 +222,23 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let _ = GetClientRect(hwnd, &mut r);
                 FillRect(HDC(wp.0 as isize), &r, (*theme).background);
                 return LRESULT(1);
+            }
+            WM_PAINT => {
+                paint_studio(hwnd, &*theme);
+                return LRESULT(0);
+            }
+            WM_MOUSEWHEEL => {
+                let wheel = (wp.0 >> 16) as i16 as i32;
+                let steps = wheel / WHEEL_DELTA as i32;
+                if steps != 0 {
+                    let next = ((*theme).scroll - steps * ((54. * (*theme).scale) as i32))
+                        .clamp(0, (*theme).max_scroll);
+                    if next != (*theme).scroll {
+                        (*(theme as *mut Theme)).scroll = next;
+                        position_controls(hwnd, &*theme);
+                    }
+                    return LRESULT(0);
+                }
             }
             WM_CTLCOLORSTATIC | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
                 let dc = HDC(wp.0 as isize);
@@ -73,7 +269,19 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let position = SendMessageW(track, WM_USER, WPARAM(0), LPARAM(0)).0;
             let text = HSTRING::from(format!("{}：{} px", SHAPE_NAMES[index], position));
             let _ = SetWindowTextW(GetDlgItem(hwnd, (SHAPE_LABEL_BASE + index) as i32), &text);
+            if !theme.is_null() {
+                redraw_preview(hwnd, &mut *(theme as *mut Theme));
+            }
             return LRESULT(0);
+        }
+    }
+    if msg == WM_COMMAND && !theme.is_null() {
+        let id = wp.0 & 0xffff;
+        let notify = wp.0 >> 16;
+        if (id == 211 || id == 213) && notify == CBN_SELCHANGE as usize
+            || (200..=207).contains(&id) && notify == BN_CLICKED as usize
+        {
+            redraw_preview(hwnd, &mut *(theme as *mut Theme));
         }
     }
     let action = match msg {
@@ -145,9 +353,9 @@ impl Settings {
         RegisterClassW(&wc);
         let scale = GetDpiForWindow(owner) as f32 / 96.;
         let px = |v: f32| (v * scale).round() as i32;
-        let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        let style = WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
         let mut rect = RECT {
-            right: px(540.),
+            right: px(1240.),
             bottom: px(930.),
             ..Default::default()
         };
@@ -190,7 +398,7 @@ impl Settings {
         let hwnd = CreateWindowExW(
             WS_EX_CONTROLPARENT,
             class,
-            w!("Isle 原生设置"),
+            w!("Isle Studio"),
             style,
             x,
             y,
@@ -221,9 +429,22 @@ impl Settings {
             shape_labels: vec![],
             fill_color: HWND(0),
         };
+        let panel_x = px(548.);
+        let content_y = 120.;
+        let mut client = RECT::default();
+        GetClientRect(hwnd, &mut client)?;
         let theme = Box::new(Theme {
             background: CreateSolidBrush(STUDIO_BG),
             surface: CreateSolidBrush(STUDIO_SURFACE),
+            stage: CreateSolidBrush(COLORREF(0x00ffffff)),
+            island: CreateSolidBrush(COLORREF(0)),
+            font: HFONT(0),
+            scale,
+            panel_x,
+            scroll: 0,
+            max_scroll: (px(930. + content_y) - client.bottom).max(0),
+            controls: Vec::new(),
+            preview: None,
         });
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(theme) as isize);
         if let Some(folder) = std::env::current_exe()
@@ -257,6 +478,51 @@ impl Settings {
                 w!("MiSans")
             },
         );
+        let theme = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Theme;
+        (*theme).font = value.font;
+        let preview_window = CreateWindowExW(
+            WS_EX_NOREDIRECTIONBITMAP,
+            w!("STATIC"),
+            w!(""),
+            WS_CHILD | WS_VISIBLE,
+            px(37.),
+            px(180.),
+            px(HOST),
+            px(395.),
+            hwnd,
+            None,
+            instance,
+            None,
+        );
+        if preview_window.0 != 0 {
+            if let Ok(mut renderer) = Renderer::new(preview_window, scale) {
+                renderer.opaque_preview = true;
+                let mut model = Model {
+                    reduced: true,
+                    media: Some(isle_core::MediaSnapshot {
+                        session: 1,
+                        title: "Midnight City".into(),
+                        artist: "M83 · Hurry Up, We're Dreaming".into(),
+                        playing: true,
+                        previous: true,
+                        play_pause: true,
+                        next: true,
+                        timeline: isle_core::Timeline {
+                            position_ms: 122_000,
+                            duration_ms: 244_000,
+                            received_at: 0.,
+                            position_known: true,
+                        },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
+                model.switch(Page::Music);
+                (*theme).preview = Some(Preview { renderer, model });
+            } else {
+                let _ = DestroyWindow(preview_window);
+            }
+        }
         let child = |class: PCWSTR,
                      text: &str,
                      id: usize,
@@ -271,8 +537,8 @@ impl Settings {
                 class,
                 &HSTRING::from(text),
                 WS_CHILD | WS_VISIBLE | style,
-                px(x),
-                px(y),
+                px(x) + panel_x,
+                px(studio_control_y(y, content_y)),
                 px(w),
                 px(h),
                 hwnd,
@@ -289,6 +555,21 @@ impl Settings {
                 WPARAM(value.font.0 as usize),
                 LPARAM(1),
             );
+            let theme = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Theme;
+            let mut rect = RECT::default();
+            GetWindowRect(control, &mut rect)?;
+            let mut top_left = POINT {
+                x: rect.left,
+                y: rect.top,
+            };
+            ScreenToClient(hwnd, &mut top_left);
+            (*theme).controls.push((
+                control,
+                top_left.x,
+                top_left.y,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+            ));
             Ok(control)
         };
         child(
@@ -814,6 +1095,9 @@ impl Settings {
             height,
             SWP_NOACTIVATE | SWP_NOZORDER,
         )?;
+        let theme = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Theme;
+        position_controls(hwnd, &*theme);
+        redraw_preview(hwnd, &mut *(theme as *mut Theme));
         let activate = IsWindowEnabled(owner).as_bool();
         ShowWindow(
             hwnd,
@@ -987,11 +1271,16 @@ impl Drop for Settings {
             if !theme.is_null() {
                 SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
             }
+            if !theme.is_null() {
+                (*theme).preview.take();
+            }
             let _ = DestroyWindow(self.hwnd);
             if !theme.is_null() {
                 let theme = Box::from_raw(theme);
                 let _ = DeleteObject(theme.background);
                 let _ = DeleteObject(theme.surface);
+                let _ = DeleteObject(theme.stage);
+                let _ = DeleteObject(theme.island);
             }
             for font in &self.private_fonts {
                 let _ = RemoveFontResourceExW(font, FR_PRIVATE.0, None);
@@ -1000,5 +1289,18 @@ impl Drop for Settings {
                 let _ = DeleteObject(self.font);
             }
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::{control_clip, studio_control_y};
+    #[test]
+    fn studio_sections_follow_reference_order_and_clip_at_panel_edges() {
+        assert_eq!(studio_control_y(560., 120.), 140.);
+        assert_eq!(studio_control_y(356., 120.), 516.);
+        assert_eq!(studio_control_y(18., 120.), 728.);
+        assert_eq!(control_clip(125, 30, 130, 900), Some((5, 30)));
+        assert_eq!(control_clip(890, 40, 130, 900), Some((0, 10)));
+        assert_eq!(control_clip(900, 40, 130, 900), None);
     }
 }
