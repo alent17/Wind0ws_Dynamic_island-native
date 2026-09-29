@@ -38,6 +38,8 @@ pub struct Model {
     pub weather: isle_core::weather::View,
     pub time_zone: String,
     pub spectrum: Option<SpectrumVisual>,
+    pub show_spectrum: bool,
+    pub spectrum_random: bool,
     pub audio: Option<isle_core::AudioSnapshot>,
     pub device_menu: bool,
     pub device_scroll: f32,
@@ -86,6 +88,8 @@ impl Default for Model {
             weather: isle_core::weather::View::default(),
             time_zone: "system".into(),
             spectrum: None,
+            show_spectrum: true,
+            spectrum_random: false,
             audio: None,
             device_menu: false,
             device_scroll: 0.,
@@ -326,13 +330,20 @@ impl Model {
             || self.pending_page.is_some()
             || (!self.reduced && self.content_animating)
             || self.disc_spinning()
-            || (self.media.is_none()
+            || (self.show_spectrum
+                && self.media.is_none()
                 && self.spectrum.is_none()
                 && !self.reduced
                 && self.playing
                 && (!self.expanded || self.page() == Page::Music))
             || (!self.reduced && self.expanded && self.page() == Page::Music && self.title_overflow)
-            || (!self.reduced
+            || (self.show_spectrum
+                && self.spectrum_random
+                && !self.reduced
+                && self.playing
+                && (!self.expanded || self.page() == Page::Music))
+            || (self.show_spectrum
+                && !self.reduced
                 && (!self.expanded || self.page() == Page::Music)
                 && self.spectrum.as_ref().is_some_and(SpectrumVisual::moving))
     }

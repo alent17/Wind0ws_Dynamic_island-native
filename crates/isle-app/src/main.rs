@@ -281,6 +281,7 @@ struct App {
     saving_window: Option<isize>,
     audio: Option<system_audio::AudioService>,
     spectrum: Option<spectrum::SpectrumService>,
+    live_spectrum: bool,
     media: Option<media::MediaService>,
     media_error: Option<String>,
     window: HWND,
@@ -722,7 +723,9 @@ impl App {
         }
     }
     fn spectrum_visible(&self) -> bool {
-        !self.suspended
+        self.model.show_spectrum
+            && !self.model.spectrum_random
+            && !self.suspended
             && (!self.model.expanded || self.model.page() == Page::Music)
             && self.model.media.as_ref().is_none_or(|media| media.playing)
     }
@@ -1103,6 +1106,23 @@ impl App {
                                 }
                             }
                             configuration::Edit::Appearance(appearance) => {
+                                self.model.show_spectrum = appearance.show_spectrum;
+                                self.model.spectrum_random = appearance.spectrum_mode == "random";
+                                if self.live_spectrum
+                                    && appearance.show_spectrum
+                                    && !self.model.spectrum_random
+                                {
+                                    self.model
+                                        .spectrum
+                                        .get_or_insert_with(SpectrumVisual::default);
+                                    if self.spectrum.is_none() {
+                                        self.spectrum =
+                                            spectrum::SpectrumService::new(self.window).ok();
+                                    }
+                                } else {
+                                    self.spectrum = None;
+                                    self.model.spectrum = None;
+                                }
                                 self.edge_position = appearance.edge_position;
                                 self.model.attached = appearance.style == "edge";
                                 self.model.edge = match appearance.edge.as_str() {
@@ -1592,12 +1612,17 @@ impl App {
                 }
             }
             if let Some(service) = &self.spectrum {
-                let visual = self.model.spectrum.as_ref().unwrap();
+                let (failed, peak) = self.model.spectrum.as_ref().map_or((false, 0.), |visual| {
+                    (
+                        visual.failed,
+                        visual.values.iter().copied().fold(0., f32::max),
+                    )
+                });
                 text.push_str(&format!(
                     ",{},\"spectrumError\":{},\"spectrumPeak\":{}",
                     service.diagnostics(),
-                    visual.failed,
-                    visual.values.iter().copied().fold(0., f32::max)
+                    failed,
+                    peak
                 ));
             }
             if let Some(service) = &self.media {
@@ -1735,10 +1760,14 @@ unsafe fn run() -> Result<()> {
             city: configuration.city.clone(),
             ..Default::default()
         },
-        spectrum: args
+        spectrum: (args
             .iter()
             .any(|a| a == "--live-spectrum" || a == "--live-media")
+            && appearance.show_spectrum
+            && appearance.spectrum_mode == "realtime")
             .then(SpectrumVisual::default),
+        show_spectrum: appearance.show_spectrum,
+        spectrum_random: appearance.spectrum_mode == "random",
         audio: args
             .iter()
             .any(|a| a == "--live-audio" || a == "--live-media")
@@ -1897,6 +1926,9 @@ unsafe fn run() -> Result<()> {
         } else {
             None
         },
+        live_spectrum: args
+            .iter()
+            .any(|a| a == "--live-spectrum" || a == "--live-media"),
         audio: if model.audio.is_some() && !test_fixture {
             Some(system_audio::AudioService::new(window).map_err(|_| Error::from(E_FAIL))?)
         } else {

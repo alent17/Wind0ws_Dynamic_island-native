@@ -30,9 +30,9 @@ fn studio_control_y(y: f32, content_y: f32) -> f32 {
     if y >= 560. {
         y - 460. + content_y
     } else if y >= 356. {
-        y + 120. + content_y
+        y + 304. + content_y
     } else {
-        y + 670. + content_y
+        y + 854. + content_y
     }
 }
 fn control_clip(y: i32, height: i32, top: i32, bottom: i32) -> Option<(i32, i32)> {
@@ -139,6 +139,8 @@ unsafe fn redraw_preview(hwnd: HWND, theme: &mut Theme) {
         _ => {}
     }
     preview.model.hovered = theme.preview_mode == 1;
+    preview.model.show_spectrum = checked(251);
+    preview.model.spectrum_random = checked(253);
     preview.model.tool_mask = std::array::from_fn(|i| checked(201 + i as i32));
     if !checked(200) {
         preview.model.tool_mask = [false; 7];
@@ -275,7 +277,7 @@ unsafe fn paint_studio(hwnd: HWND, theme: &Theme) {
     let panel_bottom = client.bottom - px(20.);
     let _ = IntersectClipRect(dc, theme.panel_x, top, panel_right, panel_bottom);
     SelectObject(dc, theme.surface);
-    for (card_top, card_bottom) in [(130., 580.), (588., 790.), (800., 1130.)] {
+    for (card_top, card_bottom) in [(130., 580.), (588., 760.), (772., 974.), (986., 1316.)] {
         let card_top = px(card_top) - theme.scroll;
         let card_bottom = px(card_bottom) - theme.scroll;
         if card_bottom > top && card_top < panel_bottom {
@@ -380,7 +382,8 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             return LRESULT(0);
         }
         if (id == 211 || id == 213) && notify == CBN_SELCHANGE as usize
-            || (200..=207).contains(&id) && notify == BN_CLICKED as usize
+            || ((200..=207).contains(&id) || (251..=253).contains(&id))
+                && notify == BN_CLICKED as usize
         {
             redraw_preview(hwnd, &mut *(theme as *mut Theme));
         }
@@ -541,7 +544,7 @@ impl Settings {
             scale,
             panel_x,
             scroll: 0,
-            max_scroll: (px(1010. + content_y) - client.bottom).max(0),
+            max_scroll: (px(1316.) - client.bottom).max(0),
             controls: Vec::new(),
             preview: None,
             preview_mode: 2,
@@ -627,7 +630,7 @@ impl Settings {
                 &HSTRING::from(text),
                 WS_CHILD | WS_VISIBLE | style,
                 px(x) + panel_x,
-                px(if (239..244).contains(&id) {
+                px(if (239..244).contains(&id) || (250..254).contains(&id) {
                     y + content_y
                 } else {
                     studio_control_y(y, content_y)
@@ -1205,6 +1208,59 @@ impl Settings {
             110.,
             28.,
         )?;
+        child(
+            w!("STATIC"),
+            "频谱",
+            250,
+            WINDOW_STYLE(0),
+            20.,
+            488.,
+            480.,
+            22.,
+        )?;
+        let show_spectrum = child(
+            w!("BUTTON"),
+            "显示频谱",
+            251,
+            WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
+            20.,
+            526.,
+            220.,
+            28.,
+        )?;
+        SendMessageW(
+            show_spectrum,
+            BM_SETCHECK,
+            WPARAM(usize::from(appearance.show_spectrum)),
+            LPARAM(0),
+        );
+        for (index, (label, mode)) in [("实时声音", "realtime"), ("随机跳动", "random")]
+            .into_iter()
+            .enumerate()
+        {
+            let choice = child(
+                w!("BUTTON"),
+                label,
+                252 + index,
+                WS_TABSTOP
+                    | WINDOW_STYLE(BS_AUTORADIOBUTTON as u32)
+                    | if index == 0 {
+                        WS_GROUP
+                    } else {
+                        WINDOW_STYLE(0)
+                    },
+                20. + index as f32 * 250.,
+                568.,
+                230.,
+                28.,
+            )?;
+            SendMessageW(
+                choice,
+                BM_SETCHECK,
+                WPARAM(usize::from(appearance.spectrum_mode == mode)),
+                LPARAM(0),
+            );
+        }
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
@@ -1317,6 +1373,26 @@ impl Settings {
             expanded_corner_radius: u32::try_from(*shape_values.get(3)?).ok()?,
             floating_fill_color: fill_color,
             floating_use_album_color: album_color,
+            show_spectrum: SendMessageW(
+                GetDlgItem(self.hwnd, 251),
+                BM_GETCHECK,
+                WPARAM(0),
+                LPARAM(0),
+            )
+            .0 == 1,
+            spectrum_mode: if SendMessageW(
+                GetDlgItem(self.hwnd, 253),
+                BM_GETCHECK,
+                WPARAM(0),
+                LPARAM(0),
+            )
+            .0 == 1
+            {
+                "random"
+            } else {
+                "realtime"
+            }
+            .into(),
         })
     }
     unsafe fn fill_color_text(&self) -> String {
@@ -1336,10 +1412,20 @@ impl Settings {
             EnableWindow(control, !saving);
         }
         EnableWindow(self.apply, !saving && !self.cities.is_empty());
-        for id in (200..211).chain([211, 213, APPLY_CONTROLS, APPLY_APPEARANCE, PLAYERS]) {
+        for id in (200..211).chain([
+            211,
+            213,
+            217,
+            218,
+            251,
+            252,
+            253,
+            APPLY_CONTROLS,
+            APPLY_APPEARANCE,
+            PLAYERS,
+        ]) {
             EnableWindow(GetDlgItem(self.hwnd, id as i32), !saving);
         }
-        EnableWindow(GetDlgItem(self.hwnd, 217), !saving);
         EnableWindow(self.edge_position, !saving);
         EnableWindow(GetDlgItem(self.hwnd, 215), !saving);
         EnableWindow(GetDlgItem(self.hwnd, 216), !saving);
@@ -1427,8 +1513,8 @@ mod tests {
     #[test]
     fn studio_sections_follow_reference_order_and_clip_at_panel_edges() {
         assert_eq!(studio_control_y(560., 120.), 220.);
-        assert_eq!(studio_control_y(356., 120.), 596.);
-        assert_eq!(studio_control_y(18., 120.), 808.);
+        assert_eq!(studio_control_y(356., 120.), 780.);
+        assert_eq!(studio_control_y(18., 120.), 992.);
         assert_eq!(control_clip(125, 30, 130, 900), Some((5, 30)));
         assert_eq!(control_clip(890, 40, 130, 900), Some((0, 10)));
         assert_eq!(control_clip(900, 40, 130, 900), None);

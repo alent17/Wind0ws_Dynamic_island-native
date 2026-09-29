@@ -1160,6 +1160,9 @@ impl Renderer {
         Ok(())
     }
     unsafe fn spectrum(&self, x: f32, y: f32, m: &Model) {
+        if !m.show_spectrum {
+            return;
+        }
         let palette = self
             .cover
             .as_ref()
@@ -1167,7 +1170,15 @@ impl Renderer {
             .unwrap_or([[0.53; 3], [0.9; 3]]);
         for i in 0..6 {
             let sample = palette[if i >= 3 { 1 } else { 0 }];
-            let h = if let Some(spectrum) = &m.spectrum {
+            let h = if m.spectrum_random {
+                if !m.playing {
+                    2.
+                } else if m.reduced {
+                    8.
+                } else {
+                    3. + ((m.now as f32 * 4. + i as f32 * 1.3).sin() + 1.) * 7.
+                }
+            } else if let Some(spectrum) = &m.spectrum {
                 2. + 15. * spectrum.values[i].clamp(0., 1.)
             } else if !m.playing || m.media.is_some() {
                 2.

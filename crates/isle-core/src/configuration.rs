@@ -33,6 +33,8 @@ pub struct Appearance {
     pub expanded_corner_radius: u32,
     pub floating_fill_color: String,
     pub floating_use_album_color: bool,
+    pub show_spectrum: bool,
+    pub spectrum_mode: String,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -46,6 +48,8 @@ impl Default for Appearance {
             expanded_corner_radius: 45,
             floating_fill_color: "#28323c".into(),
             floating_use_album_color: true,
+            show_spectrum: true,
+            spectrum_mode: "realtime".into(),
         }
     }
 }
@@ -204,9 +208,18 @@ impl Document {
                 .unwrap_or("#28323c")
                 .into(),
             floating_use_album_color: self.0["floatingUseAlbumColor"].as_bool().unwrap_or(true),
+            show_spectrum: self.0["showSpectrum"].as_bool().unwrap_or(true),
+            spectrum_mode: self.0["spectrumMode"]
+                .as_str()
+                .filter(|mode| matches!(*mode, "realtime" | "random"))
+                .unwrap_or("realtime")
+                .into(),
         }
     }
     pub fn set_appearance(&mut self, appearance: &Appearance) -> Result<(), String> {
+        if !matches!(appearance.spectrum_mode.as_str(), "realtime" | "random") {
+            return Err("频谱动画来源无效".into());
+        }
         if !valid_hex_color(&appearance.floating_fill_color) {
             return Err("背景色必须是 #RRGGBB 格式".into());
         }
@@ -251,6 +264,12 @@ impl Document {
         self.0.insert(
             "floatingUseAlbumColor".into(),
             Value::Bool(appearance.floating_use_album_color),
+        );
+        self.0
+            .insert("showSpectrum".into(), Value::Bool(appearance.show_spectrum));
+        self.0.insert(
+            "spectrumMode".into(),
+            Value::String(appearance.spectrum_mode.clone()),
         );
         Ok(())
     }
@@ -377,6 +396,8 @@ mod tests {
         appearance.expanded_corner_radius = 70;
         appearance.floating_fill_color = "#102030".into();
         appearance.floating_use_album_color = false;
+        appearance.show_spectrum = false;
+        appearance.spectrum_mode = "random".into();
         doc.set_appearance(&appearance).unwrap();
         let loaded = Document::parse(&doc.bytes().unwrap()).unwrap();
         assert_eq!(loaded.appearance(), appearance);
