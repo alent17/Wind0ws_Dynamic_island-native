@@ -1690,7 +1690,25 @@ unsafe fn run() -> Result<()> {
     CoInitializeEx(None, COINIT_APARTMENTTHREADED)?;
     let _fonts = PrivateFonts::load();
     let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    // Normal launches use real Windows media. Existing isolated diagnostic
+    // scenarios keep their fixture data unless they explicitly request live data.
+    let diagnostic = args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--demo" | "--benchmark" | "--test-fixture" | "--scripted" | "--log"
+        )
+    });
+    if !diagnostic
+        && !args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--live-media" | "--live-audio" | "--live-spectrum"
+            )
+        })
+    {
+        args.push("--live-media".into());
+    }
     let instance = GetModuleHandleW(None)?;
     let class = w!("IsleNativePrototype");
     let wc = WNDCLASSW {
@@ -1712,7 +1730,7 @@ unsafe fn run() -> Result<()> {
                 WS_EX_TOOLWINDOW
             },
         class,
-        w!("Isle Native Prototype"),
+        w!("Isle Native"),
         WS_POPUP,
         0,
         0,
@@ -1988,10 +2006,10 @@ unsafe fn run() -> Result<()> {
     }
     ShowWindow(window, SW_SHOWNOACTIVATE);
     app.apply_topmost()?;
-    if test_fixture && args.iter().any(|arg| arg == "--open-floating") {
+    if args.iter().any(|arg| arg == "--open-floating") {
         app.action(Hit::Tool(2));
     }
-    if test_fixture && args.iter().any(|arg| arg == "--open-timer") {
+    if args.iter().any(|arg| arg == "--open-timer") {
         app.open_timer_window();
     }
     let mut msg = MSG::default();
@@ -2082,7 +2100,7 @@ unsafe fn run() -> Result<()> {
 }
 fn main() {
     if let Err(error) = unsafe { run() } {
-        let message = format!("Isle native prototype: {error}");
+        let message = format!("Isle Native: {error}");
         let _ = std::fs::write(std::env::temp_dir().join("isle-native-error.log"), &message);
         unsafe {
             MessageBoxW(
