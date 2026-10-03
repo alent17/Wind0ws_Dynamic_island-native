@@ -22,7 +22,10 @@ impl PlayerKind {
     /// Unknown and empty values safely remain on the generic GSMTC path.
     pub fn from_session_identity(identity: &str) -> Self {
         let identity = identity.to_ascii_lowercase();
-        if identity.contains("cloudmusic") || identity.contains("netease") {
+        if identity
+            .split(|character: char| !character.is_ascii_alphanumeric())
+            .any(|part| matches!(part, "cloudmusic" | "neteasecloudmusic" | "neteasemusic"))
+        {
             Self::NetEaseCloudMusic
         } else if identity.contains("spotify") {
             Self::Spotify
@@ -68,6 +71,7 @@ mod tests {
         let cases = [
             ("cloudmusic.exe", PlayerKind::NetEaseCloudMusic),
             ("com.netease.cloudmusic", PlayerKind::NetEaseCloudMusic),
+            ("NeteaseMusic.exe", PlayerKind::NetEaseCloudMusic),
             ("Spotify.exe", PlayerKind::Spotify),
             ("QQMusic", PlayerKind::QqMusic),
             ("MSEdge", PlayerKind::MicrosoftEdge),
@@ -85,6 +89,18 @@ mod tests {
         assert_eq!(PlayerKind::from_session_identity(""), PlayerKind::Other);
         assert_eq!(
             PlayerKind::from_session_identity("LocalPlayer.exe"),
+            PlayerKind::Other
+        );
+        assert_eq!(
+            PlayerKind::from_session_identity("com.netease.game"),
+            PlayerKind::Other
+        );
+        assert_eq!(
+            PlayerKind::from_session_identity("netease"),
+            PlayerKind::Other
+        );
+        assert_eq!(
+            PlayerKind::from_session_identity("MyCloudMusicFanApp.exe"),
             PlayerKind::Other
         );
         assert_eq!(
