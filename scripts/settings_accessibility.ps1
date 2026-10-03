@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 public static class SettingsUiaNativeProbe {
     delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -29,6 +30,8 @@ public static class SettingsUiaNativeProbe {
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint sourceThread,uint targetThread,bool attach);
     [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr GetFocus();
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetKeyboardState(byte[] state);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool SetKeyboardState(byte[] state);
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Rect { public int left,top,right,bottom; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct MonitorInfo {
         public int size; public Rect monitor; public Rect work; public uint flags;
@@ -111,6 +114,34 @@ public static class SettingsUiaNativeProbe {
         uint message=keyUp?0x0101u:0x0100u;
         if(!PostMessage(hwnd,message,(IntPtr)virtualKey,IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not post a key to the owned fixture control");
+    }
+    public static IntPtr PostOwnedShiftTab(IntPtr hwnd,int pid) {
+        if(hwnd==IntPtr.Zero || !IsWindow(hwnd) || OwnerPid(hwnd)!=pid)
+            throw new InvalidOperationException("Shift+Tab target is not a live HWND owned by the fixture process");
+        uint ownerPid; uint targetThread=GetWindowThreadProcessId(hwnd,out ownerPid); uint currentThread=GetCurrentThreadId();
+        if(ownerPid!=(uint)pid || targetThread==0) throw new InvalidOperationException("Shift+Tab target thread does not belong to the fixture process");
+        bool attached=AttachThreadInput(currentThread,targetThread,true);
+        if(!attached) throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not attach the isolated UIA input queues for Shift+Tab");
+        byte[] state=new byte[256];
+        byte[] original=(byte[])state.Clone();
+        try {
+            if(!GetKeyboardState(state)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetKeyboardState failed for Shift+Tab");
+            original=(byte[])state.Clone();
+            state[0x10]=(byte)(state[0x10]|0x80);
+            if(!SetKeyboardState(state)) throw new Win32Exception(Marshal.GetLastWin32Error(),"SetKeyboardState failed for Shift+Tab");
+            if(!PostMessage(hwnd,0x0100u,(IntPtr)0x09,IntPtr.Zero) || !PostMessage(hwnd,0x0101u,(IntPtr)0x09,IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not post Shift+Tab to the owned fixture control");
+            IntPtr before=hwnd;
+            for(int attempt=0;attempt<100;attempt++) {
+                IntPtr focus=GetFocus();
+                if(focus!=IntPtr.Zero && focus!=before && OwnerPid(focus)==pid) return focus;
+                Thread.Sleep(10);
+            }
+            return GetFocus();
+        } finally {
+            SetKeyboardState(original);
+            AttachThreadInput(currentThread,targetThread,false);
+        }
     }
     public static string MonitorDevice(IntPtr hwnd) {
         Rect rect; if(!GetWindowRect(hwnd,out rect)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetWindowRect failed");
@@ -562,8 +593,10 @@ try {
         function Send-OwnedKey([string]$Keys,[IntPtr]$Target) {
             if($null -eq $Target -or $Target.ToInt64() -eq 0){throw "Refusing $Keys because the focused native HWND is missing"}
             if([SettingsUiaNativeProbe]::OwnerPid($Target) -ne $owned.Id){throw "Refusing $Keys because target HWND is not owned by the fixture"}
+            $focusAfterKey=[IntPtr]::Zero
             switch($Keys){
                 '{TAB}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x09,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x09,$true) }
+                '{SHIFT+TAB}' { $focusAfterKey=[SettingsUiaNativeProbe]::PostOwnedShiftTab($Target,$owned.Id) }
                 '{SPACE}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x20,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x20,$true) }
                 '{F4}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x73,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x73,$true) }
                 '{ESC}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x1B,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x1B,$true) }
@@ -573,7 +606,7 @@ try {
                 default { throw "Unsupported isolated keyboard test key: $Keys" }
             }
             Start-Sleep -Milliseconds 100
-            $afterHwnd=[SettingsUiaNativeProbe]::FocusedOwnedControl($settingsHwnd,$owned.Id,$settingsClass)
+            $afterHwnd=if($focusAfterKey -ne [IntPtr]::Zero){$focusAfterKey}else{[SettingsUiaNativeProbe]::FocusedOwnedControl($settingsHwnd,$owned.Id,$settingsClass)}
             $afterKey=[System.Windows.Automation.AutomationElement]::FromHandle($afterHwnd)
             if($afterKey.Current.ProcessId -ne $owned.Id){throw 'Keyboard focus escaped the owned Settings fixture process'}
             return $afterKey
@@ -590,6 +623,9 @@ try {
         $tabFocus=Send-OwnedKey -Keys '{TAB}' -Target $focusBeforeHwnd
         if($tabFocus.Current.AutomationId -eq '208'){throw 'Tab did not advance Settings keyboard focus'}
         $interactionEvidence+=,[ordered]@{action='Keyboard Tab';from='208';to=$tabFocus.Current.AutomationId}
+        $shiftTabFocus=Send-OwnedKey -Keys '{SHIFT+TAB}' -Target ([IntPtr]$tabFocus.Current.NativeWindowHandle)
+        if($shiftTabFocus.Current.AutomationId -ne '208'){throw "Shift+Tab did not return focus to Settings control 208: $($shiftTabFocus.Current.AutomationId)"}
+        $interactionEvidence+=,[ordered]@{action='Keyboard Shift+Tab';from=$tabFocus.Current.AutomationId;to=$shiftTabFocus.Current.AutomationId}
 
         $keyboardToggleHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl($keyboardToggleHwnd,$owned.Id,$settingsHwnd,$settingsClass)
         Start-Sleep -Milliseconds 80
@@ -634,6 +670,14 @@ try {
         $keyboardRestored=@((Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
         if($keyboardRestored.Count -ne 1 -or $keyboardRestored[0].Current.AutomationId -ne $keyboardInitialId){throw 'Left Arrow did not restore the initial Settings radio selection'}
         $interactionEvidence+=,[ordered]@{action='Keyboard Left/Right';initial=$keyboardInitialId;changed=$keyboardChanged[0].Current.AutomationId;restored=$keyboardRestored[0].Current.AutomationId}
+
+        $weatherNav=Wait-SettingsElement '304'
+        $weatherNavHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl([IntPtr]$weatherNav.Current.NativeWindowHandle,$owned.Id,$settingsHwnd,$settingsClass)
+        [void](Send-OwnedKey -Keys '{ENTER}' -Target $weatherNavHwnd)
+        $weatherQueryAfterEnter=Wait-SettingsElement '101'
+        if($weatherQueryAfterEnter.Current.IsOffscreen){throw 'Enter did not activate the focused Weather navigation button'}
+        $interactionEvidence+=,[ordered]@{action='Keyboard Enter';automationId='304';pageControl='101';visible=(-not $weatherQueryAfterEnter.Current.IsOffscreen)}
+        (Get-SettingsPattern (Wait-SettingsElement '301') ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
     }
     $final=Get-FreshDiagnostic $mainHwnd $owned.Id $logPath $mainClass
     $evidence=[ordered]@{

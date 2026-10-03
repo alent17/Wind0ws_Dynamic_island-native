@@ -2793,6 +2793,15 @@ impl Settings {
             let _ = PostMessageW(self.hwnd, WM_COMMAND, WPARAM(command), LPARAM(0));
             return true;
         }
+        if msg.message == WM_KEYDOWN && msg.wParam.0 == VK_RETURN.0 as usize {
+            let focused = GetFocus();
+            let button_type =
+                (GetWindowLongW(focused, GWL_STYLE) as u32 & BS_TYPEMASK as u32) as i32;
+            if matches!(button_type, BS_PUSHBUTTON | BS_DEFPUSHBUTTON) {
+                let _ = SendMessageW(focused, BM_CLICK, WPARAM(0), LPARAM(0));
+                return true;
+            }
+        }
         IsDialogMessageW(self.hwnd, msg).as_bool()
     }
 }
