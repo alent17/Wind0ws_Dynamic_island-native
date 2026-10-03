@@ -36,6 +36,31 @@ fn gsmtc_action_enabled(snapshot: &MediaSnapshot, action: Action) -> bool {
     }
 }
 
+type ControllerResult = std::result::Result<(), String>;
+
+trait GsmTcController {
+    fn toggle(&self) -> ControllerResult;
+    fn previous(&self) -> ControllerResult;
+    fn next(&self) -> ControllerResult;
+    fn seek(&self, position_ms: u64) -> ControllerResult;
+}
+
+fn dispatch_gsmtc_action(
+    snapshot: &MediaSnapshot,
+    action: Action,
+    controller: &impl GsmTcController,
+) -> Option<ControllerResult> {
+    if !gsmtc_action_enabled(snapshot, action) {
+        return None;
+    }
+    Some(match action {
+        Action::Toggle => controller.toggle(),
+        Action::Previous => controller.previous(),
+        Action::Next => controller.next(),
+        Action::Seek(position) => controller.seek(position.min(snapshot.timeline.duration_ms)),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,6 +100,59 @@ mod tests {
         };
         assert!(!gsmtc_action_enabled(&unsupported, Action::Toggle));
         assert!(!gsmtc_action_enabled(&unsupported, Action::Next));
+    }
+
+    #[derive(Default)]
+    struct RecordingController(std::sync::Mutex<Vec<&'static str>>);
+
+    impl GsmTcController for RecordingController {
+        fn toggle(&self) -> ControllerResult {
+            self.0.lock().unwrap().push("toggle");
+            Ok(())
+        }
+
+        fn previous(&self) -> ControllerResult {
+            self.0.lock().unwrap().push("previous");
+            Ok(())
+        }
+
+        fn next(&self) -> ControllerResult {
+            self.0.lock().unwrap().push("next");
+            Ok(())
+        }
+
+        fn seek(&self, _position_ms: u64) -> ControllerResult {
+            self.0.lock().unwrap().push("seek");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn netease_next_and_previous_dispatch_only_to_the_gsmtc_controller() {
+        let snapshot = MediaSnapshot {
+            source: "CloudMusic.exe".into(),
+            previous: true,
+            next: true,
+            ..Default::default()
+        };
+        let controller = RecordingController::default();
+
+        assert!(dispatch_gsmtc_action(&snapshot, Action::Next, &controller)
+            .unwrap()
+            .is_ok());
+        assert!(
+            dispatch_gsmtc_action(&snapshot, Action::Previous, &controller)
+                .unwrap()
+                .is_ok()
+        );
+        assert_eq!(*controller.0.lock().unwrap(), ["next", "previous"]);
+
+        let unsupported = MediaSnapshot {
+            next: false,
+            ..snapshot
+        };
+        assert!(dispatch_gsmtc_action(&unsupported, Action::Next, &controller).is_none());
+        assert_eq!(*controller.0.lock().unwrap(), ["next", "previous"]);
     }
 }
 enum Command {
@@ -245,6 +323,47 @@ fn wait<T: RuntimeType>(operation: IAsyncOperation<T>, shared: &Shared) -> Resul
             return operation.GetResults();
         }
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+struct LiveGsmTcController<'a> {
+    session: &'a GlobalSystemMediaTransportControlsSession,
+    shared: &'a Shared,
+}
+
+impl LiveGsmTcController<'_> {
+    fn finish(&self, operation: Result<IAsyncOperation<bool>>) -> ControllerResult {
+        operation
+            .and_then(|operation| wait(operation, self.shared))
+            .and_then(|accepted| {
+                if accepted {
+                    Ok(())
+                } else {
+                    Err(Error::from(E_FAIL))
+                }
+            })
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl GsmTcController for LiveGsmTcController<'_> {
+    fn toggle(&self) -> ControllerResult {
+        self.finish(self.session.TryTogglePlayPauseAsync())
+    }
+
+    fn previous(&self) -> ControllerResult {
+        self.finish(self.session.TrySkipPreviousAsync())
+    }
+
+    fn next(&self) -> ControllerResult {
+        self.finish(self.session.TrySkipNextAsync())
+    }
+
+    fn seek(&self, position_ms: u64) -> ControllerResult {
+        self.finish(
+            self.session
+                .TryChangePlaybackPositionAsync((position_ms * 10_000) as i64),
+        )
     }
 }
 struct Session {
@@ -485,27 +604,12 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                 .as_ref()
                 .filter(|s| s.snapshot.session == target && when.elapsed() < Duration::from_secs(2))
             {
-                if !gsmtc_action_enabled(&s.snapshot, action) {
-                    continue;
-                }
-                let op = match action {
-                    Action::Toggle => s.value.TryTogglePlayPauseAsync(),
-                    Action::Previous => s.value.TrySkipPreviousAsync(),
-                    Action::Next => s.value.TrySkipNextAsync(),
-                    Action::Seek(position) => {
-                        let position = position.min(s.snapshot.timeline.duration_ms);
-                        s.value
-                            .TryChangePlaybackPositionAsync((position * 10_000) as i64)
-                    }
+                let controller = LiveGsmTcController {
+                    session: &s.value,
+                    shared,
                 };
-                if let Err(e) = op.and_then(|op| wait(op, shared)).and_then(|accepted| {
-                    if accepted {
-                        Ok(())
-                    } else {
-                        Err(Error::from(E_FAIL))
-                    }
-                }) {
-                    error = Some(e.to_string());
+                if let Some(result) = dispatch_gsmtc_action(&s.snapshot, action, &controller) {
+                    error = result.err();
                 }
             }
         }
