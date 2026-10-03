@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 mod accessibility;
 mod artwork;
+pub mod cdp;
 mod clock;
 mod configuration;
 mod floating_player;
