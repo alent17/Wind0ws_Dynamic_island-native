@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.29**（Cargo / Windows 文件版本 `0.29.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.30**（Cargo / Windows 文件版本 `0.30.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -59,6 +59,8 @@ cargo test --workspace
 0.28 网易云 CloudMusic / NetEaseMusic 会话标识采用精确段匹配；其他网易系应用、未知标识和相似名称回退为通用播放器，不进入网易云专用处理。
 
 0.29 增加限时限长的本机 CDP `/json/version` 探测，只连接 `127.0.0.1`；并验证 Chromium 返回的 WebSocket 地址必须指向配置端口上的本机浏览器调试端点。
+
+0.30 建立受限 CDP WebSocket 传输：仅本机握手、请求体/响应体限长、超时控制、请求 ID 匹配与事件忽略。尚未接入具体网易云模式或 Like 操作。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

@@ -6,11 +6,19 @@ use std::{
     num::NonZeroU16,
     time::Duration,
 };
+use tungstenite::{
+    client::{client_with_config, IntoClientRequest},
+    handshake::HandshakeError,
+    protocol::WebSocketConfig,
+    Message, WebSocket,
+};
 
 const LOOPBACK: Ipv4Addr = Ipv4Addr::LOCALHOST;
 const DEFAULT_REMOTE_DEBUGGING_PORT: u16 = 9223;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_BODY_BYTES: usize = 32 * 1024;
+const MAX_COMMAND_BYTES: usize = 16 * 1024;
+const MAX_UNMATCHED_MESSAGES: usize = 16;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
 const IO_TIMEOUT: Duration = Duration::from_millis(750);
 
@@ -27,6 +35,10 @@ pub enum CdpError {
     Io(std::io::Error),
     InvalidResponse,
     UnsafeWebSocketEndpoint,
+    InvalidCommand,
+    TimedOut,
+    Protocol,
+    WebSocket(tungstenite::Error),
 }
 
 impl std::fmt::Display for CdpError {
@@ -36,6 +48,10 @@ impl std::fmt::Display for CdpError {
             Self::Io(_) => formatter.write_str("本机 CDP 服务不可用"),
             Self::InvalidResponse => formatter.write_str("本机 CDP 响应无效"),
             Self::UnsafeWebSocketEndpoint => formatter.write_str("CDP 返回了非本机 WebSocket 地址"),
+            Self::InvalidCommand => formatter.write_str("CDP 命令无效或超出长度限制"),
+            Self::TimedOut => formatter.write_str("本机 CDP 命令超时"),
+            Self::Protocol => formatter.write_str("本机 CDP 返回了错误响应"),
+            Self::WebSocket(_) => formatter.write_str("本机 CDP WebSocket 连接失败"),
         }
     }
 }
@@ -44,6 +60,7 @@ impl std::error::Error for CdpError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::WebSocket(error) => Some(error),
             _ => None,
         }
     }
@@ -52,6 +69,20 @@ impl std::error::Error for CdpError {
 impl From<std::io::Error> for CdpError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<tungstenite::Error> for CdpError {
+    fn from(error: tungstenite::Error) -> Self {
+        if matches!(
+            &error,
+            tungstenite::Error::Io(io_error)
+                if matches!(io_error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)
+        ) {
+            Self::TimedOut
+        } else {
+            Self::WebSocket(error)
+        }
     }
 }
 
@@ -105,6 +136,88 @@ impl LocalCdpClient {
             protocol_version: protocol_version.to_string(),
             websocket_debugger_url: websocket_debugger_url.to_string(),
         })
+    }
+
+    /// Discovers the browser endpoint and opens a bounded CDP WebSocket.
+    /// The endpoint is revalidated and the socket connects directly to IPv4
+    /// loopback without resolving a host from the browser response.
+    pub fn connect(self) -> Result<CdpConnection, CdpError> {
+        let version = self.version()?;
+        let path = validate_websocket_endpoint(&version.websocket_debugger_url, self.port())?;
+        let address = SocketAddr::V4(SocketAddrV4::new(LOOPBACK, self.port()));
+        let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
+        stream.set_read_timeout(Some(IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(IO_TIMEOUT))?;
+        let endpoint = format!("ws://127.0.0.1:{}{path}", self.port());
+        let request = endpoint
+            .into_client_request()
+            .map_err(CdpError::WebSocket)?;
+        let config = WebSocketConfig::default()
+            .read_buffer_size(4096)
+            .write_buffer_size(0)
+            .max_write_buffer_size(MAX_COMMAND_BYTES + 1024)
+            .max_message_size(Some(MAX_BODY_BYTES))
+            .max_frame_size(Some(MAX_BODY_BYTES));
+        let (socket, _) =
+            client_with_config(request, stream, Some(config)).map_err(|error| match error {
+                HandshakeError::Failure(error) => CdpError::from(error),
+                HandshakeError::Interrupted(_) => CdpError::Protocol,
+            })?;
+        Ok(CdpConnection { socket, next_id: 1 })
+    }
+}
+
+pub struct CdpConnection {
+    socket: WebSocket<TcpStream>,
+    next_id: u64,
+}
+
+impl CdpConnection {
+    /// Sends one CDP method and returns its `result`, ignoring unrelated events.
+    pub fn request(
+        &mut self,
+        method: &str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, CdpError> {
+        if method.is_empty()
+            || method.len() > 128
+            || !method
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
+            return Err(CdpError::InvalidCommand);
+        }
+        let id = self.next_id;
+        self.next_id = id.checked_add(1).ok_or(CdpError::InvalidCommand)?;
+        let request = serde_json::json!({"id":id,"method":method,"params":params});
+        let request = serde_json::to_string(&request).map_err(|_| CdpError::InvalidCommand)?;
+        if request.len() > MAX_COMMAND_BYTES {
+            return Err(CdpError::InvalidCommand);
+        }
+        self.socket.send(Message::Text(request.into()))?;
+
+        for _ in 0..=MAX_UNMATCHED_MESSAGES {
+            let response = self.socket.read()?;
+            let Message::Text(response) = response else {
+                if response.is_close() {
+                    return Err(CdpError::Protocol);
+                }
+                continue;
+            };
+            let response: serde_json::Value =
+                serde_json::from_str(response.as_str()).map_err(|_| CdpError::InvalidResponse)?;
+            if response.get("id").and_then(serde_json::Value::as_u64) != Some(id) {
+                continue;
+            }
+            if response.get("error").is_some() {
+                return Err(CdpError::Protocol);
+            }
+            return response
+                .get("result")
+                .cloned()
+                .ok_or(CdpError::InvalidResponse);
+        }
+        Err(CdpError::TimedOut)
     }
 }
 
@@ -169,7 +282,7 @@ fn parse_http_json_body(response: &[u8]) -> Result<&[u8], CdpError> {
     Ok(body)
 }
 
-fn validate_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<(), CdpError> {
+fn validate_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<&str, CdpError> {
     let prefix = format!("ws://127.0.0.1:{expected_port}/devtools/browser/");
     let Some(id) = endpoint.strip_prefix(&prefix) else {
         return Err(CdpError::UnsafeWebSocketEndpoint);
@@ -182,7 +295,7 @@ fn validate_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<(),
     {
         return Err(CdpError::UnsafeWebSocketEndpoint);
     }
-    Ok(())
+    Ok(&endpoint[prefix.len() - 1..])
 }
 
 #[cfg(test)]
@@ -267,6 +380,62 @@ mod tests {
         assert!(version
             .websocket_debugger_url
             .starts_with("ws://127.0.0.1:"));
+    }
+
+    #[test]
+    fn cdp_requests_match_ids_and_ignore_events_on_loopback_websocket() {
+        let listener = TcpListener::bind(SocketAddrV4::new(LOOPBACK, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut http, peer) = listener.accept().unwrap();
+            assert!(peer.ip().is_loopback());
+            let request = read_request_headers(&mut http);
+            assert!(request.starts_with("GET /json/version HTTP/1.1\r\n"));
+            let body = format!(
+                "{{\"Browser\":\"Chrome/120.0\",\"Protocol-Version\":\"1.3\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1:{port}/devtools/browser/test-id\"}}"
+            );
+            write!(
+                http,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            drop(http);
+
+            let (stream, peer) = listener.accept().unwrap();
+            assert!(peer.ip().is_loopback());
+            let mut websocket = tungstenite::accept(stream).unwrap();
+            let request: serde_json::Value = match websocket.read().unwrap() {
+                Message::Text(message) => serde_json::from_str(message.as_str()).unwrap(),
+                message => panic!("expected CDP text request, received {message:?}"),
+            };
+            assert_eq!(request["method"], "Runtime.evaluate");
+            assert_eq!(request["params"]["expression"], "1 + 1");
+            websocket
+                .send(Message::text(
+                    r#"{"method":"Runtime.executionContextCreated","params":{}}"#,
+                ))
+                .unwrap();
+            websocket
+                .send(Message::text(
+                    r#"{"id":1,"result":{"result":{"type":"number","value":2}}}"#,
+                ))
+                .unwrap();
+        });
+
+        let mut connection = LocalCdpClient::new(port).unwrap().connect().unwrap();
+        assert!(matches!(
+            connection.request("../Runtime.evaluate", &serde_json::json!({})),
+            Err(CdpError::InvalidCommand)
+        ));
+        let result = connection
+            .request(
+                "Runtime.evaluate",
+                &serde_json::json!({"expression":"1 + 1"}),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(result["result"]["value"], 2);
     }
 
     #[test]
