@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 if($ReadOnlyProbe -and $InteractionProbe){throw 'Choose either -ReadOnlyProbe or -InteractionProbe, not both'}
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Drawing
 $hostMetadata=[ordered]@{
     powershellVersion=$PSVersionTable.PSVersion.ToString()
     powershellEdition=$PSVersionTable.PSEdition
@@ -69,6 +70,10 @@ public static class SettingsUiaNativeProbe {
     }
     public static string Class(IntPtr hwnd) {
         var name=new StringBuilder(256); GetClassName(hwnd,name,name.Capacity); return name.ToString();
+    }
+    public static int[] WindowBounds(IntPtr hwnd) {
+        Rect rect;if(!GetWindowRect(hwnd,out rect)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetWindowRect failed for screenshot HWND");
+        return new int[]{rect.left,rect.top,rect.right,rect.bottom};
     }
     public static IntPtr ComboList(IntPtr combo) {
         var info=new ComboBoxInfo(); info.size=Marshal.SizeOf(typeof(ComboBoxInfo));
@@ -380,6 +385,38 @@ try {
             return $instance
         }
 
+        function Save-SettingsScreenshot([string]$PageName) {
+            $monitor=[SettingsUiaNativeProbe]::MonitorDevice($settingsHwnd)
+            if($monitor -ne $env:ISLE_TEST_MONITOR){throw "Refusing to capture Settings outside $($env:ISLE_TEST_MONITOR): $monitor"}
+            $bounds=[SettingsUiaNativeProbe]::WindowBounds($settingsHwnd)
+            $width=$bounds[2]-$bounds[0];$height=$bounds[3]-$bounds[1]
+            if($width -lt 320 -or $height -lt 240){throw "Settings screenshot bounds are too small: ${width}x${height}"}
+            $path=Join-Path $runFolder ("settings-"+$PageName+".png")
+            $bitmap=[System.Drawing.Bitmap]::new($width,$height)
+            $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+                $graphics.CopyFromScreen($bounds[0],$bounds[1],0,0,$bitmap.Size,[System.Drawing.CopyPixelOperation]::SourceCopy)
+                $bitmap.Save($path,[System.Drawing.Imaging.ImageFormat]::Png)
+            } finally { $graphics.Dispose();$bitmap.Dispose() }
+            $sample=[System.Drawing.Bitmap]::new($path)
+            try {
+                $reference=$sample.GetPixel(1,1);$varied=0
+                for($y=8;$y -lt $sample.Height;$y+=16){for($x=8;$x -lt $sample.Width;$x+=16){$pixel=$sample.GetPixel($x,$y);if($pixel.R -ne $reference.R -or $pixel.G -ne $reference.G -or $pixel.B -ne $reference.B){$varied++}}}
+            } finally { $sample.Dispose() }
+            if($varied -lt 20){throw "Settings screenshot appears blank or uniform for $PageName ($varied varied samples)"}
+            return [ordered]@{page=$PageName;path=$path;monitor=$monitor;width=$width;height=$height;variedSamples=$varied;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}
+        }
+
+        $settingsShots=@()
+        $pages=@(@{id='300';name='general'},@{id='301';name='appearance'},@{id='302';name='modules'},@{id='303';name='media'},@{id='304';name='weather'},@{id='305';name='advanced'})
+        foreach($page in $pages){
+            $navigation=Wait-SettingsElement $page.id
+            (Get-SettingsPattern $navigation ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+            Start-Sleep -Milliseconds 120
+            $settingsShots+=,(Save-SettingsScreenshot $page.name)
+        }
+        if($settingsShots.Count -ne 6){throw "Expected six Settings page screenshots, captured $($settingsShots.Count)"}
+
         $appearance=Wait-SettingsElement '301'
         (Get-SettingsPattern $appearance ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
         [void](Wait-SettingsElement '211')
@@ -452,6 +489,7 @@ try {
         Start-Sleep -Milliseconds 100
         $expanded=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
         if($expanded.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded){throw 'UIA Expand did not open the timezone ComboBox'}
+        $dropdownScreenshot=Save-SettingsScreenshot 'timezone-dropdown'
         $comboElement=Wait-SettingsElement '210'
         $comboSelection=Get-SettingsPattern $comboElement ([System.Windows.Automation.SelectionPattern]::Pattern)
         if($comboSelection.Current.CanSelectMultiple -or -not $comboSelection.Current.IsSelectionRequired){throw 'ComboBox must expose required single-selection semantics'}
@@ -605,10 +643,10 @@ try {
         initialConfigurationValid=$initial.configurationValid;finalConfigurationValid=$final.configurationValid
         serviceFieldsAbsent=$true;initialSettingsAlive=$initial.settingsWindowAlive;finalSettingsAlive=$final.settingsWindowAlive
         uiaRootProcessId=$root.Current.ProcessId;uiaRootNativeWindowHandle=$root.Current.NativeWindowHandle
-        descendantCount=$elements.Count;inventory=$inventory;screenshotsVerified=$false
+        descendantCount=$elements.Count;inventory=$inventory;screenshotsVerified=($InteractionProbe -and $settingsShots.Count -eq 6);screenshots=$settingsShots;dropdownScreenshot=$dropdownScreenshot
         nativeCUIAutomationSameProcessAsManagedClient=$true
         mainMonitor=$mainMonitor;settingsMonitor=$settingsMonitor;interactionEvidence=$interactionEvidence
-        note=if($InteractionProbe){'UIA Invoke, Selection, SelectionItem, Toggle, Value, RangeValue, Expand, and Collapse were exercised only in an isolated owned fixture; mutable values were restored.'}else{'Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'}
+        note=if($InteractionProbe){'UIA actions and HWND-scoped keyboard messages were exercised only in an isolated owned fixture on DISPLAY2; mutable values were restored and all six Settings pages were captured and checked for visible pixel variation.'}else{'Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'}
     }
 } catch {
     $probeFailure=$_.Exception.Message

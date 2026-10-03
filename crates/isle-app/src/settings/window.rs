@@ -386,7 +386,7 @@ unsafe fn child_combo(
         x,
         y,
         w,
-        180.0,
+        32.0,
     )?;
     if owner_draw && !SetWindowSubclass(combo, Some(combo_subclass), COMBO_SUBCLASS_ID, 0).as_bool()
     {
@@ -442,6 +442,11 @@ unsafe fn set_combo_items(
             LPARAM(item_height),
         );
     }
+    // Keep the collapsed control at its selection-field height while allowing
+    // a useful popup list. CB_SETMINVISIBLE is supported by the app's v6
+    // common-controls manifest and lets the popup size independently.
+    let visible_items = labels.len().clamp(1, 6);
+    let _ = SendMessageW(combo, 0x170, WPARAM(visible_items), LPARAM(0));
     theme.combo_labels.push((id, labels));
     theme.combo_selection.push((id, 0));
 }
@@ -449,7 +454,7 @@ unsafe fn set_combo_items(
 fn page_content_bottom(page: Page) -> f32 {
     match page {
         Page::General => 630.0,
-        Page::Appearance => 650.0,
+        Page::Appearance => 710.0,
         Page::Modules => 500.0,
         Page::Media => 290.0,
         Page::Weather => 530.0,
@@ -584,6 +589,9 @@ unsafe fn position_controls(hwnd: HWND, theme_ptr: *mut Theme) {
         }
     }
     position_navigation(hwnd, scale, nav);
+    for button in nav {
+        let _ = InvalidateRect(button, None, false);
+    }
     let _ = InvalidateRect(hwnd, None, false);
 }
 
@@ -2032,7 +2040,7 @@ impl Settings {
             scale,
             instance,
             font,
-            card_brush: CreateSolidBrush(COLORREF(0x00171c23)),
+            card_brush: CreateSolidBrush(color_ref(23, 28, 35)),
             controls: Vec::new(),
             nav: [HWND(0); 6],
             query: HWND(0),
@@ -2097,8 +2105,8 @@ impl Settings {
             208.0,
             255.0,
         )?;
-        child_text(hwnd, theme, Page::General, "时钟时区", 232.0, 299.0, 120.0)?;
-        theme.zone = child_combo(hwnd, theme, Page::General, ZONE, 338.0, 292.0, 292.0)?;
+        child_text(hwnd, theme, Page::General, "时钟时区", 232.0, 466.0, 120.0)?;
+        theme.zone = child_combo(hwnd, theme, Page::General, ZONE, 338.0, 458.0, 292.0)?;
         let mut zones = crate::clock::ZONES
             .iter()
             .map(|(id, label)| (id.to_string(), format!("{label} · {id}")))
@@ -2125,10 +2133,10 @@ impl Settings {
             Page::Appearance,
             "显示方式",
             232.0,
-            198.0,
+            226.0,
             98.0,
         )?;
-        theme.style = child_combo(hwnd, theme, Page::Appearance, STYLE, 330.0, 190.0, 170.0)?;
+        theme.style = child_combo(hwnd, theme, Page::Appearance, STYLE, 330.0, 218.0, 170.0)?;
         theme.styles = vec!["floating".to_string(), "edge".to_string()];
         if !theme.styles.contains(&appearance.style) {
             theme.styles.push(appearance.style.clone());
@@ -2150,10 +2158,10 @@ impl Settings {
             Page::Appearance,
             "贴边方向",
             520.0,
-            198.0,
+            226.0,
             96.0,
         )?;
-        theme.edge = child_combo(hwnd, theme, Page::Appearance, EDGE, 617.0, 190.0, 145.0)?;
+        theme.edge = child_combo(hwnd, theme, Page::Appearance, EDGE, 617.0, 218.0, 145.0)?;
         theme.edges = vec!["top".into(), "right".into(), "bottom".into(), "left".into()];
         let edge_labels = ["上", "右", "下", "左"]
             .into_iter()
@@ -2167,7 +2175,7 @@ impl Settings {
             Page::Appearance,
             "沿边位置",
             232.0,
-            246.0,
+            274.0,
             98.0,
         )?;
         theme.edge_position = child_combo(
@@ -2176,7 +2184,7 @@ impl Settings {
             Page::Appearance,
             EDGE_POSITION,
             330.0,
-            238.0,
+            266.0,
             170.0,
         )?;
         let edge_position_combo = theme.edge_position;
@@ -2193,7 +2201,7 @@ impl Settings {
             ALBUM_COLOR,
             "跟随专辑主色",
             520.0,
-            236.0,
+            264.0,
             202.0,
         )?;
         child_text(
@@ -2202,7 +2210,7 @@ impl Settings {
             Page::Appearance,
             "自定义颜色",
             232.0,
-            298.0,
+            326.0,
             98.0,
         )?;
         theme.fill_color = add_control(
@@ -2214,7 +2222,7 @@ impl Settings {
             WS_BORDER | WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
             Page::Appearance,
             330.0,
-            290.0,
+            318.0,
             170.0,
             28.0,
         )?;
@@ -2226,7 +2234,7 @@ impl Settings {
             SPECTRUM,
             "显示频谱",
             520.0,
-            280.0,
+            308.0,
             202.0,
         )?;
         let radio_style = WS_TABSTOP | WINDOW_STYLE(BS_AUTORADIOBUTTON as u32);
@@ -2239,7 +2247,7 @@ impl Settings {
             radio_style | WS_GROUP,
             Page::Appearance,
             520.0,
-            312.0,
+            340.0,
             108.0,
             25.0,
         )?;
@@ -2252,7 +2260,7 @@ impl Settings {
             radio_style,
             Page::Appearance,
             632.0,
-            312.0,
+            340.0,
             118.0,
             25.0,
         )?;
@@ -2263,14 +2271,14 @@ impl Settings {
             INSPECTION_CHECK,
             "保持当前展开状态",
             232.0,
-            350.0,
+            378.0,
             230.0,
         )?;
         for (index, (initial, min, max, y)) in [
-            (appearance.compact_length as i32, 80, 300, 454.0),
-            (appearance.collapsed_shoulder_radius as i32, 0, 16, 508.0),
-            (appearance.expanded_shoulder_radius as i32, 0, 64, 562.0),
-            (appearance.expanded_corner_radius as i32, 0, 80, 616.0),
+            (appearance.compact_length as i32, 80, 300, 508.0),
+            (appearance.collapsed_shoulder_radius as i32, 0, 16, 562.0),
+            (appearance.expanded_shoulder_radius as i32, 0, 64, 616.0),
+            (appearance.expanded_corner_radius as i32, 0, 80, 670.0),
         ]
         .into_iter()
         .enumerate()

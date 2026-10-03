@@ -294,14 +294,14 @@ impl ShellRender {
                 self.card(
                     horizontal_scroll,
                     144.0 - scroll,
-                    232.0,
+                    270.0,
                     card_width,
                     "外观与位置",
                     "调整真实灵动岛，不使用单独的预览状态。",
                 );
                 self.card(
                     horizontal_scroll,
-                    392.0 - scroll,
+                    430.0 - scroll,
                     280.0,
                     card_width,
                     "岛体几何",
