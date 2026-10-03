@@ -1,6 +1,12 @@
 param([switch]$ReadOnlyProbe,[switch]$InteractionProbe)
 $ErrorActionPreference='Stop'
 if($ReadOnlyProbe -and $InteractionProbe){throw 'Choose either -ReadOnlyProbe or -InteractionProbe, not both'}
+$settingsDpiOverride=$null
+if(-not [string]::IsNullOrWhiteSpace($env:ISLE_TEST_SETTINGS_DPI)){
+    $parsedSettingsDpi=0
+    if(-not [int]::TryParse($env:ISLE_TEST_SETTINGS_DPI,[ref]$parsedSettingsDpi) -or $parsedSettingsDpi -lt 96 -or $parsedSettingsDpi -gt 384){throw 'ISLE_TEST_SETTINGS_DPI must be an integer from 96 to 384'}
+    $settingsDpiOverride=$parsedSettingsDpi
+}
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Drawing
@@ -273,7 +279,8 @@ $testExe=if($env:ISLE_TEST_EXE){$env:ISLE_TEST_EXE}else{Join-Path $nativeRoot 't
 $testExe=(Resolve-Path -LiteralPath $testExe).Path
 $binarySha=(Get-FileHash -LiteralPath $testExe -Algorithm SHA256).Hash
 $artifactRoot=Join-Path $nativeRoot 'artifacts'
-$runFolder=Join-Path $artifactRoot ("settings-uia-"+$binarySha.Substring(0,12))
+$settingsDpiLabel=if($null -eq $settingsDpiOverride){'native'}else{"dpi$settingsDpiOverride"}
+$runFolder=Join-Path $artifactRoot ("settings-uia-"+$binarySha.Substring(0,12)+"-"+$settingsDpiLabel)
 New-Item -ItemType Directory -Force $runFolder|Out-Null
 $settingsPath=Join-Path $runFolder 'fixture-settings.json'
 $logPath=Join-Path $runFolder 'snapshot.json'
@@ -453,7 +460,14 @@ try {
         [void](Wait-SettingsElement '211')
         $interactionEvidence+=,[ordered]@{action='Invoke';automationId='301';result='navigated to Appearance'}
 
+        if($null -ne $settingsDpiOverride -and $settingsDpiOverride -gt 96){
+            for($wheel=0;$wheel -lt 4;$wheel++){
+                [SettingsUiaNativeProbe]::PostChecked($settingsHwnd,$owned.Id,$settingsClass,0x020A,[IntPtr]::new([long]4291035136),[IntPtr]::Zero)
+            }
+            Start-Sleep -Milliseconds 180
+        }
         $sliderElement=Wait-SettingsElement '220'
+        if($null -ne $settingsDpiOverride -and $settingsDpiOverride -gt 96 -and $sliderElement.Current.IsOffscreen){throw "Settings geometry slider stayed offscreen after scrolling at ${settingsDpiOverride} DPI"}
         $slider=Get-SettingsPattern $sliderElement ([System.Windows.Automation.RangeValuePattern]::Pattern)
         $initialValue=$slider.Current.Value
         $minimum=$slider.Current.Minimum;$maximum=$slider.Current.Maximum
@@ -468,6 +482,7 @@ try {
         $restoredSlider=Get-SettingsPattern (Wait-SettingsElement '220') ([System.Windows.Automation.RangeValuePattern]::Pattern)
         if($restoredSlider.Current.Value -ne $initialValue){throw 'UIA RangeValue.SetValue did not restore the fixture slider'}
         $interactionEvidence+=,[ordered]@{action='RangeValue';automationId='220';initial=$initialValue;changed=$changedValue;restored=$restoredSlider.Current.Value}
+        if($null -ne $settingsDpiOverride -and $settingsDpiOverride -gt 96){$interactionEvidence+=,[ordered]@{action='DPI scroll viewport';dpi=$settingsDpiOverride;automationId='220';visible=(-not $sliderElement.Current.IsOffscreen)}}
 
         $rootElement=[System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)
         $selection=Get-SettingsPattern $rootElement ([System.Windows.Automation.SelectionPattern]::Pattern)
@@ -682,6 +697,7 @@ try {
     $final=Get-FreshDiagnostic $mainHwnd $owned.Id $logPath $mainClass
     $evidence=[ordered]@{
         binarySha256=$binarySha;ownedPid=$owned.Id;mainHwnd=$mainHwnd.ToInt64();settingsHwnd=$settingsHwnd.ToInt64()
+        settingsDpiOverride=$settingsDpiOverride
         settingsClass=$settingsClass;readOnlyProbe=(-not $InteractionProbe);readOnlyParameterRequested=[bool]$ReadOnlyProbe
         host=$hostMetadata
         initialConfigurationValid=$initial.configurationValid;finalConfigurationValid=$final.configurationValid

@@ -270,6 +270,16 @@ impl ShellRender {
             &self.regular,
             model::SECONDARY_TEXT,
         );
+        let viewport_bottom = (height - 58.0).max(model::PAGE_TOP + 1.0);
+        self.target.PushAxisAlignedClip(
+            &rect(
+                model::CONTENT_LEFT,
+                model::PAGE_TOP,
+                (width - model::CONTENT_LEFT).max(0.0),
+                viewport_bottom - model::PAGE_TOP,
+            ),
+            D2D1_ANTIALIAS_MODE_ALIASED,
+        );
 
         match page {
             Page::General => {
@@ -349,6 +359,7 @@ impl ShellRender {
                 );
             }
         }
+        self.target.PopAxisAlignedClip();
         self.target.PopAxisAlignedClip();
         let footer_width = (width - model::CONTENT_LEFT - 28.0).max(80.0);
         self.text(

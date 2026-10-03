@@ -573,8 +573,15 @@ unsafe fn position_controls(hwnd: HWND, theme_ptr: *mut Theme) {
             let clip_left =
                 ((super::model::CONTENT_LEFT * scale).round() as i32 - child_left).max(0);
             let clip_right = ((client.right - client.left) - child_left).min(w);
-            if inside_content && clip_left < clip_right {
-                let region = CreateRectRgn(clip_left, 0, clip_right, h.max(1));
+            let viewport_top = (super::model::PAGE_TOP * scale).round() as i32;
+            let viewport_bottom = ((((client.bottom - client.top) as f32 / scale) - 58.0)
+                .max(super::model::PAGE_TOP + 1.0)
+                * scale)
+                .round() as i32;
+            let clip_top = (viewport_top - y).max(0);
+            let clip_bottom = (viewport_bottom - y).min(h);
+            if inside_content && clip_left < clip_right && clip_top < clip_bottom {
+                let region = CreateRectRgn(clip_left, clip_top, clip_right, clip_bottom);
                 if region.0 != 0 && SetWindowRgn(placement.hwnd, region, true) == 0 {
                     let _ = DeleteObject(HGDIOBJ(region.0));
                 }
@@ -1947,7 +1954,25 @@ impl Settings {
             ..Default::default()
         };
         let _ = RegisterClassW(&wc);
-        let owner_dpi = GetDpiForWindow(owner).max(96);
+        let actual_owner_dpi = GetDpiForWindow(owner).max(96);
+        // Let the isolated UIA fixture exercise Settings scaling without changing system display settings.
+        let owner_dpi = if allow_control_test_faults {
+            match std::env::var("ISLE_TEST_SETTINGS_DPI") {
+                Ok(value) => value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|dpi| (96..=384).contains(dpi))
+                    .ok_or_else(|| {
+                        Error::new(
+                            E_INVALIDARG,
+                            "ISLE_TEST_SETTINGS_DPI must be an integer from 96 to 384".into(),
+                        )
+                    })?,
+                Err(_) => actual_owner_dpi,
+            }
+        } else {
+            actual_owner_dpi
+        };
         let owner_scale = owner_dpi as f32 / 96.0;
         let style =
             WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN | WS_HSCROLL;

@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.25**（Cargo / Windows 文件版本 `0.25.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.26**（Cargo / Windows 文件版本 `0.26.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -42,7 +42,7 @@ cargo test --workspace
 
 本项目按单 Agent 路线图推进。GitHub 仅维护本 README 作为项目说明和状态入口；路线图、参考图片、项目状态、QA 文档及性能记录集中保存在仓库内的 `local-only/` 并由 Git 忽略。代码、构建脚本和许可证继续纳入版本控制。
 
-当前优先级是 P0 稳定性：继续调查历史 `0x80070057`，完成 Settings 键盘与完整 UIA 选择模式、视觉和混合 DPI 验收，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
+当前优先级是 P0 稳定性：记录历史 `0x80070057` 尚未复现的条件，并在可用的不同 DPI 显示器上完成真实跨屏验收；随后继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
 
 0.22 为原生 ComboBox 和弹出选项列表提供 Selection / SelectionItem UIA 树；副屏实测列出全部六个时区选项，完成切换、还原和必选约束验证。
 
@@ -50,7 +50,9 @@ cargo test --workspace
 
 0.24 在 DISPLAY2 实屏采集设置六个页面及完整时区下拉列表截图，并校验非空像素；修复设置控件主题色、外观卡片间距、折叠式下拉框尺寸和导航选中态刷新。当前两个物理显示器均为 96 DPI；真实混合 DPI 与跨显示器移动验收仍待完成。
 
-0.25 扩展 Settings 键盘回归，覆盖 Shift+Tab 反向焦点移动与 Enter 激活导航；测试仅操作隔离夹具并验证焦点与页面状态。
+0.25 扩展 Settings 键盘回归，覆盖 Shift+Tab 反向焦点移动与 Enter 激活聚焦按钮；副屏 14 项隔离交互验证通过。
+
+0.26 在 DISPLAY2 的隔离 Settings UIA 夹具完成 144 / 192 DPI 渲染与滚动验收；正文视口裁剪在标题与状态栏之间，截图和控件交互分别验证。当前两个物理显示器均为 96 DPI，合成 DPI 验收不代表真实跨屏混合 DPI。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 
