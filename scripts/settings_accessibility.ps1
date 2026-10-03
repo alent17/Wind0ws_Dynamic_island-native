@@ -197,6 +197,11 @@ $fixtureText='{"enableAnimations":false,"reduceAnimations":true,"compactLength":
 [System.IO.File]::WriteAllText($settingsPath,$fixtureText,[System.Text.UTF8Encoding]::new($false))
 
 if($env:ISLE_TEST_MONITOR -ne '\\.\DISPLAY2'){throw 'ISLE_TEST_MONITOR must be set to \\.\DISPLAY2 before the UI run'}
+Add-Type -AssemblyName System.Windows.Forms
+$availableDisplays=@([System.Windows.Forms.Screen]::AllScreens|ForEach-Object{$_.DeviceName})
+if($env:ISLE_TEST_MONITOR -notin $availableDisplays){
+    throw "Required test display $($env:ISLE_TEST_MONITOR) is not connected/enabled; detected: $($availableDisplays -join ', ')"
+}
 # This is an inventory-only probe. Do not inherit a create-fault switch into this child.
 $savedCreateFault=$env:ISLE_TEST_CONTROL_FAIL_CREATE
 Remove-Item Env:\ISLE_TEST_CONTROL_FAIL_CREATE -ErrorAction SilentlyContinue
@@ -206,6 +211,7 @@ $settingsHwnd=[IntPtr]::Zero
 $mainClass='IsleNativePrototype'
 $settingsClass='IsleNativeSettingsV2'
 $evidence=$null
+$probeFailure=$null
 try {
     $args=@('--ui-v2','--test-fixture','--page','music','--paused','--reduced-motion','--settings-path',$settingsPath,'--log',$logPath)
     $owned=Start-Process -FilePath $testExe -ArgumentList $args -PassThru -WindowStyle Hidden
@@ -345,6 +351,34 @@ try {
         if($restoredSlider.Current.Value -ne $initialValue){throw 'UIA RangeValue.SetValue did not restore the fixture slider'}
         $interactionEvidence+=,[ordered]@{action='RangeValue';automationId='220';initial=$initialValue;changed=$changedValue;restored=$restoredSlider.Current.Value}
 
+        $rootElement=[System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)
+        $selection=Get-SettingsPattern $rootElement ([System.Windows.Automation.SelectionPattern]::Pattern)
+        if($selection.Current.CanSelectMultiple -or -not $selection.Current.IsSelectionRequired){throw 'Settings radio selection must be single-select and required'}
+        $selectedItems=@($selection.Current.GetSelection())
+        if($selectedItems.Count -ne 1){throw "Expected exactly one selected spectrum radio, got $($selectedItems.Count)"}
+        $initialRadioId=$selectedItems[0].Current.AutomationId
+        if($initialRadioId -notin @('252','253')){throw "Unexpected selected spectrum radio AutomationId $initialRadioId"}
+        [string[]]$radioIds=@('252','253')|Where-Object{$_ -ne $initialRadioId}
+        $alternateRadio=Wait-SettingsElement $radioIds[0]
+        $alternateSelectionItem=Get-SettingsPattern $alternateRadio ([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        if($alternateSelectionItem.Current.IsSelected){throw 'Alternate radio unexpectedly reports selected before selection'}
+        if($alternateSelectionItem.Current.SelectionContainer.Current.NativeWindowHandle -ne $settingsHwnd.ToInt32()){
+            throw 'Radio SelectionContainer does not resolve to the Settings root HWND'
+        }
+        $alternateSelectionItem.Select()
+        Start-Sleep -Milliseconds 150
+        $alternateSelected=@((Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($alternateSelected.Count -ne 1 -or $alternateSelected[0].Current.AutomationId -ne $radioIds[0]){throw 'Selection.Select did not update Settings selection'}
+        if(-not (Get-SettingsPattern (Wait-SettingsElement $radioIds[0]) ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected){throw 'SelectionItem.IsSelected did not become true after selection'}
+        $removeRejected=$false
+        try{(Get-SettingsPattern (Wait-SettingsElement $radioIds[0]) ([System.Windows.Automation.SelectionItemPattern]::Pattern)).RemoveFromSelection()}catch{$removeRejected=$true}
+        if(-not $removeRejected){throw 'Required single-selection radio accepted RemoveFromSelection'}
+        (Get-SettingsPattern (Wait-SettingsElement $initialRadioId) ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        Start-Sleep -Milliseconds 150
+        $restoredSelection=@((Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($restoredSelection.Count -ne 1 -or $restoredSelection[0].Current.AutomationId -ne $initialRadioId){throw 'Selection.Select did not restore the initial Settings radio'}
+        $interactionEvidence+=,[ordered]@{action='Selection/SelectionItem';initial=$initialRadioId;changed=$radioIds[0];restored=$restoredSelection[0].Current.AutomationId;removeRejected=$removeRejected;containerHwnd=$settingsHwnd.ToInt64()}
+
         $general=Wait-SettingsElement '300'
         (Get-SettingsPattern $general ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
         $toggleElement=Wait-SettingsElement '208'
@@ -368,11 +402,13 @@ try {
         Start-Sleep -Milliseconds 100
         $expanded=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
         if($expanded.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded){throw 'UIA Expand did not open the timezone ComboBox'}
+        $expandedTree=[System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        $comboPopupItems=@(foreach($candidate in $expandedTree){if($candidate.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem){$candidate.Current.Name}})
         $expanded.Collapse()
         Start-Sleep -Milliseconds 100
         $collapsed=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
         if($collapsed.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed){throw 'UIA Collapse did not close the timezone ComboBox'}
-        $interactionEvidence+=,[ordered]@{action='ExpandCollapse';automationId='210';expanded='Expanded';restored='Collapsed'}
+        $interactionEvidence+=,[ordered]@{action='ExpandCollapse';automationId='210';expanded='Expanded';restored='Collapsed';popupListItems=$comboPopupItems}
 
         $weather=Wait-SettingsElement '304'
         (Get-SettingsPattern $weather ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
@@ -400,9 +436,10 @@ try {
         descendantCount=$elements.Count;inventory=$inventory;screenshotsVerified=$false
         nativeCUIAutomationSameProcessAsManagedClient=$true
         mainMonitor=$mainMonitor;settingsMonitor=$settingsMonitor;interactionEvidence=$interactionEvidence
-        note=if($InteractionProbe){'UIA Invoke, Toggle, Value, RangeValue, Expand, and Collapse were exercised only in an isolated owned fixture; mutable values were restored.'}else{'Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'}
+        note=if($InteractionProbe){'UIA Invoke, Selection, SelectionItem, Toggle, Value, RangeValue, Expand, and Collapse were exercised only in an isolated owned fixture; mutable values were restored.'}else{'Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'}
     }
 } catch {
+    $probeFailure=$_.Exception.Message
     $evidence=[ordered]@{binarySha256=$binarySha;ownedPid=if($owned){$owned.Id}else{$null};mainHwnd=if($mainHwnd -ne [IntPtr]::Zero){$mainHwnd.ToInt64()}else{$null};settingsHwnd=if($settingsHwnd -ne [IntPtr]::Zero){$settingsHwnd.ToInt64()}else{$null};failure=$_.Exception.Message;forcedKill=$false}
     throw
 } finally {
@@ -420,9 +457,13 @@ try {
             $clock=[System.Diagnostics.Stopwatch]::StartNew()
             if(!$owned.WaitForExit(5000)) {
                 $clock.Stop()
-                $timeout=[ordered]@{binarySha256=$binarySha;ownedPid=$owned.Id;mainHwnd=$mainHwnd.ToInt64();settingsHwnd=$settingsHwnd.ToInt64();gracefulClosePosted=$closePosted;shutdownWaitMs=5000;forcedKill=$false}
+                $timeout=[ordered]@{binarySha256=$binarySha;ownedPid=$owned.Id;mainHwnd=$mainHwnd.ToInt64();settingsHwnd=if($settingsHwnd -ne [IntPtr]::Zero){$settingsHwnd.ToInt64()}else{$null};gracefulClosePosted=$closePosted;shutdownWaitMs=5000;probeFailure=$probeFailure;forcedKill=$false}
                 $timeout|ConvertTo-Json|Set-Content -Encoding UTF8 (Join-Path $runFolder 'timeout-native-crosscheck.json')
-                throw 'Owned UIA probe failed to exit within 5000 ms after WM_CLOSE; no forced kill was issued'
+                if($null -ne $evidence) {
+                    $evidence['gracefulClosePosted']=$closePosted;$evidence['forcedKill']=$false;$evidence['shutdownTimeout']=$true
+                    $evidence|ConvertTo-Json -Depth 10|Set-Content -Encoding UTF8 $failurePath
+                }
+                throw "Owned UIA probe failed to exit within 5000 ms after WM_CLOSE; no forced kill was issued. Probe failure: $probeFailure"
             }
             $clock.Stop()
             if($null -ne $evidence){$evidence['shutdownWaitMs']=$clock.ElapsedMilliseconds}

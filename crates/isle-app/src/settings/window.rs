@@ -71,6 +71,7 @@ const NAV_BASE: i32 = 300;
 const CONTROL_RECOVER_COMBO: u32 = WM_APP + 75;
 const COMBO_SUBCLASS_ID: usize = 1;
 const ACCESSIBILITY_SUBCLASS_ID: usize = 2;
+const SETTINGS_ACCESSIBILITY_SUBCLASS_ID: usize = 3;
 const SHAPE_NAMES: [&str; 4] = ["收起长度", "收起凹肩", "展开凹肩", "展开圆角"];
 
 const fn color_ref(red: u8, green: u8, blue: u8) -> COLORREF {
@@ -870,20 +871,21 @@ unsafe extern "system" fn accessibility_subclass(
     msg: u32,
     wp: WPARAM,
     lp: LPARAM,
-    _subclass_id: usize,
+    subclass_id: usize,
     _reference_data: usize,
 ) -> LRESULT {
     if msg == WM_GETOBJECT && lp.0 as i32 == UiaRootObjectId {
-        if let Ok(provider) = accessibility::provider(hwnd) {
+        let provider = if subclass_id == SETTINGS_ACCESSIBILITY_SUBCLASS_ID {
+            accessibility::settings_provider(hwnd)
+        } else {
+            accessibility::provider(hwnd)
+        };
+        if let Ok(provider) = provider {
             return UiaReturnRawElementProvider(hwnd, wp, lp, &provider);
         }
     }
     if msg == WM_NCDESTROY {
-        let _ = RemoveWindowSubclass(
-            hwnd,
-            Some(accessibility_subclass),
-            ACCESSIBILITY_SUBCLASS_ID,
-        );
+        let _ = RemoveWindowSubclass(hwnd, Some(accessibility_subclass), subclass_id);
     }
     DefSubclassProc(hwnd, msg, wp, lp)
 }
@@ -1968,6 +1970,16 @@ impl Settings {
             hwnd,
             theme: std::ptr::null_mut(),
         };
+        if !SetWindowSubclass(
+            hwnd,
+            Some(accessibility_subclass),
+            SETTINGS_ACCESSIBILITY_SUBCLASS_ID,
+            0,
+        )
+        .as_bool()
+        {
+            return Err(Error::from_win32());
+        }
         let shell = ShellRender::new(hwnd, scale)?;
         let font = settings_font(scale);
         let fixture_create_failure = allow_control_test_faults

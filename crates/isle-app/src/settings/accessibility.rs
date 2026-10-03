@@ -7,10 +7,16 @@
 
 use std::mem::ManuallyDrop;
 use windows::{
-    core::{implement, ComInterface, IUnknown, Result, BSTR, PCWSTR},
+    core::{implement, ComInterface, IUnknown, Interface, Result, BSTR, PCWSTR},
     Win32::{
-        Foundation::{CO_E_OBJNOTCONNECTED, E_NOTIMPL, HWND, LPARAM, WPARAM},
-        System::Variant::*,
+        Foundation::{
+            CO_E_OBJNOTCONNECTED, E_FAIL, E_NOTIMPL, E_OUTOFMEMORY, HWND, LPARAM, WPARAM,
+        },
+        System::{
+            Com::SAFEARRAY,
+            Ole::{SafeArrayCreateVector, SafeArrayDestroy, SafeArrayPutElement},
+            Variant::*,
+        },
         UI::{
             Accessibility::*,
             Controls::{
@@ -19,11 +25,11 @@ use windows::{
             },
             Input::KeyboardAndMouse::{GetFocus, IsWindowEnabled},
             WindowsAndMessaging::{
-                GetClassNameW, GetDlgCtrlID, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
-                IsWindow, PostMessageW, SendMessageW, SetWindowTextW, BM_CLICK, BM_GETCHECK,
-                BS_AUTO3STATE, BS_AUTOCHECKBOX, BS_AUTORADIOBUTTON, BS_CHECKBOX, BS_RADIOBUTTON,
-                CBS_DROPDOWN, CBS_DROPDOWNLIST, CB_GETDROPPEDSTATE, CB_SHOWDROPDOWN, ES_READONLY,
-                GWL_STYLE, WM_USER,
+                EnumChildWindows, GetClassNameW, GetDlgCtrlID, GetParent, GetWindowLongW,
+                GetWindowTextLengthW, GetWindowTextW, IsWindow, PostMessageW, SendMessageW,
+                SetWindowTextW, BM_CLICK, BM_GETCHECK, BS_AUTO3STATE, BS_AUTOCHECKBOX,
+                BS_AUTORADIOBUTTON, BS_CHECKBOX, BS_RADIOBUTTON, CBS_DROPDOWN, CBS_DROPDOWNLIST,
+                CB_GETDROPPEDSTATE, CB_SHOWDROPDOWN, ES_READONLY, GWL_STYLE, WM_USER,
             },
         },
     },
@@ -53,6 +59,48 @@ fn ensure_window(hwnd: HWND) -> Result<()> {
         Ok(())
     } else {
         Err(CO_E_OBJNOTCONNECTED.into())
+    }
+}
+
+unsafe extern "system" fn find_selected_radio(
+    hwnd: HWND,
+    selected: LPARAM,
+) -> windows::Win32::Foundation::BOOL {
+    if let Ok(class) = class_name(hwnd) {
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let button_type = (style & 0x0f) as i32;
+        if class.eq_ignore_ascii_case("Button")
+            && matches!(button_type, BS_AUTORADIOBUTTON | BS_RADIOBUTTON)
+            && SendMessageW(hwnd, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 as u32 == BST_CHECKED.0
+        {
+            (selected.0 as *mut HWND).write(hwnd);
+            return windows::Win32::Foundation::BOOL(0);
+        }
+    }
+    windows::Win32::Foundation::BOOL(1)
+}
+
+fn class_name(hwnd: HWND) -> Result<String> {
+    ensure_window(hwnd)?;
+    let mut buffer = [0u16; 64];
+    let length = unsafe { GetClassNameW(hwnd, &mut buffer) };
+    Ok(String::from_utf16_lossy(&buffer[..length.max(0) as usize]))
+}
+
+fn selected_radio(parent: HWND) -> Result<HWND> {
+    ensure_window(parent)?;
+    let mut selected = HWND(0);
+    unsafe {
+        EnumChildWindows(
+            parent,
+            Some(find_selected_radio),
+            LPARAM((&mut selected as *mut HWND) as isize),
+        );
+    }
+    if selected.0 == 0 {
+        Err(E_FAIL.into())
+    } else {
+        Ok(selected)
     }
 }
 
@@ -90,9 +138,15 @@ fn set_string(value: &str) -> VARIANT {
     IToggleProvider,
     IExpandCollapseProvider,
     IValueProvider,
-    IRangeValueProvider
+    IRangeValueProvider,
+    ISelectionItemProvider
 )]
 struct NativeControlProvider {
+    hwnd: HWND,
+}
+
+#[implement(IRawElementProviderSimple, ISelectionProvider)]
+struct SettingsProvider {
     hwnd: HWND,
 }
 
@@ -148,10 +202,12 @@ impl IRawElementProviderSimple_Impl for NativeControlProvider {
 
     fn GetPatternProvider(&self, patternid: UIA_PATTERN_ID) -> Result<IUnknown> {
         let kind = self.kind()?;
-        if patternid == UIA_InvokePatternId
-            && matches!(kind, ControlKind::Button | ControlKind::Radio)
-        {
+        if patternid == UIA_InvokePatternId && kind == ControlKind::Button {
             let provider: IInvokeProvider = NativeControlProvider { hwnd: self.hwnd }.into();
+            return provider.cast();
+        }
+        if patternid == UIA_SelectionItemPatternId && kind == ControlKind::Radio {
+            let provider: ISelectionItemProvider = NativeControlProvider { hwnd: self.hwnd }.into();
             return provider.cast();
         }
         if patternid == UIA_TogglePatternId && kind == ControlKind::Toggle {
@@ -219,10 +275,109 @@ impl IRawElementProviderSimple_Impl for NativeControlProvider {
 
 impl IInvokeProvider_Impl for NativeControlProvider {
     fn Invoke(&self) -> Result<()> {
-        if !matches!(self.kind()?, ControlKind::Button | ControlKind::Radio) {
+        if self.kind()? != ControlKind::Button {
             return Err(E_NOTIMPL.into());
         }
         self.click()
+    }
+}
+
+impl ISelectionItemProvider_Impl for NativeControlProvider {
+    fn Select(&self) -> Result<()> {
+        if self.kind()? != ControlKind::Radio {
+            return Err(E_NOTIMPL.into());
+        }
+        self.click()
+    }
+
+    fn AddToSelection(&self) -> Result<()> {
+        self.Select()
+    }
+
+    fn RemoveFromSelection(&self) -> Result<()> {
+        if self.kind()? != ControlKind::Radio {
+            return Err(E_NOTIMPL.into());
+        }
+        Err(windows::core::HRESULT(UIA_E_INVALIDOPERATION as i32).into())
+    }
+
+    fn IsSelected(&self) -> Result<windows::Win32::Foundation::BOOL> {
+        if self.kind()? != ControlKind::Radio {
+            return Err(E_NOTIMPL.into());
+        }
+        Ok(windows::Win32::Foundation::BOOL(i32::from(
+            check_state(self.hwnd)?.0 == BST_CHECKED.0,
+        )))
+    }
+
+    fn SelectionContainer(&self) -> Result<IRawElementProviderSimple> {
+        if self.kind()? != ControlKind::Radio {
+            return Err(E_NOTIMPL.into());
+        }
+        let parent = unsafe { GetParent(self.hwnd) };
+        unsafe { settings_provider(parent) }
+    }
+}
+
+impl IRawElementProviderSimple_Impl for SettingsProvider {
+    fn ProviderOptions(&self) -> Result<ProviderOptions> {
+        Ok(ProviderOptions_ServerSideProvider)
+    }
+
+    fn GetPatternProvider(&self, patternid: UIA_PATTERN_ID) -> Result<IUnknown> {
+        ensure_window(self.hwnd)?;
+        if patternid == UIA_SelectionPatternId {
+            let provider: ISelectionProvider = SettingsProvider { hwnd: self.hwnd }.into();
+            return provider.cast();
+        }
+        Err(E_NOTIMPL.into())
+    }
+
+    fn GetPropertyValue(&self, propertyid: UIA_PROPERTY_ID) -> Result<VARIANT> {
+        ensure_window(self.hwnd)?;
+        Ok(match propertyid {
+            UIA_ControlTypePropertyId => set_i32(UIA_WindowControlTypeId.0 as i32),
+            UIA_NamePropertyId => set_string("Isle 设置"),
+            UIA_AutomationIdPropertyId => set_string("IsleSettings"),
+            UIA_ClassNamePropertyId => set_string("IsleNativeSettingsV2"),
+            UIA_FrameworkIdPropertyId => set_string("Win32"),
+            UIA_IsEnabledPropertyId => set_bool(unsafe { IsWindowEnabled(self.hwnd).as_bool() }),
+            UIA_IsControlElementPropertyId | UIA_IsContentElementPropertyId => set_bool(true),
+            UIA_NativeWindowHandlePropertyId => set_i32(self.hwnd.0 as i32),
+            UIA_HasKeyboardFocusPropertyId => set_bool(unsafe { GetFocus() == self.hwnd }),
+            _ => VARIANT::default(),
+        })
+    }
+
+    fn HostRawElementProvider(&self) -> Result<IRawElementProviderSimple> {
+        unsafe { UiaHostProviderFromHwnd(self.hwnd) }
+    }
+}
+
+impl ISelectionProvider_Impl for SettingsProvider {
+    fn GetSelection(&self) -> Result<*mut SAFEARRAY> {
+        let selected = selected_radio(self.hwnd)?;
+        let array = unsafe { SafeArrayCreateVector(VT_UNKNOWN, 0, 1) };
+        if array.is_null() {
+            return Err(E_OUTOFMEMORY.into());
+        }
+        let item: IRawElementProviderSimple = NativeControlProvider { hwnd: selected }.into();
+        let index = 0i32;
+        if let Err(error) = unsafe { SafeArrayPutElement(array, &index, item.as_raw()) } {
+            unsafe { SafeArrayDestroy(array) }?;
+            return Err(error);
+        }
+        Ok(array)
+    }
+
+    fn CanSelectMultiple(&self) -> Result<windows::Win32::Foundation::BOOL> {
+        ensure_window(self.hwnd)?;
+        Ok(windows::Win32::Foundation::BOOL(0))
+    }
+
+    fn IsSelectionRequired(&self) -> Result<windows::Win32::Foundation::BOOL> {
+        ensure_window(self.hwnd)?;
+        Ok(windows::Win32::Foundation::BOOL(1))
     }
 }
 
@@ -415,4 +570,10 @@ impl NativeControlProvider {
 pub unsafe fn provider(hwnd: HWND) -> Result<IRawElementProviderSimple> {
     ensure_window(hwnd)?;
     Ok(NativeControlProvider { hwnd }.into())
+}
+
+/// Returns the root provider for the Settings window's radio-button selection.
+pub unsafe fn settings_provider(hwnd: HWND) -> Result<IRawElementProviderSimple> {
+    ensure_window(hwnd)?;
+    Ok(SettingsProvider { hwnd }.into())
 }

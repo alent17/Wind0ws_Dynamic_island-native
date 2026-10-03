@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.20**（Cargo / Windows 文件版本 `0.20.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.21**（Cargo / Windows 文件版本 `0.21.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -12,7 +12,7 @@
 - 灵动岛收起/展开、四边贴靠、动画与实时频谱。
 - 系统音量与输出设备、时钟、天气和城市设置。
 - 独立悬浮播放器、倒计时和原生设置窗口。
-- 多显示器支持及基础 MSAA/UIA 桥接；原生设置控件提供 Invoke、Toggle、Value、RangeValue 与 ExpandCollapse 自动化模式。
+- 多显示器支持及基础 MSAA/UIA 桥接；原生设置控件提供 Invoke、Toggle、Value、RangeValue、ExpandCollapse 和单选 Selection/SelectionItem 自动化模式。
 
 ## 构建与运行
 
@@ -44,7 +44,9 @@ cargo test --workspace
 
 当前优先级是 P0 稳定性：继续调查历史 `0x80070057`，完成 Settings 键盘与完整 UIA 选择模式、视觉和混合 DPI 验收，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
 
-0.20 Settings 为原生按钮、复选框、文本框、滑块和组合框接入对应 UIA 控件类型与 Invoke、Toggle、Value、RangeValue、ExpandCollapse 模式。隔离配置下在 `\\.\DISPLAY2` 实测导航、复选框切换并还原、滑块设值并还原、组合框展开/收起、文本框设值并还原；主窗口与设置窗口都通过副屏检查，进程正常退出。Radio/分段控件选择模式、ComboBox 项选择、键盘矩阵、Settings 专项视觉及真实混合 DPI 仍待验收。
+0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。ComboBox 项选择、键盘矩阵、Settings 专项视觉及真实混合 DPI 仍待验收。
+
+0.20 Settings 为原生按钮、复选框、文本框、滑块和组合框接入对应 UIA 控件类型与 Invoke、Toggle、Value、RangeValue、ExpandCollapse 模式。隔离配置下在 `\\.\DISPLAY2` 实测导航、复选框切换并还原、滑块设值并还原、组合框展开/收起、文本框设值并还原；主窗口与设置窗口都通过副屏检查，进程正常退出。ComboBox 项选择、键盘矩阵、Settings 专项视觉及真实混合 DPI 仍待验收。
 
 0.19 Settings 无障碍探针校验主窗口与设置窗口实际位于 `\\.\DISPLAY2`，并修正 MSAA 原生 COM 接口声明。副屏只读清点得到 11 个后代控件，按钮、复选框、静态文本和组合框的 MSAA 角色与默认操作可读，进程正常退出且未强制结束。
 
