@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.14**（Cargo / Windows 文件版本 `0.14.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.15**（Cargo / Windows 文件版本 `0.15.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -40,9 +40,9 @@ cargo test --workspace
 
 本项目按单 Agent 路线图推进。GitHub 仅维护本 README 作为项目说明和状态入口；路线图、参考图片、项目状态、QA 文档及性能记录集中保存在仓库内的 `local-only/` 并由 Git 忽略。代码、构建脚本和许可证继续纳入版本控制。
 
-当前优先级是 P0 稳定性：调查历史启动 `0x80070057`，完成 Settings 生命周期和资源检查，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
+当前优先级是 P0 稳定性：为启动和运行错误补充阶段信息，继续调查历史 `0x80070057`；随后推进 UIA 实机、视觉和混合 DPI 验收，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
 
-2026-10-03：当前源码在 Segoe UI 回退字体环境中成功启动并打开 Settings，历史 HRESULT 尚未复现，根因仍待查。首轮 Settings 30 次回归在 GDI 计数门禁失败（基线 17，后期 22）；不能标记生命周期验收通过。UIA 实机、视觉和混合 DPI 验收仍待完成。
+2026-10-03：当前源码在 Segoe UI 回退字体环境中成功启动并打开 Settings，历史 HRESULT 尚未复现，根因仍待查。0.15 副屏 Settings 生命周期验收：在 `\\.\DISPLAY2` 完成 30 次打开、切页、缩放、重绘和关闭；热身后 GDI 句柄连续保持 20，关闭后窗口均已销毁。UIA 实机、视觉和混合 DPI 验收仍待完成。
 
 0.13 副屏验收：在 `\\.\DISPLAY2`（1920×1080，原点 `(-1920, 0)`）完成原生 Settings、原生及 UI 2.0 播放器、UI 2.0 Settings 放置验证；窗口均保持在副屏工作区。32 组 DPI/边缘布局及隐藏、最小化、恢复回归通过。该轮验证未改变系统显示器布局或 DPI 设置。
 
