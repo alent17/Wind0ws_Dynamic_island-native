@@ -1,6 +1,8 @@
 //! Platform-independent media state. Times are monotonic seconds from app start.
 pub mod activity;
 pub mod configuration;
+pub mod player;
+pub mod player_extension;
 pub mod preferences;
 pub mod settings;
 pub mod spectrum;

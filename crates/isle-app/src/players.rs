@@ -1,5 +1,5 @@
 //! Read-only, on-demand GSMTC discovery and a native selection dialog.
-use isle_core::Selection;
+use isle_core::{player::PlayerKind, Selection};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -32,24 +32,7 @@ struct Row {
     playing: bool,
 }
 fn display_name(id: &str) -> &str {
-    let id = id.to_ascii_lowercase();
-    if id.contains("cloudmusic") || id.contains("netease") {
-        "网易云音乐"
-    } else if id.contains("spotify") {
-        "Spotify"
-    } else if id.contains("qqmusic") {
-        "QQ 音乐"
-    } else if id.contains("msedge") {
-        "Microsoft Edge"
-    } else if id.contains("chrome") {
-        "Chrome"
-    } else if id.contains("firefox") {
-        "Firefox"
-    } else if id.contains("applemusic") {
-        "Apple Music"
-    } else {
-        "媒体播放器"
-    }
+    PlayerKind::from_session_identity(id).display_name()
 }
 fn rows(selection: &Selection, live: &[(String, bool)]) -> std::result::Result<Vec<Row>, String> {
     let mut rows: Vec<Row> = vec![];

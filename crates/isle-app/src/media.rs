@@ -1,5 +1,5 @@
 //! GSMTC worker. No Tauri dependency and no WinRT waits on the window thread.
-use isle_core::{Candidate, MediaSnapshot, Selection};
+use isle_core::{player::PlayerKind, Candidate, MediaSnapshot, Selection};
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -335,8 +335,7 @@ fn poll(
     if new_track {
         next.cover = None;
     }
-    let source = next.source.to_lowercase();
-    let netease = source.contains("cloudmusic") || source.contains("netease");
+    let netease = PlayerKind::from_session_identity(&next.source).uses_netease_extension();
     let empty_timeline = timeline.is_none_or(|(position, duration)| position == 0 && duration == 0);
     let observed_at = start.elapsed().as_secs_f64();
     next.timeline.accept(
