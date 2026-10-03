@@ -3,3 +3,7 @@
 __pycache__/
 
 /public/fonts/
+/docs/
+*.md
+!/README.md
+/dist/

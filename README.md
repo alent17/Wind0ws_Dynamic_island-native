@@ -2,6 +2,8 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
+当前版本：**0.11**（Cargo / Windows 文件版本 `0.11.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
 ## 功能
@@ -27,6 +29,7 @@ cargo build --release --bin isle-native
 
 ```powershell
 cargo fmt --all -- --check
+cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
@@ -35,7 +38,13 @@ cargo test --workspace
 
 ## 迁移与验收状态
 
-UI 2.0 的计划、进度、QA 记录和独立审查位于 `docs/native-ui-v2-*.md`。当前源码检查、Clippy 和单元测试通过；最近的隔离设置窗口启动回归仍出现 `0x80070057` 参数错误，根因待查。UIA 实机、视觉及混合 DPI 验收也仍待完成。请以进度表和 QA 记录为准。
+本项目按单 Agent 路线图推进。GitHub 仅维护本 README 作为项目说明和状态入口；其余计划、历史 QA、截图及性能记录保留本地，不再提交。代码、构建脚本和许可证继续纳入版本控制。
+
+当前优先级是 P0 稳定性：调查历史启动 `0x80070057`，完成 Settings 生命周期和资源检查，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
+
+2026-10-03：当前源码在 Segoe UI 回退字体环境中成功启动并打开 Settings，历史 HRESULT 尚未复现，根因仍待查。首轮 Settings 30 次回归在 GDI 计数门禁失败（基线 17，后期 22）；不能标记生命周期验收通过。UIA 实机、视觉、混合 DPI 及多显示器验收仍待完成。
+
+Windows CI 执行 fmt、check、Clippy、工作区测试及 Release 构建。CI 结果以 GitHub Actions 实际运行记录为准，构建通过不代表 UI 实机验收通过。
 
 ## MiSans 字体
 
