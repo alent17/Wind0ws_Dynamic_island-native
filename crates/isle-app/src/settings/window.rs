@@ -72,6 +72,7 @@ const CONTROL_RECOVER_COMBO: u32 = WM_APP + 75;
 const COMBO_SUBCLASS_ID: usize = 1;
 const ACCESSIBILITY_SUBCLASS_ID: usize = 2;
 const SETTINGS_ACCESSIBILITY_SUBCLASS_ID: usize = 3;
+const COMBO_LIST_ACCESSIBILITY_SUBCLASS_ID: usize = 4;
 const SHAPE_NAMES: [&str; 4] = ["收起长度", "收起凹肩", "展开凹肩", "展开圆角"];
 
 const fn color_ref(red: u8, green: u8, blue: u8) -> COLORREF {
@@ -388,6 +389,22 @@ unsafe fn child_combo(
         180.0,
     )?;
     if owner_draw && !SetWindowSubclass(combo, Some(combo_subclass), COMBO_SUBCLASS_ID, 0).as_bool()
+    {
+        return Err(Error::from_win32());
+    }
+    let mut combo_info = COMBOBOXINFO {
+        cbSize: size_of::<COMBOBOXINFO>() as u32,
+        ..Default::default()
+    };
+    GetComboBoxInfo(combo, &mut combo_info)?;
+    if combo_info.hwndList.0 == 0
+        || !SetWindowSubclass(
+            combo_info.hwndList,
+            Some(accessibility_subclass),
+            COMBO_LIST_ACCESSIBILITY_SUBCLASS_ID,
+            combo.0 as usize,
+        )
+        .as_bool()
     {
         return Err(Error::from_win32());
     }
@@ -877,6 +894,8 @@ unsafe extern "system" fn accessibility_subclass(
     if msg == WM_GETOBJECT && lp.0 as i32 == UiaRootObjectId {
         let provider = if subclass_id == SETTINGS_ACCESSIBILITY_SUBCLASS_ID {
             accessibility::settings_provider(hwnd)
+        } else if subclass_id == COMBO_LIST_ACCESSIBILITY_SUBCLASS_ID {
+            accessibility::combo_list_provider(hwnd, HWND(_reference_data as isize))
         } else {
             accessibility::provider(hwnd)
         };

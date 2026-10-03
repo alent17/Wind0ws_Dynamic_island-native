@@ -29,12 +29,18 @@ public static class SettingsUiaNativeProbe {
         public int size; public Rect monitor; public Rect work; public uint flags;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string device;
     }
+    [StructLayout(LayoutKind.Sequential)] struct ComboBoxInfo {
+        public int size; public Rect item; public Rect button; public uint state;
+        public IntPtr combo; public IntPtr itemWindow; public IntPtr list;
+    }
     [StructLayout(LayoutKind.Sequential)] struct Point { public int x,y; }
     [DllImport("user32.dll", SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetComboBoxInfo(IntPtr combo, ref ComboBoxInfo info);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll", SetLastError=true)] static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint="SendMessageW")] static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     public static IntPtr[] FindTop(int pid, string expectedClass) {
         var found=new List<IntPtr>();
         EnumWindows(delegate(IntPtr hwnd, IntPtr unused) {
@@ -56,6 +62,13 @@ public static class SettingsUiaNativeProbe {
     public static string Class(IntPtr hwnd) {
         var name=new StringBuilder(256); GetClassName(hwnd,name,name.Capacity); return name.ToString();
     }
+    public static IntPtr ComboList(IntPtr combo) {
+        var info=new ComboBoxInfo(); info.size=Marshal.SizeOf(typeof(ComboBoxInfo));
+        if(!GetComboBoxInfo(combo,ref info)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetComboBoxInfo failed for owned ComboBox "+combo);
+        if(info.list==IntPtr.Zero) throw new InvalidOperationException("GetComboBoxInfo returned no list HWND for owned ComboBox "+combo);
+        return info.list;
+    }
+    public static int ComboCount(IntPtr combo) { return SendMessage(combo,326,IntPtr.Zero,IntPtr.Zero).ToInt32(); }
     public static int OwnerPid(IntPtr hwnd) { uint owner; GetWindowThreadProcessId(hwnd,out owner); return (int)owner; }
     public static string MonitorDevice(IntPtr hwnd) {
         Rect rect; if(!GetWindowRect(hwnd,out rect)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetWindowRect failed");
@@ -402,13 +415,59 @@ try {
         Start-Sleep -Milliseconds 100
         $expanded=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
         if($expanded.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded){throw 'UIA Expand did not open the timezone ComboBox'}
-        $expandedTree=[System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd).FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
-        $comboPopupItems=@(foreach($candidate in $expandedTree){if($candidate.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem){$candidate.Current.Name}})
+        $comboElement=Wait-SettingsElement '210'
+        $comboSelection=Get-SettingsPattern $comboElement ([System.Windows.Automation.SelectionPattern]::Pattern)
+        if($comboSelection.Current.CanSelectMultiple -or -not $comboSelection.Current.IsSelectionRequired){throw 'ComboBox must expose required single-selection semantics'}
+        $initialComboSelection=@($comboSelection.Current.GetSelection())
+        if($initialComboSelection.Count -ne 1){throw "Expected one selected timezone item, got $($initialComboSelection.Count)"}
+        $initialComboItem=$initialComboSelection[0]
+        $initialComboItemId=$initialComboItem.Current.AutomationId
+        if($initialComboItemId -notmatch '^210:\d+$'){throw "Unexpected ComboBox item AutomationId $initialComboItemId"}
+        $comboHwnd=[IntPtr]$comboElement.Current.NativeWindowHandle
+        $comboListHwnd=[SettingsUiaNativeProbe]::ComboList($comboHwnd)
+        $comboDescendants=$comboElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        $comboPopupRoot=[System.Windows.Automation.AutomationElement]::FromHandle($comboListHwnd)
+        $comboPopupChildren=[System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+        $popupWalker=[System.Windows.Automation.TreeWalker]::RawViewWalker
+        $nativeComboCount=[SettingsUiaNativeProbe]::ComboCount($comboHwnd)
+        if($nativeComboCount -lt 2 -or $nativeComboCount -gt 2048){throw "Timezone ComboBox native count is out of range: $nativeComboCount"}
+        $popupChild=$null
+        for($popupIndex=0;$popupIndex -lt $nativeComboCount;$popupIndex++){
+            $popupChild=if($popupIndex -eq 0){$popupWalker.GetFirstChild($comboPopupRoot)}else{$popupWalker.GetNextSibling($popupChild)}
+            if($null -eq $popupChild){throw "ComboLBox UIA fragment ended at index $popupIndex before native count $nativeComboCount"}
+            $comboPopupChildren.Add($popupChild)
+        }
+        $comboPopupItems=@(foreach($candidate in $comboPopupChildren){
+            if($candidate.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem){
+                $itemPattern=$null
+                $hasSelectionItem=$candidate.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern,[ref]$itemPattern)
+                [ordered]@{name=$candidate.Current.Name;automationId=$candidate.Current.AutomationId;nativeWindowHandle=$candidate.Current.NativeWindowHandle;hasSelectionItem=$hasSelectionItem}
+            }
+        })
+        if($comboPopupItems.Count -lt 2){throw "ComboLBox UIA fragment exposed $($comboPopupItems.Count) timezone items; native CB_GETCOUNT=$([SettingsUiaNativeProbe]::ComboCount($comboHwnd)); list class=$([SettingsUiaNativeProbe]::Class($comboListHwnd)); root type=$($comboPopupRoot.Current.ControlType.ProgrammaticName); first item=$($comboPopupItems|ConvertTo-Json -Compress)"}
+        $alternateComboItem=$comboPopupChildren|Where-Object{$_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ListItem -and $_.Current.AutomationId -ne $initialComboItemId}|Select-Object -First 1
+        if($null -eq $alternateComboItem){throw 'ComboLBox UIA fragment did not expose an alternate timezone item'}
+        $alternateComboItemPattern=Get-SettingsPattern $alternateComboItem ([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        if($alternateComboItemPattern.Current.SelectionContainer.Current.NativeWindowHandle -ne $comboHwnd.ToInt32()){
+            throw 'ComboBox item SelectionContainer does not resolve to the owning ComboBox HWND'
+        }
+        $alternateComboItemPattern.Select()
+        Start-Sleep -Milliseconds 120
+        $changedComboSelection=@((Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($changedComboSelection.Count -ne 1 -or $changedComboSelection[0].Current.AutomationId -ne $alternateComboItem.Current.AutomationId){throw 'SelectionItem.Select did not change the ComboBox selection'}
+        $comboRemoveRejected=$false
+        try{$alternateComboItemPattern.RemoveFromSelection()}catch{$comboRemoveRejected=$true}
+        if(-not $comboRemoveRejected){throw 'Required ComboBox accepted RemoveFromSelection'}
+        (Get-SettingsPattern $initialComboItem ([System.Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        Start-Sleep -Milliseconds 120
+        $restoredComboSelection=@((Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($restoredComboSelection.Count -ne 1 -or $restoredComboSelection[0].Current.AutomationId -ne $initialComboItemId){throw 'SelectionItem.Select did not restore the original ComboBox selection'}
         $expanded.Collapse()
         Start-Sleep -Milliseconds 100
         $collapsed=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
         if($collapsed.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed){throw 'UIA Collapse did not close the timezone ComboBox'}
-        $interactionEvidence+=,[ordered]@{action='ExpandCollapse';automationId='210';expanded='Expanded';restored='Collapsed';popupListItems=$comboPopupItems}
+        $interactionEvidence+=,[ordered]@{action='Selection/SelectionItem ComboBox';automationId='210';initial=$initialComboItemId;changed=$alternateComboItem.Current.AutomationId;restored=$restoredComboSelection[0].Current.AutomationId;itemCount=$comboPopupItems.Count;removeRejected=$comboRemoveRejected;listHwnd=$comboListHwnd.ToInt64()}
+        $interactionEvidence+=,[ordered]@{action='ExpandCollapse';automationId='210';expanded='Expanded';restored='Collapsed';popupListItems=$comboPopupItems;comboTreeDescendantCount=$comboDescendants.Count;popupHwnd=$comboListHwnd.ToInt64()}
 
         $weather=Wait-SettingsElement '304'
         (Get-SettingsPattern $weather ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
