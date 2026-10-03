@@ -124,10 +124,8 @@ fn blurred_cover(cover: &isle_core::Cover) -> Vec<u8> {
                 }
             }
             let at = (y * SIDE + x) * 4;
-            if count != 0 {
-                for c in 0..4 {
-                    small[at + c] = (sum[c] / count) as u8;
-                }
+            for c in 0..4 {
+                small[at + c] = sum[c].checked_div(count).unwrap_or(0) as u8;
             }
         }
     }

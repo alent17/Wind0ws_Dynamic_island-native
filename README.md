@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.11**（Cargo / Windows 文件版本 `0.11.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.12**（Cargo / Windows 文件版本 `0.12.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -45,6 +45,8 @@ cargo test --workspace
 2026-10-03：当前源码在 Segoe UI 回退字体环境中成功启动并打开 Settings，历史 HRESULT 尚未复现，根因仍待查。首轮 Settings 30 次回归在 GDI 计数门禁失败（基线 17，后期 22）；不能标记生命周期验收通过。UIA 实机、视觉、混合 DPI 及多显示器验收仍待完成。
 
 Windows CI 执行 fmt、check、Clippy、工作区测试及 Release 构建。CI 结果以 GitHub Actions 实际运行记录为准，构建通过不代表 UI 实机验收通过。
+
+0.12 修复首轮远端 CI 的 Clippy 阻塞：blur 缩略图采样改用 `checked_div`，保持空样本为透明像素，继续将全部 Clippy 警告作为错误。当前播放器布局保持不变。
 
 ## MiSans 字体
 
