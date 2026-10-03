@@ -74,6 +74,7 @@ pub struct SettingsSnapshot {
     pub selection: Selection,
     pub widgets: Vec<WidgetConfig>,
     pub window_placement: Option<SettingsWindowPlacement>,
+    pub remote_debugging_port: u16,
 }
 
 impl Default for SettingsSnapshot {
@@ -85,6 +86,7 @@ impl Default for SettingsSnapshot {
             selection: Selection::default(),
             widgets: crate::widgets::defaults(),
             window_placement: None,
+            remote_debugging_port: 9223,
         }
     }
 }
@@ -100,6 +102,7 @@ impl SettingsSnapshot {
         document.set_widgets(&self.widgets)?;
         document.set_controls(&self.controls);
         document.set_window_placement(self.window_placement.as_ref())?;
+        document.set_remote_debugging_port(self.remote_debugging_port)?;
         document.preferences()?;
         Ok(())
     }
@@ -157,6 +160,7 @@ pub enum SettingsPatch {
     Media(MediaPatch),
     Weather(WeatherPatch),
     WindowPlacement(Option<SettingsWindowPlacement>),
+    RemoteDebuggingPort(u16),
 }
 
 impl SettingsSnapshot {
@@ -253,6 +257,12 @@ impl SettingsSnapshot {
                     placement.validate()?;
                 }
                 next.window_placement = placement;
+            }
+            SettingsPatch::RemoteDebuggingPort(port) => {
+                if port < 1024 {
+                    return Err("远程调试端口必须在 1024–65535 之间".into());
+                }
+                next.remote_debugging_port = port;
             }
         }
         next.validate()?;
@@ -549,6 +559,31 @@ mod tests {
             assert_eq!(state.runtime_revision(), 0);
             assert_eq!(state.runtime().window_placement, None);
         }
+    }
+
+    #[test]
+    fn remote_debugging_port_patch_validates_and_participates_in_revert() {
+        let mut state = RuntimeSettings::new(SettingsSnapshot::default());
+        assert_eq!(state.runtime().remote_debugging_port, 9223);
+        let revision = state
+            .apply_patch(
+                SettingsPatch::RemoteDebuggingPort(18_080),
+                Duration::ZERO,
+                Duration::ZERO,
+            )
+            .unwrap();
+        assert_eq!(state.runtime().remote_debugging_port, 18_080);
+        assert_eq!(state.pending().unwrap().revision, revision);
+        assert!(state
+            .apply_patch(
+                SettingsPatch::RemoteDebuggingPort(1023),
+                Duration::ZERO,
+                Duration::ZERO,
+            )
+            .is_err());
+        assert_eq!(state.runtime_revision(), revision);
+        assert!(state.revert(Duration::ZERO));
+        assert_eq!(state.runtime().remote_debugging_port, 9223);
     }
 
     #[test]

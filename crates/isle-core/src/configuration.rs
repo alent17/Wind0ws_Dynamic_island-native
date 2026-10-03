@@ -144,6 +144,9 @@ impl Document {
         if prefs.island_edge_position > 100 {
             return Err("贴边位置必须在 0–100 之间".into());
         }
+        if prefs.remote_debugging_port < 1024 {
+            return Err("远程调试端口必须在 1024–65535 之间".into());
+        }
         if !(80..=300).contains(&prefs.compact_length)
             || prefs.collapsed_edge_shoulder_radius > 16
             || prefs.expanded_edge_shoulder_radius > 64
@@ -336,6 +339,21 @@ impl Document {
         placement.validate()?;
         Ok(Some(placement))
     }
+    pub fn remote_debugging_port(&self) -> Result<u16, String> {
+        let port = self.preferences()?.remote_debugging_port;
+        if port < 1024 {
+            return Err("远程调试端口必须在 1024–65535 之间".into());
+        }
+        Ok(port)
+    }
+    pub fn set_remote_debugging_port(&mut self, port: u16) -> Result<(), String> {
+        if port < 1024 {
+            return Err("远程调试端口必须在 1024–65535 之间".into());
+        }
+        self.0
+            .insert("remoteDebuggingPort".into(), Value::from(port));
+        Ok(())
+    }
     pub fn set_window_placement(
         &mut self,
         placement: Option<&SettingsWindowPlacement>,
@@ -402,10 +420,30 @@ mod tests {
     }
     #[test]
     fn defaults_match_every_legacy_field() {
+        let mut current = serde_json::to_value(AppPreferences::default()).unwrap();
+        assert_eq!(current["remoteDebuggingPort"], 9223);
+        current
+            .as_object_mut()
+            .unwrap()
+            .remove("remoteDebuggingPort");
         assert_eq!(
-            serde_json::to_value(AppPreferences::default()).unwrap(),
+            current,
             serde_json::to_value(legacy::AppPreferences::default()).unwrap()
         );
+    }
+
+    #[test]
+    fn remote_debugging_port_defaults_validates_and_roundtrips() {
+        let mut doc = Document::parse(br#"{"compactLength":100}"#).unwrap();
+        assert_eq!(doc.remote_debugging_port().unwrap(), 9223);
+        doc.set_remote_debugging_port(18_080).unwrap();
+        let saved = Document::parse(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(saved.remote_debugging_port().unwrap(), 18_080);
+        for port in [0, 1, 1023] {
+            assert!(doc.set_remote_debugging_port(port).is_err());
+        }
+        assert!(Document::parse(br#"{"remoteDebuggingPort":1023}"#).is_err());
+        assert!(Document::parse(br#"{"remoteDebuggingPort":65536}"#).is_err());
     }
     #[test]
     fn controls_roundtrip_without_changing_city_or_unknown_fields() {

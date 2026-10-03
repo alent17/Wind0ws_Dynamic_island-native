@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.30**（Cargo / Windows 文件版本 `0.30.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.31**（Cargo / Windows 文件版本 `0.31.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -61,6 +61,8 @@ cargo test --workspace
 0.29 增加限时限长的本机 CDP `/json/version` 探测，只连接 `127.0.0.1`；并验证 Chromium 返回的 WebSocket 地址必须指向配置端口上的本机浏览器调试端点。
 
 0.30 建立受限 CDP WebSocket 传输：仅本机握手、请求体/响应体限长、超时控制、请求 ID 匹配与事件忽略。尚未接入具体网易云模式或 Like 操作。
+
+0.31 在高级设置中提供可持久化的网易云远程调试端口（默认 9223），限制为 1024–65535，并验证设置写入、重启回读和撤销流程。端口进入运行配置，供后续网易云 CDP 适配读取；播放器页不暴露传输细节，网易云专用命令仍待接入。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

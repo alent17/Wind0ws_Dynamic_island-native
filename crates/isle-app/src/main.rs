@@ -975,6 +975,7 @@ impl App {
     unsafe fn apply_runtime_edit(&mut self, edit: &configuration::Edit) -> Result<()> {
         match edit {
             configuration::Edit::WindowPlacement(_) => {}
+            configuration::Edit::RemoteDebuggingPort(_) => {}
             configuration::Edit::City(city) => {
                 self.model.weather = isle_core::weather::View {
                     city: Some(city.clone()),
@@ -1073,6 +1074,11 @@ impl App {
                 };
                 match result {
                     Ok(settings) => {
+                        if self.ui_v2 {
+                            settings.set_remote_debugging_port(
+                                self.configuration.remote_debugging_port,
+                            );
+                        }
                         self.weather.request(None);
                         if let Some(error) = &self.configuration.load_error {
                             settings.message(error);
@@ -1352,6 +1358,9 @@ impl App {
                                     &self.configuration.controls,
                                     &self.configuration.appearance,
                                 );
+                                settings.set_remote_debugging_port(
+                                    self.configuration.remote_debugging_port,
+                                );
                             }
                             self.update_save_state();
                         }
@@ -1373,6 +1382,15 @@ impl App {
                         weather_settings::PLACEMENT_CHANGED if self.ui_v2 => {
                             self.save_settings_window_placement(Duration::from_millis(200))?;
                             changed = false;
+                        }
+                        weather_settings::APPLY_REMOTE_DEBUGGING_PORT if self.ui_v2 => {
+                            match self.settings.as_ref().unwrap().remote_debugging_port() {
+                                Ok(port) => self.queue_settings(
+                                    configuration::Edit::RemoteDebuggingPort(port),
+                                    Duration::from_millis(150),
+                                )?,
+                                Err(error) => self.settings.as_ref().unwrap().message(&error),
+                            }
                         }
                         weather_settings::APPLY if self.ui_v2 => {
                             if let Some(city) = self
@@ -1537,6 +1555,12 @@ impl App {
                     match outcome.result {
                         Ok(()) => match outcome.edit {
                             configuration::Edit::WindowPlacement(_) => {}
+                            configuration::Edit::RemoteDebuggingPort(_) => {
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("远程调试端口已保存");
+                                }
+                            }
                             configuration::Edit::City(city) => {
                                 self.model.weather = isle_core::weather::View {
                                     city: Some(city),

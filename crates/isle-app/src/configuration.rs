@@ -142,6 +142,7 @@ impl Store {
             Edit::WindowPlacement(placement) => {
                 document.set_window_placement(placement.as_ref())?
             }
+            Edit::RemoteDebuggingPort(port) => document.set_remote_debugging_port(*port)?,
         }
         self.commit(document)
     }
@@ -157,6 +158,7 @@ impl Store {
         document.set_selection(&snapshot.selection)?;
         document.set_widgets(&snapshot.widgets)?;
         document.set_window_placement(snapshot.window_placement.as_ref())?;
+        document.set_remote_debugging_port(snapshot.remote_debugging_port)?;
         self.commit(document)
     }
     fn commit(&mut self, document: Document) -> Result<(), String> {
@@ -210,6 +212,7 @@ pub enum Edit {
     Players(isle_core::Selection),
     Appearance(Appearance),
     WindowPlacement(Option<SettingsWindowPlacement>),
+    RemoteDebuggingPort(u16),
 }
 pub struct Outcome {
     pub edit: Edit,
@@ -230,6 +233,7 @@ pub struct Service {
     pub appearance: Appearance,
     pub selection: isle_core::Selection,
     pub widgets: Vec<isle_core::widgets::WidgetConfig>,
+    pub remote_debugging_port: u16,
     pub load_error: Option<String>,
     busy: bool,
     state: RuntimeSettings,
@@ -272,6 +276,12 @@ impl Service {
             .as_ref()
             .ok()
             .and_then(|d| d.window_placement().ok().flatten());
+        let remote_debugging_port = store
+            .document
+            .as_ref()
+            .ok()
+            .and_then(|d| d.remote_debugging_port().ok())
+            .unwrap_or(9223);
         let load_error = store.document.as_ref().err().cloned();
         let initial = SettingsSnapshot {
             city: city.clone(),
@@ -280,6 +290,7 @@ impl Service {
             selection: selection.clone(),
             widgets,
             window_placement,
+            remote_debugging_port,
         };
         let state = RuntimeSettings::new(initial);
         let (sender, receiver) = sync_channel::<Option<Job>>(1);
@@ -310,6 +321,7 @@ impl Service {
             appearance,
             selection,
             widgets: state.runtime().widgets.clone(),
+            remote_debugging_port: state.runtime().remote_debugging_port,
             load_error,
             busy: false,
             state,
@@ -331,6 +343,7 @@ impl Service {
         self.appearance = snapshot.appearance.clone();
         self.selection = snapshot.selection.clone();
         self.widgets = snapshot.widgets.clone();
+        self.remote_debugging_port = snapshot.remote_debugging_port;
     }
     fn edit_for_patch(&self, patch: &SettingsPatch) -> Edit {
         match patch {
@@ -349,6 +362,7 @@ impl Service {
                 .map(Edit::City)
                 .unwrap_or_else(|| Edit::Controls(self.state.runtime().controls.clone())),
             SettingsPatch::WindowPlacement(placement) => Edit::WindowPlacement(placement.clone()),
+            SettingsPatch::RemoteDebuggingPort(port) => Edit::RemoteDebuggingPort(*port),
         }
     }
     fn patch_for_edit(edit: &Edit) -> SettingsPatch {
@@ -384,6 +398,7 @@ impl Service {
                 })
             }
             Edit::WindowPlacement(placement) => SettingsPatch::WindowPlacement(placement.clone()),
+            Edit::RemoteDebuggingPort(port) => SettingsPatch::RemoteDebuggingPort(*port),
         }
     }
     pub fn apply_patch(
@@ -652,6 +667,7 @@ mod tests {
         {
             let mut service = Service::new(HWND(0), path.clone(), None).unwrap();
             assert_eq!(service.window_placement().unwrap().x, -1920);
+            assert_eq!(service.remote_debugging_port, 9223);
             let placement = SettingsWindowPlacement {
                 x: -1280,
                 y: 88,
@@ -666,6 +682,9 @@ mod tests {
                 )
                 .unwrap();
             service
+                .apply_patch(SettingsPatch::RemoteDebuggingPort(18_080), Duration::ZERO)
+                .unwrap();
+            service
                 .apply_patch(
                     SettingsPatch::Appearance(isle_core::settings::AppearancePatch {
                         compact_length: Some(180),
@@ -676,16 +695,19 @@ mod tests {
                 .unwrap();
             service.flush_timeout(Duration::from_secs(2)).unwrap();
             assert_eq!(service.window_placement(), Some(&placement));
+            assert_eq!(service.remote_debugging_port, 18_080);
             let saved: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert_eq!(saved["compactLength"], 180);
             assert_eq!(saved["settingsWindowPlacement"]["x"], -1280);
+            assert_eq!(saved["remoteDebuggingPort"], 18_080);
             assert_eq!(saved["settingsWindowPlacement"]["future"]["keep"], true);
             assert_eq!(saved["futureRoot"]["keep"], serde_json::json!([1, null, 3]));
         }
         let restarted = Service::new(HWND(0), path, None).unwrap();
         assert_eq!(restarted.window_placement().unwrap().x, -1280);
         assert_eq!(restarted.appearance.compact_length, 180);
+        assert_eq!(restarted.remote_debugging_port, 18_080);
     }
 
     struct Fixture(PathBuf);

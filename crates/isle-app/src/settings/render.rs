@@ -352,7 +352,7 @@ impl ShellRender {
                 self.card(
                     horizontal_scroll,
                     144.0 - scroll,
-                    280.0,
+                    380.0,
                     card_width,
                     "配置保存",
                     "运行时更改保持生效；写入失败时可重试或恢复。 ",

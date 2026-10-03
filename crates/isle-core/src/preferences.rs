@@ -82,6 +82,8 @@ pub struct AppPreferences {
     pub show_debug_info: bool,
     pub log_level: String,
     pub monitor_index: u32,
+    /// Local Chromium remote debugging port used by supported player adapters.
+    pub remote_debugging_port: u16,
     pub player_weights: HashMap<String, u32>,
     pub player_order_ids: Vec<String>,
     pub selected_player_ids: Option<Vec<String>>,
@@ -154,6 +156,7 @@ impl Default for AppPreferences {
             show_debug_info: false,
             log_level: "Info".to_string(),
             monitor_index: 0,
+            remote_debugging_port: 9223,
             player_weights,
             player_order_ids: Vec::new(),
             selected_player_ids: None,

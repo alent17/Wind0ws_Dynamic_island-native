@@ -48,6 +48,7 @@ pub const RETRY_SAVE: usize = 108;
 pub const REVERT_SAVED: usize = 109;
 pub const INSPECTION_LOCK: usize = 110;
 pub const PLACEMENT_CHANGED: usize = 111;
+pub const APPLY_REMOTE_DEBUGGING_PORT: usize = 112;
 pub const CLOSE: usize = 2;
 
 const WEATHER_QUERY: i32 = 101;
@@ -64,6 +65,7 @@ const ISLAND_TOPMOST: i32 = 217;
 const PLAYER_TOPMOST: i32 = 218;
 const SHAPE_CONTROL_BASE: i32 = 220;
 const INSPECTION_CHECK: i32 = 240;
+const REMOTE_DEBUG_PORT: i32 = 260;
 const SPECTRUM: i32 = 251;
 const SPECTRUM_REALTIME: i32 = 252;
 const SPECTRUM_RANDOM: i32 = 253;
@@ -133,6 +135,7 @@ struct Theme {
     query: HWND,
     list: HWND,
     weather_status: HWND,
+    remote_debug_port: HWND,
     zone: HWND,
     style: HWND,
     edge: HWND,
@@ -1468,6 +1471,10 @@ unsafe fn handle_reentrant_message(
                 post_command(hwnd, REVERT_SAVED);
                 return Some(LRESULT(0));
             }
+            if id == APPLY_REMOTE_DEBUGGING_PORT as i32 && notify == BN_CLICKED as usize {
+                post_command(hwnd, APPLY_REMOTE_DEBUGGING_PORT);
+                return Some(LRESULT(0));
+            }
             if id == INSPECTION_CHECK && notify == BN_CLICKED as usize {
                 post_command(hwnd, INSPECTION_LOCK);
                 return Some(LRESULT(0));
@@ -2071,6 +2078,7 @@ impl Settings {
             query: HWND(0),
             list: HWND(0),
             weather_status: HWND(0),
+            remote_debug_port: HWND(0),
             zone: HWND(0),
             style: HWND(0),
             edge: HWND(0),
@@ -2457,6 +2465,42 @@ impl Settings {
             490.0,
             22.0,
         )?;
+        child_text(
+            hwnd,
+            theme,
+            Page::Advanced,
+            "网易云音乐远程调试端口（1024–65535）",
+            232.0,
+            204.0,
+            360.0,
+        )?;
+        theme.remote_debug_port = add_control(
+            hwnd,
+            theme,
+            w!("EDIT"),
+            "9223",
+            REMOTE_DEBUG_PORT,
+            WS_BORDER | WS_TABSTOP | WINDOW_STYLE(ES_NUMBER as u32 | ES_AUTOHSCROLL as u32),
+            Page::Advanced,
+            232.0,
+            232.0,
+            148.0,
+            30.0,
+        )?;
+        SendMessageW(theme.remote_debug_port, EM_LIMITTEXT, WPARAM(5), LPARAM(0));
+        add_control(
+            hwnd,
+            theme,
+            w!("BUTTON"),
+            "应用端口",
+            APPLY_REMOTE_DEBUGGING_PORT as i32,
+            WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
+            Page::Advanced,
+            394.0,
+            230.0,
+            112.0,
+            34.0,
+        )?;
         theme.list = add_control(
             hwnd,
             theme,
@@ -2486,7 +2530,7 @@ impl Settings {
             Page::Advanced,
             "保存状态和错误会显示在窗口底部。",
             232.0,
-            204.0,
+            294.0,
             480.0,
         )?;
         add_control(
@@ -2498,7 +2542,7 @@ impl Settings {
             WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
             Page::Advanced,
             232.0,
-            246.0,
+            330.0,
             132.0,
             34.0,
         )?;
@@ -2511,7 +2555,7 @@ impl Settings {
             WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
             Page::Advanced,
             378.0,
-            246.0,
+            330.0,
             176.0,
             34.0,
         )?;
@@ -2610,6 +2654,25 @@ impl Settings {
     pub unsafe fn query(&self) -> String {
         let query = get_theme(self.hwnd).query;
         read_text(query, 81).trim().to_string()
+    }
+
+    pub unsafe fn remote_debugging_port(&self) -> std::result::Result<u16, String> {
+        let text = read_text(get_theme(self.hwnd).remote_debug_port, 6);
+        let port = text
+            .parse::<u16>()
+            .map_err(|_| "端口必须是 1024–65535 之间的整数".to_string())?;
+        if port < 1024 {
+            return Err("端口必须是 1024–65535 之间的整数".into());
+        }
+        Ok(port)
+    }
+
+    pub unsafe fn set_remote_debugging_port(&self, port: u16) {
+        SetWindowTextW(
+            get_theme(self.hwnd).remote_debug_port,
+            &HSTRING::from(port.to_string()),
+        )
+        .ok();
     }
 
     pub unsafe fn take_placement_update(&mut self) -> Option<SettingsWindowPlacement> {

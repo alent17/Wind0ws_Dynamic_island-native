@@ -455,6 +455,30 @@ try {
         }
         if($settingsShots.Count -ne 6){throw "Expected six Settings page screenshots, captured $($settingsShots.Count)"}
 
+        $debugPortElement=Wait-SettingsElement '260'
+        $debugPortValue=Get-SettingsPattern $debugPortElement ([System.Windows.Automation.ValuePattern]::Pattern)
+        if($debugPortValue.Current.Value -ne '9223'){throw "Unexpected default remote debugging port: $($debugPortValue.Current.Value)"}
+        $debugPortValue.SetValue('9230')
+        (Get-SettingsPattern (Wait-SettingsElement '112') ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $savedPort=$false
+        for($attempt=0;$attempt -lt 40;$attempt++){
+            Start-Sleep -Milliseconds 50
+            $savedSettings=Get-Content -LiteralPath $settingsPath -Raw|ConvertFrom-Json
+            if($savedSettings.remoteDebuggingPort -eq 9230){$savedPort=$true;break}
+        }
+        if(-not $savedPort){throw 'Applying the remote debugging port did not persist remoteDebuggingPort=9230'}
+        $interactionEvidence+=,[ordered]@{action='Persist remote debugging port';editAutomationId='260';applyAutomationId='112';default=9223;changed=9230;saved=$true}
+        (Get-SettingsPattern (Wait-SettingsElement '260') ([System.Windows.Automation.ValuePattern]::Pattern)).SetValue('9223')
+        (Get-SettingsPattern (Wait-SettingsElement '112') ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $restoredPort=$false
+        for($attempt=0;$attempt -lt 40;$attempt++){
+            Start-Sleep -Milliseconds 50
+            $savedSettings=Get-Content -LiteralPath $settingsPath -Raw|ConvertFrom-Json
+            if($savedSettings.remoteDebuggingPort -eq 9223){$restoredPort=$true;break}
+        }
+        if(-not $restoredPort){throw 'Could not restore the isolated fixture port to its default'}
+        $interactionEvidence+=,[ordered]@{action='Restore remote debugging port';value=9223;saved=$true}
+
         $appearance=Wait-SettingsElement '301'
         (Get-SettingsPattern $appearance ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
         [void](Wait-SettingsElement '211')

@@ -109,6 +109,19 @@ impl Settings {
         }
     }
 
+    pub unsafe fn remote_debugging_port(&self) -> std::result::Result<u16, String> {
+        match &self.inner {
+            Inner::Legacy(_) => Err("此设置仅在新版设置页中可用".into()),
+            Inner::V2(value) => value.remote_debugging_port(),
+        }
+    }
+
+    pub unsafe fn set_remote_debugging_port(&self, port: u16) {
+        if let Inner::V2(value) = &self.inner {
+            value.set_remote_debugging_port(port);
+        }
+    }
+
     pub unsafe fn selected(&self) -> Option<City> {
         match &self.inner {
             Inner::Legacy(value) => value.selected(),
