@@ -23,6 +23,60 @@ pub enum Action {
     Next,
     Seek(u64),
 }
+
+/// Standard playback controls are always gated by the capabilities reported
+/// by the active GSMTC session. Player-specific extensions do not intercept
+/// play/pause, previous, next, or seek.
+fn gsmtc_action_enabled(snapshot: &MediaSnapshot, action: Action) -> bool {
+    match action {
+        Action::Toggle => snapshot.play_pause,
+        Action::Previous => snapshot.previous,
+        Action::Next => snapshot.next,
+        Action::Seek(_) => snapshot.seek && snapshot.timeline.duration_ms > 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn netease_standard_transport_controls_remain_gsmtc_capability_gated() {
+        let netease = PlayerKind::from_session_identity("CloudMusic.exe");
+        assert!(netease.uses_netease_extension());
+        let snapshot = MediaSnapshot {
+            source: "CloudMusic.exe".into(),
+            play_pause: true,
+            previous: false,
+            next: true,
+            seek: true,
+            timeline: isle_core::Timeline {
+                duration_ms: 180_000,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(gsmtc_action_enabled(&snapshot, Action::Toggle));
+        assert!(!gsmtc_action_enabled(&snapshot, Action::Previous));
+        assert!(gsmtc_action_enabled(&snapshot, Action::Next));
+        assert!(gsmtc_action_enabled(&snapshot, Action::Seek(60_000)));
+        assert!(gsmtc_action_enabled(&snapshot, Action::Seek(0)));
+        let empty_timeline = MediaSnapshot {
+            timeline: Default::default(),
+            ..snapshot.clone()
+        };
+        assert!(!gsmtc_action_enabled(&empty_timeline, Action::Seek(0)));
+
+        let unsupported = MediaSnapshot {
+            play_pause: false,
+            next: false,
+            ..snapshot
+        };
+        assert!(!gsmtc_action_enabled(&unsupported, Action::Toggle));
+        assert!(!gsmtc_action_enabled(&unsupported, Action::Next));
+    }
+}
 enum Command {
     Wake,
     Control(u64, Action, Instant),
@@ -431,19 +485,17 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                 .as_ref()
                 .filter(|s| s.snapshot.session == target && when.elapsed() < Duration::from_secs(2))
             {
+                if !gsmtc_action_enabled(&s.snapshot, action) {
+                    continue;
+                }
                 let op = match action {
-                    Action::Toggle if s.snapshot.play_pause => s.value.TryTogglePlayPauseAsync(),
-                    Action::Previous if s.snapshot.previous => s.value.TrySkipPreviousAsync(),
-                    Action::Next if s.snapshot.next => s.value.TrySkipNextAsync(),
-                    Action::Seek(position)
-                        if s.snapshot.seek && s.snapshot.timeline.duration_ms > 0 =>
-                    {
+                    Action::Toggle => s.value.TryTogglePlayPauseAsync(),
+                    Action::Previous => s.value.TrySkipPreviousAsync(),
+                    Action::Next => s.value.TrySkipNextAsync(),
+                    Action::Seek(position) => {
                         let position = position.min(s.snapshot.timeline.duration_ms);
                         s.value
                             .TryChangePlaybackPositionAsync((position * 10_000) as i64)
-                    }
-                    _ => {
-                        continue;
                     }
                 };
                 if let Err(e) = op.and_then(|op| wait(op, shared)).and_then(|accepted| {
