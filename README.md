@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.22**（Cargo / Windows 文件版本 `0.22.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.23**（Cargo / Windows 文件版本 `0.23.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -44,7 +44,9 @@ cargo test --workspace
 
 当前优先级是 P0 稳定性：继续调查历史 `0x80070057`，完成 Settings 键盘与完整 UIA 选择模式、视觉和混合 DPI 验收，再继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。UI 2.0 仍通过 `--ui-v2` 启用。
 
-0.22 为原生 ComboBox 和弹出选项列表提供 Selection / SelectionItem UIA 树，使选项可以发现、查询和选择；副屏交互验收进行中。
+0.22 为原生 ComboBox 和弹出选项列表提供 Selection / SelectionItem UIA 树；副屏实测列出全部六个时区选项，完成切换、还原和必选约束验证。
+
+0.23 在 DISPLAY2 验证设置键盘 Tab、Space、F4 / Escape 和单选方向键；所有交互状态均恢复到隔离夹具初值。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

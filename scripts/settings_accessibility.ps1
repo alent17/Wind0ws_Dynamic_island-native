@@ -24,6 +24,10 @@ public static class SettingsUiaNativeProbe {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern bool AttachThreadInput(uint sourceThread,uint targetThread,bool attach);
+    [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr GetFocus();
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Rect { public int left,top,right,bottom; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct MonitorInfo {
         public int size; public Rect monitor; public Rect work; public uint flags;
@@ -34,10 +38,14 @@ public static class SettingsUiaNativeProbe {
         public IntPtr combo; public IntPtr itemWindow; public IntPtr list;
     }
     [StructLayout(LayoutKind.Sequential)] struct Point { public int x,y; }
+    [StructLayout(LayoutKind.Sequential)] struct GuiThreadInfo {
+        public int size; public uint flags; public IntPtr active,focus,capture,menuOwner,moveSize,caret; public Rect caretRect;
+    }
     [DllImport("user32.dll", SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll", SetLastError=true)] static extern bool GetComboBoxInfo(IntPtr combo, ref ComboBoxInfo info);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetGUIThreadInfo(uint threadId, ref GuiThreadInfo info);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll", SetLastError=true)] static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", EntryPoint="SendMessageW")] static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
@@ -70,6 +78,35 @@ public static class SettingsUiaNativeProbe {
     }
     public static int ComboCount(IntPtr combo) { return SendMessage(combo,326,IntPtr.Zero,IntPtr.Zero).ToInt32(); }
     public static int OwnerPid(IntPtr hwnd) { uint owner; GetWindowThreadProcessId(hwnd,out owner); return (int)owner; }
+    public static IntPtr FocusedOwnedControl(IntPtr topWindow,int pid,string expectedClass) {
+        Require(topWindow,pid,expectedClass);
+        uint ownerPid; uint targetThread=GetWindowThreadProcessId(topWindow,out ownerPid);
+        var info=new GuiThreadInfo();info.size=Marshal.SizeOf(typeof(GuiThreadInfo));
+        if(targetThread==0 || !GetGUIThreadInfo(targetThread,ref info)) throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not read focus from the owned Settings thread");
+        if(info.focus==IntPtr.Zero || OwnerPid(info.focus)!=pid) throw new InvalidOperationException("Settings focus is not inside the owned fixture process");
+        return info.focus;
+    }
+    public static IntPtr FocusOwnedControl(IntPtr hwnd,int pid,IntPtr topWindow,string expectedClass) {
+        if(hwnd==IntPtr.Zero || !IsWindow(hwnd) || OwnerPid(hwnd)!=pid)
+            throw new InvalidOperationException("Focus target is not a live HWND owned by the fixture process");
+        Require(topWindow,pid,expectedClass);
+        uint ownerPid; uint targetThread=GetWindowThreadProcessId(hwnd,out ownerPid); uint currentThread=GetCurrentThreadId();
+        if(ownerPid!=(uint)pid || targetThread==0) throw new InvalidOperationException("Focus target thread does not belong to the fixture process");
+        bool attached=AttachThreadInput(currentThread,targetThread,true);
+        if(!attached) throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not attach the isolated UIA input queues");
+        try {
+            SetFocus(hwnd);
+            if(GetFocus()!=hwnd) throw new InvalidOperationException("The owned Settings control did not accept keyboard focus");
+        } finally { AttachThreadInput(currentThread,targetThread,false); }
+        return FocusedOwnedControl(topWindow,pid,expectedClass);
+    }
+    public static void PostOwnedKey(IntPtr hwnd,int pid,int virtualKey,bool keyUp) {
+        if(hwnd==IntPtr.Zero || !IsWindow(hwnd) || OwnerPid(hwnd)!=pid)
+            throw new InvalidOperationException("Keyboard target is not a live HWND owned by the fixture process");
+        uint message=keyUp?0x0101u:0x0100u;
+        if(!PostMessage(hwnd,message,(IntPtr)virtualKey,IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(),"Could not post a key to the owned fixture control");
+    }
     public static string MonitorDevice(IntPtr hwnd) {
         Rect rect; if(!GetWindowRect(hwnd,out rect)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetWindowRect failed");
         Point center=new Point{x=rect.left+(rect.right-rect.left)/2,y=rect.top+(rect.bottom-rect.top)/2};
@@ -483,6 +520,82 @@ try {
         $restoredQuery=(Get-SettingsPattern (Wait-SettingsElement '101') ([System.Windows.Automation.ValuePattern]::Pattern)).Current.Value
         if($restoredQuery -ne $initialQuery){throw 'UIA Value.SetValue did not restore the fixture Edit control'}
         $interactionEvidence+=,[ordered]@{action='Value';automationId='101';changed='UIA fixture';restored=$restoredQuery}
+
+        function Send-OwnedKey([string]$Keys,[IntPtr]$Target) {
+            if($null -eq $Target -or $Target.ToInt64() -eq 0){throw "Refusing $Keys because the focused native HWND is missing"}
+            if([SettingsUiaNativeProbe]::OwnerPid($Target) -ne $owned.Id){throw "Refusing $Keys because target HWND is not owned by the fixture"}
+            switch($Keys){
+                '{TAB}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x09,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x09,$true) }
+                '{SPACE}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x20,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x20,$true) }
+                '{F4}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x73,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x73,$true) }
+                '{ESC}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x1B,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x1B,$true) }
+                '{ENTER}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x0D,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x0D,$true) }
+                '{RIGHT}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x27,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x27,$true) }
+                '{LEFT}' { [SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x25,$false);[SettingsUiaNativeProbe]::PostOwnedKey($Target,$owned.Id,0x25,$true) }
+                default { throw "Unsupported isolated keyboard test key: $Keys" }
+            }
+            Start-Sleep -Milliseconds 100
+            $afterHwnd=[SettingsUiaNativeProbe]::FocusedOwnedControl($settingsHwnd,$owned.Id,$settingsClass)
+            $afterKey=[System.Windows.Automation.AutomationElement]::FromHandle($afterHwnd)
+            if($afterKey.Current.ProcessId -ne $owned.Id){throw 'Keyboard focus escaped the owned Settings fixture process'}
+            return $afterKey
+        }
+
+        $generalNav=Wait-SettingsElement '300'
+        (Get-SettingsPattern $generalNav ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $keyboardToggle=Wait-SettingsElement '208'
+        $keyboardToggleHwnd=[IntPtr]$keyboardToggle.Current.NativeWindowHandle
+        $focusBeforeHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl($keyboardToggleHwnd,$owned.Id,$settingsHwnd,$settingsClass)
+        Start-Sleep -Milliseconds 80
+        $focusBefore=[System.Windows.Automation.AutomationElement]::FromHandle($focusBeforeHwnd)
+        if($focusBefore.Current.ProcessId -ne $owned.Id -or $focusBefore.Current.AutomationId -ne '208'){throw 'Could not focus the owned General checkbox'}
+        $tabFocus=Send-OwnedKey -Keys '{TAB}' -Target $focusBeforeHwnd
+        if($tabFocus.Current.AutomationId -eq '208'){throw 'Tab did not advance Settings keyboard focus'}
+        $interactionEvidence+=,[ordered]@{action='Keyboard Tab';from='208';to=$tabFocus.Current.AutomationId}
+
+        $keyboardToggleHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl($keyboardToggleHwnd,$owned.Id,$settingsHwnd,$settingsClass)
+        Start-Sleep -Milliseconds 80
+        $toggleBefore=(Get-SettingsPattern $keyboardToggle ([System.Windows.Automation.TogglePattern]::Pattern)).Current.ToggleState
+        [void](Send-OwnedKey -Keys '{SPACE}' -Target $keyboardToggleHwnd)
+        $toggleAfter=(Get-SettingsPattern (Wait-SettingsElement '208') ([System.Windows.Automation.TogglePattern]::Pattern)).Current.ToggleState
+        if($toggleAfter -eq $toggleBefore){throw 'Space did not toggle the focused Settings checkbox'}
+        [void](Send-OwnedKey -Keys '{SPACE}' -Target $keyboardToggleHwnd)
+        $toggleRestored=(Get-SettingsPattern (Wait-SettingsElement '208') ([System.Windows.Automation.TogglePattern]::Pattern)).Current.ToggleState
+        if($toggleRestored -ne $toggleBefore){throw 'Space did not restore the original Settings checkbox state'}
+        $interactionEvidence+=,[ordered]@{action='Keyboard Space';automationId='208';initial=[string]$toggleBefore;changed=[string]$toggleAfter;restored=[string]$toggleRestored}
+
+        $keyboardCombo=Wait-SettingsElement '210'
+        $keyboardComboHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl([IntPtr]$keyboardCombo.Current.NativeWindowHandle,$owned.Id,$settingsHwnd,$settingsClass)
+        Start-Sleep -Milliseconds 80
+        [void](Send-OwnedKey -Keys '{F4}' -Target $keyboardComboHwnd)
+        $comboKeyboardExpanded=(Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Current.ExpandCollapseState
+        if($comboKeyboardExpanded -ne [System.Windows.Automation.ExpandCollapseState]::Expanded){throw 'F4 did not expand the focused Settings ComboBox'}
+        [void](Send-OwnedKey -Keys '{ESC}' -Target $keyboardComboHwnd)
+        $comboKeyboardRestored=(Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)).Current.ExpandCollapseState
+        if($comboKeyboardRestored -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed){throw 'Escape did not close the Settings ComboBox'}
+        $interactionEvidence+=,[ordered]@{action='Keyboard F4/Escape';automationId='210';expanded=[string]$comboKeyboardExpanded;restored=[string]$comboKeyboardRestored}
+
+        $appearanceNav=Wait-SettingsElement '301'
+        Start-Sleep -Milliseconds 80
+        (Get-SettingsPattern $appearanceNav ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        [void](Wait-SettingsElement '211')
+        $interactionEvidence+=,[ordered]@{action='Invoke';automationId='301';result='navigated to Appearance before keyboard radio tests'}
+
+        $keyboardSelection=Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)
+        $keyboardInitial=@($keyboardSelection.Current.GetSelection())
+        if($keyboardInitial.Count -ne 1){throw 'Keyboard radio fixture did not start with exactly one selected option'}
+        $keyboardInitialId=$keyboardInitial[0].Current.AutomationId
+        $keyboardRadio=Wait-SettingsElement $keyboardInitialId
+        $keyboardRadioHwnd=[SettingsUiaNativeProbe]::FocusOwnedControl([IntPtr]$keyboardRadio.Current.NativeWindowHandle,$owned.Id,$settingsHwnd,$settingsClass)
+        Start-Sleep -Milliseconds 80
+        [void](Send-OwnedKey -Keys '{RIGHT}' -Target $keyboardRadioHwnd)
+        $keyboardChanged=@((Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($keyboardChanged.Count -ne 1 -or $keyboardChanged[0].Current.AutomationId -eq $keyboardInitialId){throw 'Right Arrow did not move Settings radio selection'}
+        $changedRadioHwnd=[SettingsUiaNativeProbe]::FocusedOwnedControl($settingsHwnd,$owned.Id,$settingsClass)
+        [void](Send-OwnedKey -Keys '{LEFT}' -Target $changedRadioHwnd)
+        $keyboardRestored=@((Get-SettingsPattern ([System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)) ([System.Windows.Automation.SelectionPattern]::Pattern)).Current.GetSelection())
+        if($keyboardRestored.Count -ne 1 -or $keyboardRestored[0].Current.AutomationId -ne $keyboardInitialId){throw 'Left Arrow did not restore the initial Settings radio selection'}
+        $interactionEvidence+=,[ordered]@{action='Keyboard Left/Right';initial=$keyboardInitialId;changed=$keyboardChanged[0].Current.AutomationId;restored=$keyboardRestored[0].Current.AutomationId}
     }
     $final=Get-FreshDiagnostic $mainHwnd $owned.Id $logPath $mainClass
     $evidence=[ordered]@{
