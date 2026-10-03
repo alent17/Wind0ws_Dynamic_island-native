@@ -9,22 +9,6 @@ $hostMetadata=[ordered]@{
     uiAutomationClientAssembly=([AppDomain]::CurrentDomain.GetAssemblies()|Where-Object{$_.GetName().Name -eq 'UIAutomationClient'}|Select-Object -First 1).Location
     uiAutomationTypesAssembly=([AppDomain]::CurrentDomain.GetAssemblies()|Where-Object{$_.GetName().Name -eq 'UIAutomationTypes'}|Select-Object -First 1).Location
 }
-# UIAutomationClient does not always load the Windows client-side proxy assembly
-# just because the client and type assemblies are present. Register the official
-# Microsoft Win32/MSAA proxies before making the first AutomationElement call.
-$clientProxyPath=Join-Path $env:WINDIR 'Microsoft.NET\assembly\GAC_MSIL\UIAutomationClientsideProviders\v4.0_4.0.0.0__31bf3856ad364e35\UIAutomationClientsideProviders.dll'
-$clientProxyAssembly=$null
-$clientProxyRegistration=[ordered]@{assemblyPath=$clientProxyPath;assemblyLoaded=$false;registered=$false;error=$null}
-try {
-    if(!(Test-Path -LiteralPath $clientProxyPath)) { throw 'Microsoft GAC proxy assembly is unavailable at the expected .NET Framework path' }
-    $clientProxyAssembly=[System.Reflection.Assembly]::LoadFile($clientProxyPath)
-    $clientProxyRegistration.assemblyLoaded=$true
-    [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($clientProxyAssembly.GetName())
-    $clientProxyRegistration.registered=$true
-} catch {
-    $clientProxyRegistration.error=$_.Exception.ToString()
-}
-
 if(-not ('SettingsUiaNativeProbe' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -39,6 +23,15 @@ public static class SettingsUiaNativeProbe {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int max);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Rect { public int left,top,right,bottom; }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct MonitorInfo {
+        public int size; public Rect monitor; public Rect work; public uint flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)] public string device;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct Point { public int x,y; }
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(Point point, uint flags);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern bool GetMonitorInfoW(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll", SetLastError=true)] static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
     public static IntPtr[] FindTop(int pid, string expectedClass) {
@@ -63,6 +56,14 @@ public static class SettingsUiaNativeProbe {
         var name=new StringBuilder(256); GetClassName(hwnd,name,name.Capacity); return name.ToString();
     }
     public static int OwnerPid(IntPtr hwnd) { uint owner; GetWindowThreadProcessId(hwnd,out owner); return (int)owner; }
+    public static string MonitorDevice(IntPtr hwnd) {
+        Rect rect; if(!GetWindowRect(hwnd,out rect)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetWindowRect failed");
+        Point center=new Point{x=rect.left+(rect.right-rect.left)/2,y=rect.top+(rect.bottom-rect.top)/2};
+        IntPtr monitor=MonitorFromPoint(center,2); if(monitor==IntPtr.Zero) throw new Win32Exception("MonitorFromPoint returned no monitor for window center");
+        var info=new MonitorInfo(); info.size=Marshal.SizeOf(typeof(MonitorInfo));
+        if(!GetMonitorInfoW(monitor,ref info)) throw new Win32Exception(Marshal.GetLastWin32Error(),"GetMonitorInfoW failed");
+        return info.device;
+    }
     public static void ShowForPaint(IntPtr hwnd,int pid,string expectedClass) {
         Require(hwnd,pid,expectedClass);
         ShowWindow(hwnd,4); // SW_SHOWNOACTIVATE: preserve visible paint without activating the UI.
@@ -106,7 +107,7 @@ interface IUIAutomationElementNative {
     [PreserveSig] int GetCurrentPropertyValue(int propertyId, [MarshalAs(UnmanagedType.Struct)] out object value);
 }
 
-[ComImport, Guid("618736e0-3c3d-11cf-810c-00aa00389b71"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+[ComImport, Guid("618736e0-3c3d-11cf-810c-00aa00389b71"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAccessibleNative {
     [PreserveSig] int GetTypeInfoCount(out uint count);
     [PreserveSig] int GetTypeInfo(uint index, int locale, out IntPtr typeInfo);
@@ -218,6 +219,8 @@ try {
     if($mainHwnd -eq [IntPtr]::Zero){throw 'owned app did not create IsleNativePrototype'}
     [SettingsUiaNativeProbe]::Require($mainHwnd,$owned.Id,$mainClass)
     [SettingsUiaNativeProbe]::ShowForPaint($mainHwnd,$owned.Id,$mainClass)
+    $mainMonitor=[SettingsUiaNativeProbe]::MonitorDevice($mainHwnd)
+    if($mainMonitor -ne $env:ISLE_TEST_MONITOR){throw "Main test window is on $mainMonitor, expected $($env:ISLE_TEST_MONITOR)"}
 
     function Get-FreshDiagnostic([IntPtr]$Window,[int]$OwnerProcessId,[string]$Path,[string]$Class) {
         $before=if(Test-Path -LiteralPath $Path){(Get-Item -LiteralPath $Path).LastWriteTimeUtc.Ticks}else{0}
@@ -250,6 +253,8 @@ try {
     }
     if($settingsHwnd -eq [IntPtr]::Zero){throw 'F8 did not create an owned IsleNativeSettingsV2 window'}
     [SettingsUiaNativeProbe]::Require($settingsHwnd,$owned.Id,$settingsClass)
+    $settingsMonitor=[SettingsUiaNativeProbe]::MonitorDevice($settingsHwnd)
+    if($settingsMonitor -ne $env:ISLE_TEST_MONITOR){throw "Settings test window is on $settingsMonitor, expected $($env:ISLE_TEST_MONITOR)"}
     $opened=Get-FreshDiagnostic $mainHwnd $owned.Id $logPath $mainClass
     if($opened.settingsWindowAlive -ne $true){throw 'owned V2 Settings window is not alive in the fresh report'}
 
@@ -295,14 +300,14 @@ try {
     $evidence=[ordered]@{
         binarySha256=$binarySha;ownedPid=$owned.Id;mainHwnd=$mainHwnd.ToInt64();settingsHwnd=$settingsHwnd.ToInt64()
         settingsClass=$settingsClass;readOnlyProbe=$true;readOnlyParameterRequested=[bool]$ReadOnlyProbe
-        clientProxyRegistration=$clientProxyRegistration
         host=$hostMetadata
         initialConfigurationValid=$initial.configurationValid;finalConfigurationValid=$final.configurationValid
         serviceFieldsAbsent=$true;initialSettingsAlive=$initial.settingsWindowAlive;finalSettingsAlive=$final.settingsWindowAlive
         uiaRootProcessId=$root.Current.ProcessId;uiaRootNativeWindowHandle=$root.Current.NativeWindowHandle
         descendantCount=$elements.Count;inventory=$inventory;screenshotsVerified=$false
         nativeCUIAutomationSameProcessAsManagedClient=$true
-        note='Exploratory inventory only: official client-side assembly registration was attempted. The same-process CUIAutomation query is not an independent proxy validation because UIAutomationClient/Types are loaded in this host. MSAA query status is recorded per HWND; no UIA action or value setter was called.'
+        mainMonitor=$mainMonitor;settingsMonitor=$settingsMonitor
+        note='Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'
     }
 } catch {
     $evidence=[ordered]@{binarySha256=$binarySha;ownedPid=if($owned){$owned.Id}else{$null};mainHwnd=if($mainHwnd -ne [IntPtr]::Zero){$mainHwnd.ToInt64()}else{$null};settingsHwnd=if($settingsHwnd -ne [IntPtr]::Zero){$settingsHwnd.ToInt64()}else{$null};failure=$_.Exception.Message;forcedKill=$false}
