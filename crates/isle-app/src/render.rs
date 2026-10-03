@@ -45,6 +45,7 @@ pub struct Renderer {
     _visual: IDCompositionVisual,
     brush: ID2D1SolidColorBrush,
     glass_brush: ID2D1LinearGradientBrush,
+    glass_rim_brush: ID2D1LinearGradientBrush,
     formats: HashMap<(u32, i32), IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
@@ -58,6 +59,34 @@ pub struct Renderer {
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
 }
+
+const DYNAMIC_GLASS_OPACITY: [(f32, f32); 6] = [
+    (0.0, 1.0),
+    (0.46, 1.0),
+    (0.50, 1.0),
+    (0.66, 0.62),
+    (0.82, 0.20),
+    (1.0, 0.0),
+];
+
+const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 5] = [
+    (0.0, 0.30),
+    (0.18, 0.19),
+    (0.52, 0.07),
+    (0.82, 0.10),
+    (1.0, 0.22),
+];
+
+fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
+    profile
+        .iter()
+        .map(|(position, opacity)| D2D1_GRADIENT_STOP {
+            position: *position,
+            color: color(rgb[0], rgb[1], rgb[2], *opacity),
+        })
+        .collect()
+}
+
 fn point(x: f32, y: f32) -> D2D_POINT_2F {
     D2D_POINT_2F { x, y }
 }
@@ -465,24 +494,7 @@ impl Renderer {
         target.SetRoot(&visual)?;
         composition.Commit()?;
         let brush = ctx.CreateSolidColorBrush(&color(1., 1., 1., 1.), None)?;
-        let glass_stops = [
-            D2D1_GRADIENT_STOP {
-                position: 0.,
-                color: color(0., 0., 0., 0.97),
-            },
-            D2D1_GRADIENT_STOP {
-                position: 0.2,
-                color: color(0., 0., 0., 0.94),
-            },
-            D2D1_GRADIENT_STOP {
-                position: 0.56,
-                color: color(0., 0., 0., 0.84),
-            },
-            D2D1_GRADIENT_STOP {
-                position: 1.,
-                color: color(0., 0., 0., 0.74),
-            },
-        ];
+        let glass_stops = gradient_stops(&DYNAMIC_GLASS_OPACITY, [0., 0., 0.]);
         let glass_stops =
             ctx.CreateGradientStopCollection(&glass_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
         let glass_brush = ctx.CreateLinearGradientBrush(
@@ -492,6 +504,17 @@ impl Renderer {
             },
             None,
             &glass_stops,
+        )?;
+        let rim_stops = gradient_stops(&DYNAMIC_GLASS_RIM_OPACITY, [1., 1., 1.]);
+        let rim_stops =
+            ctx.CreateGradientStopCollection(&rim_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
+        let glass_rim_brush = ctx.CreateLinearGradientBrush(
+            &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: point(0., 0.),
+                endPoint: point(0., HOST),
+            },
+            None,
+            &rim_stops,
         )?;
         let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
         let fonts = load_fonts(&write);
@@ -514,6 +537,7 @@ impl Renderer {
             _visual: visual,
             brush,
             glass_brush,
+            glass_rim_brush,
             formats: HashMap::new(),
             cover: None,
             previous_cover: None,
@@ -883,6 +907,12 @@ impl Renderer {
             self.ink(background_color);
             self.ctx.FillGeometry(&shape, &self.brush, None);
         }
+        if m.ui_v2 && m.expanded && !self.opaque_preview {
+            // A dark inner edge gives the transparent fill a refractive boundary
+            // without tinting the desktop visible through the lower half.
+            self.ink(color(0., 0., 0., 0.42));
+            self.ctx.DrawGeometry(&shape, &self.brush, 3.5, None);
+        }
         // Clip every content frame to the same animated outline used for input.
         // A spring interrupted mid-flight must never expose rectangular page edges.
         let mut layer = D2D1_LAYER_PARAMETERS {
@@ -904,7 +934,15 @@ impl Renderer {
         };
         self.ctx.PushLayer(&layer, None);
         std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
-        if m.expanded {
+        if m.ui_v2 && m.expanded && !self.opaque_preview {
+            let origin = m.origin();
+            let end_y = origin.y + m.height.value.max(1.);
+            self.glass_rim_brush
+                .SetStartPoint(point(origin.x, origin.y));
+            self.glass_rim_brush.SetEndPoint(point(origin.x, end_y));
+            self.ctx
+                .DrawGeometry(&shape, &self.glass_rim_brush, 1.25, None);
+        } else if m.expanded {
             self.ink(color(1., 1., 1., 0.1));
             self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
         }
@@ -1662,7 +1700,37 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cover_spectrum_palette, format_media_time, should_build_glass_blur};
+    use super::{
+        cover_spectrum_palette, format_media_time, should_build_glass_blur, DYNAMIC_GLASS_OPACITY,
+    };
+
+    fn sample_opacity(profile: &[(f32, f32)], position: f32) -> f32 {
+        let Some(pair) = profile.windows(2).find(|pair| position <= pair[1].0) else {
+            return profile.last().map_or(0., |stop| stop.1);
+        };
+        let (start, end) = (pair[0], pair[1]);
+        let progress = (position - start.0) / (end.0 - start.0);
+        start.1 + (end.1 - start.1) * progress
+    }
+
+    #[test]
+    fn dynamic_glass_stays_black_above_and_fades_to_a_clear_lower_edge() {
+        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.), 1.);
+        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.5), 1.);
+        assert!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.66) <= 0.62);
+        assert!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.82) <= 0.20);
+        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 1.), 0.);
+
+        let mut previous = 1.;
+        for step in 1..=100 {
+            let current = sample_opacity(&DYNAMIC_GLASS_OPACITY, step as f32 / 100.);
+            assert!(
+                current <= previous,
+                "opacity rose at step {step}: {previous} -> {current}"
+            );
+            previous = current;
+        }
+    }
 
     #[test]
     fn cached_glass_blur_is_gated_by_v2_and_visible_album_art() {
