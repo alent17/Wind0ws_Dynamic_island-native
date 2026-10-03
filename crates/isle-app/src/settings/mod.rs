@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod controls;
 pub mod legacy;
 pub mod model;

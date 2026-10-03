@@ -1,4 +1,5 @@
 use super::{
+    accessibility,
     controls::{ControlPaintDiagnostics, ControlPainter},
     model::{self, Page},
     render::ShellRender,
@@ -19,6 +20,7 @@ use windows::{
         Graphics::Gdi::*,
         System::LibraryLoader::GetModuleHandleW,
         UI::{
+            Accessibility::{UiaReturnRawElementProvider, UiaRootObjectId},
             Controls::{
                 GetComboBoxInfo, InitCommonControlsEx, SetScrollInfo, ShowScrollBar, CDDS_PREPAINT,
                 CDIS_DISABLED, CDIS_FOCUS, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT,
@@ -68,6 +70,7 @@ const SPECTRUM_RANDOM: i32 = 253;
 const NAV_BASE: i32 = 300;
 const CONTROL_RECOVER_COMBO: u32 = WM_APP + 75;
 const COMBO_SUBCLASS_ID: usize = 1;
+const ACCESSIBILITY_SUBCLASS_ID: usize = 2;
 const SHAPE_NAMES: [&str; 4] = ["收起长度", "收起凹肩", "展开凹肩", "展开圆角"];
 
 const fn color_ref(red: u8, green: u8, blue: u8) -> COLORREF {
@@ -188,6 +191,21 @@ impl Drop for Theme {
     }
 }
 
+unsafe fn install_accessibility_subclass(hwnd: HWND) -> Result<()> {
+    if SetWindowSubclass(
+        hwnd,
+        Some(accessibility_subclass),
+        ACCESSIBILITY_SUBCLASS_ID,
+        0,
+    )
+    .as_bool()
+    {
+        Ok(())
+    } else {
+        Err(Error::from_win32())
+    }
+}
+
 // Keep the Win32 creation arguments together here; callers need explicit
 // page coordinates to maintain the legacy control map.
 #[allow(clippy::too_many_arguments)]
@@ -225,6 +243,10 @@ unsafe fn add_control(
     if control.0 == 0 {
         return Err(Error::from_win32());
     }
+    if let Err(error) = install_accessibility_subclass(control) {
+        let _ = DestroyWindow(control);
+        return Err(error);
+    }
     SendMessageW(control, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(0));
     theme.controls.push(Placement {
         hwnd: control,
@@ -257,6 +279,10 @@ unsafe fn add_nav(hwnd: HWND, mut theme: ThemeHandle, page: Page) -> Result<HWND
     );
     if control.0 == 0 {
         return Err(Error::from_win32());
+    }
+    if let Err(error) = install_accessibility_subclass(control) {
+        let _ = DestroyWindow(control);
+        return Err(error);
     }
     SendMessageW(control, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(0));
     theme.nav[index] = control;
@@ -761,6 +787,13 @@ unsafe fn recover_next_combo(parent: HWND, theme_ptr: *mut Theme) -> bool {
         theme.control_diagnostics.native_fallbacks += 1;
         return true;
     }
+    if install_accessibility_subclass(replacement).is_err() {
+        let _ = DestroyWindow(replacement);
+        let theme = &mut *theme_ptr;
+        theme.failed_combo_recoveries.push(pending.id);
+        theme.control_diagnostics.native_fallbacks += 1;
+        return true;
+    }
     SendMessageW(replacement, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(0));
     for label in &labels {
         let value = HSTRING::from(label);
@@ -830,6 +863,29 @@ unsafe fn recover_next_combo(parent: HWND, theme_ptr: *mut Theme) -> bool {
         ShowWindow(replacement, SW_SHOWNOACTIVATE);
     }
     true
+}
+
+unsafe extern "system" fn accessibility_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+    _subclass_id: usize,
+    _reference_data: usize,
+) -> LRESULT {
+    if msg == WM_GETOBJECT && lp.0 as i32 == UiaRootObjectId {
+        if let Ok(provider) = accessibility::provider(hwnd) {
+            return UiaReturnRawElementProvider(hwnd, wp, lp, &provider);
+        }
+    }
+    if msg == WM_NCDESTROY {
+        let _ = RemoveWindowSubclass(
+            hwnd,
+            Some(accessibility_subclass),
+            ACCESSIBILITY_SUBCLASS_ID,
+        );
+    }
+    DefSubclassProc(hwnd, msg, wp, lp)
 }
 
 unsafe extern "system" fn combo_subclass(

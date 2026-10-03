@@ -1,5 +1,6 @@
-param([switch]$ReadOnlyProbe)
+param([switch]$ReadOnlyProbe,[switch]$InteractionProbe)
 $ErrorActionPreference='Stop'
+if($ReadOnlyProbe -and $InteractionProbe){throw 'Choose either -ReadOnlyProbe or -InteractionProbe, not both'}
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 $hostMetadata=[ordered]@{
@@ -296,18 +297,110 @@ try {
         }
     }
     if($elements.Count -lt 6){throw "Settings UIA subtree is unexpectedly small: $($elements.Count) descendants"}
+    $interactionEvidence=@()
+    if($InteractionProbe) {
+        function Find-SettingsElement([string]$AutomationId) {
+            $currentRoot=[System.Windows.Automation.AutomationElement]::FromHandle($settingsHwnd)
+            $descendants=$currentRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+            foreach($candidate in $descendants) {
+                if($candidate.Current.ProcessId -ne $owned.Id){throw 'UIA action target escaped owned fixture process'}
+                if($candidate.Current.AutomationId -eq $AutomationId){return $candidate}
+            }
+            return $null
+        }
+        function Wait-SettingsElement([string]$AutomationId) {
+            for($attempt=0;$attempt -lt 80;$attempt++) {
+                $candidate=Find-SettingsElement $AutomationId
+                if($null -ne $candidate){return $candidate}
+                Start-Sleep -Milliseconds 50
+            }
+            throw "Settings UIA element $AutomationId did not appear after navigation"
+        }
+        function Get-SettingsPattern($Element,$Pattern) {
+            $instance=$null
+            if(-not $Element.TryGetCurrentPattern($Pattern,[ref]$instance) -or $null -eq $instance){
+                throw "Required UIA pattern is not available for $($Element.Current.AutomationId)"
+            }
+            return $instance
+        }
+
+        $appearance=Wait-SettingsElement '301'
+        (Get-SettingsPattern $appearance ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        [void](Wait-SettingsElement '211')
+        $interactionEvidence+=,[ordered]@{action='Invoke';automationId='301';result='navigated to Appearance'}
+
+        $sliderElement=Wait-SettingsElement '220'
+        $slider=Get-SettingsPattern $sliderElement ([System.Windows.Automation.RangeValuePattern]::Pattern)
+        $initialValue=$slider.Current.Value
+        $minimum=$slider.Current.Minimum;$maximum=$slider.Current.Maximum
+        $changedValue=if($initialValue -lt $maximum){$initialValue+1}else{$initialValue-1}
+        if($changedValue -lt $minimum -or $changedValue -gt $maximum){throw 'Fixture slider has no reversible in-range value'}
+        $slider.SetValue($changedValue)
+        Start-Sleep -Milliseconds 100
+        $updatedSlider=Get-SettingsPattern (Wait-SettingsElement '220') ([System.Windows.Automation.RangeValuePattern]::Pattern)
+        if($updatedSlider.Current.Value -ne $changedValue){throw 'UIA RangeValue.SetValue did not update the native slider'}
+        $updatedSlider.SetValue($initialValue)
+        Start-Sleep -Milliseconds 100
+        $restoredSlider=Get-SettingsPattern (Wait-SettingsElement '220') ([System.Windows.Automation.RangeValuePattern]::Pattern)
+        if($restoredSlider.Current.Value -ne $initialValue){throw 'UIA RangeValue.SetValue did not restore the fixture slider'}
+        $interactionEvidence+=,[ordered]@{action='RangeValue';automationId='220';initial=$initialValue;changed=$changedValue;restored=$restoredSlider.Current.Value}
+
+        $general=Wait-SettingsElement '300'
+        (Get-SettingsPattern $general ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $toggleElement=Wait-SettingsElement '208'
+        $toggle=Get-SettingsPattern $toggleElement ([System.Windows.Automation.TogglePattern]::Pattern)
+        $initialToggle=$toggle.Current.ToggleState
+        $toggle.Toggle()
+        Start-Sleep -Milliseconds 100
+        $toggled=(Get-SettingsPattern (Wait-SettingsElement '208') ([System.Windows.Automation.TogglePattern]::Pattern)).Current.ToggleState
+        if($toggled -eq $initialToggle){throw 'UIA Toggle did not change the checkbox state'}
+        $toggle=Get-SettingsPattern (Wait-SettingsElement '208') ([System.Windows.Automation.TogglePattern]::Pattern)
+        $toggle.Toggle()
+        Start-Sleep -Milliseconds 100
+        $restored=(Get-SettingsPattern (Wait-SettingsElement '208') ([System.Windows.Automation.TogglePattern]::Pattern)).Current.ToggleState
+        if($restored -ne $initialToggle){throw 'UIA Toggle did not restore the original fixture state'}
+        $interactionEvidence+=,[ordered]@{action='Toggle';automationId='208';initial=[string]$initialToggle;toggled=[string]$toggled;restored=[string]$restored}
+
+        $comboElement=Wait-SettingsElement '210'
+        $combo=Get-SettingsPattern $comboElement ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if($combo.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed){throw 'Fixture timezone ComboBox was not collapsed before the UIA action'}
+        $combo.Expand()
+        Start-Sleep -Milliseconds 100
+        $expanded=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if($expanded.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Expanded){throw 'UIA Expand did not open the timezone ComboBox'}
+        $expanded.Collapse()
+        Start-Sleep -Milliseconds 100
+        $collapsed=Get-SettingsPattern (Wait-SettingsElement '210') ([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+        if($collapsed.Current.ExpandCollapseState -ne [System.Windows.Automation.ExpandCollapseState]::Collapsed){throw 'UIA Collapse did not close the timezone ComboBox'}
+        $interactionEvidence+=,[ordered]@{action='ExpandCollapse';automationId='210';expanded='Expanded';restored='Collapsed'}
+
+        $weather=Wait-SettingsElement '304'
+        (Get-SettingsPattern $weather ([System.Windows.Automation.InvokePattern]::Pattern)).Invoke()
+        $queryElement=Wait-SettingsElement '101'
+        $valuePattern=Get-SettingsPattern $queryElement ([System.Windows.Automation.ValuePattern]::Pattern)
+        $initialQuery=$valuePattern.Current.Value
+        $valuePattern.SetValue('UIA fixture')
+        Start-Sleep -Milliseconds 100
+        $updatedQuery=(Get-SettingsPattern (Wait-SettingsElement '101') ([System.Windows.Automation.ValuePattern]::Pattern)).Current.Value
+        if($updatedQuery -ne 'UIA fixture'){throw 'UIA Value.SetValue did not update the native Edit control'}
+        (Get-SettingsPattern (Wait-SettingsElement '101') ([System.Windows.Automation.ValuePattern]::Pattern)).SetValue($initialQuery)
+        Start-Sleep -Milliseconds 100
+        $restoredQuery=(Get-SettingsPattern (Wait-SettingsElement '101') ([System.Windows.Automation.ValuePattern]::Pattern)).Current.Value
+        if($restoredQuery -ne $initialQuery){throw 'UIA Value.SetValue did not restore the fixture Edit control'}
+        $interactionEvidence+=,[ordered]@{action='Value';automationId='101';changed='UIA fixture';restored=$restoredQuery}
+    }
     $final=Get-FreshDiagnostic $mainHwnd $owned.Id $logPath $mainClass
     $evidence=[ordered]@{
         binarySha256=$binarySha;ownedPid=$owned.Id;mainHwnd=$mainHwnd.ToInt64();settingsHwnd=$settingsHwnd.ToInt64()
-        settingsClass=$settingsClass;readOnlyProbe=$true;readOnlyParameterRequested=[bool]$ReadOnlyProbe
+        settingsClass=$settingsClass;readOnlyProbe=(-not $InteractionProbe);readOnlyParameterRequested=[bool]$ReadOnlyProbe
         host=$hostMetadata
         initialConfigurationValid=$initial.configurationValid;finalConfigurationValid=$final.configurationValid
         serviceFieldsAbsent=$true;initialSettingsAlive=$initial.settingsWindowAlive;finalSettingsAlive=$final.settingsWindowAlive
         uiaRootProcessId=$root.Current.ProcessId;uiaRootNativeWindowHandle=$root.Current.NativeWindowHandle
         descendantCount=$elements.Count;inventory=$inventory;screenshotsVerified=$false
         nativeCUIAutomationSameProcessAsManagedClient=$true
-        mainMonitor=$mainMonitor;settingsMonitor=$settingsMonitor
-        note='Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'
+        mainMonitor=$mainMonitor;settingsMonitor=$settingsMonitor;interactionEvidence=$interactionEvidence
+        note=if($InteractionProbe){'UIA Invoke, Toggle, Value, RangeValue, Expand, and Collapse were exercised only in an isolated owned fixture; mutable values were restored.'}else{'Read-only inventory only. Native CUIAutomation and MSAA are cross-checked from an owned fixture process. No UIA action or value setter was called.'}
     }
 } catch {
     $evidence=[ordered]@{binarySha256=$binarySha;ownedPid=if($owned){$owned.Id}else{$null};mainHwnd=if($mainHwnd -ne [IntPtr]::Zero){$mainHwnd.ToInt64()}else{$null};settingsHwnd=if($settingsHwnd -ne [IntPtr]::Zero){$settingsHwnd.ToInt64()}else{$null};failure=$_.Exception.Message;forcedKill=$false}
@@ -347,4 +440,7 @@ try {
     if($null -ne $savedCreateFault){$env:ISLE_TEST_CONTROL_FAIL_CREATE=$savedCreateFault}
 }
 
-if($null -ne $evidence -and !$evidence.Contains('failure')) { Write-Output "PASS: read-only UIA inventory from owned Settings HWND; $($evidence.descendantCount) descendants" }
+if($null -ne $evidence -and !$evidence.Contains('failure')) {
+    if($InteractionProbe){Write-Output "PASS: Settings UIA inventory and $($evidence.interactionEvidence.Count) isolated interaction checks"}
+    else{Write-Output "PASS: read-only UIA inventory from owned Settings HWND; $($evidence.descendantCount) descendants"}
+}
