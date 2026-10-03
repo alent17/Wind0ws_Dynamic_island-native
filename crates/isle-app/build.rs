@@ -36,14 +36,16 @@ fn embed_windows_identity(manifest: &std::path::Path, out: &std::path::Path) {
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let numeric = format!("{},0", version.replace('.', ","));
     let icon = manifest.join("../../../src-tauri/icons/icon.ico");
+    let app_manifest = manifest.join("isle.manifest");
     println!("cargo:rerun-if-changed={}", icon.display());
+    println!("cargo:rerun-if-changed={}", app_manifest.display());
     let resource = out.join("identity.rc");
     let compiled = out.join("identity.res");
-    fs::write(
-        &resource,
-        format!(
-            r#"
+    let resource_script = format!(
+        r#"
 1 ICON "{icon}"
+/* CREATEPROCESS_MANIFEST_RESOURCE_ID (1), RT_MANIFEST (24). */
+1 24 "{app_manifest}"
 1 VERSIONINFO
 FILEVERSION {numeric}
 PRODUCTVERSION {numeric}
@@ -67,10 +69,18 @@ BEGIN
  END
 END
 "#,
-            icon = icon.to_string_lossy().replace('\\', "/")
-        ),
-    )
-    .unwrap();
+        icon = rc_quoted_path(&icon),
+        app_manifest = rc_quoted_path(&app_manifest),
+    );
+    assert_eq!(
+        resource_script
+            .lines()
+            .filter(|line| line.trim_start().starts_with("1 24 \""))
+            .count(),
+        1,
+        "identity.rc must contain exactly one process manifest resource"
+    );
+    fs::write(&resource, resource_script).unwrap();
     let sdk = PathBuf::from(env::var_os("ProgramFiles(x86)").expect("Windows SDK required"))
         .join("Windows Kits/10/bin");
     let mut compilers: Vec<_> = fs::read_dir(sdk)
@@ -95,4 +105,10 @@ END
         "Cannot compile native executable identity"
     );
     println!("cargo:rustc-link-arg={}", compiled.display());
+}
+
+fn rc_quoted_path(path: &std::path::Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .replace('"', "\\\"")
 }

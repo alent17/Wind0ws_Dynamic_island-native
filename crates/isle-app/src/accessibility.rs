@@ -39,6 +39,7 @@ pub struct Snapshot {
     pub focus: Option<Hit>,
     pub volume: u32,
     pub timer_minutes: u16,
+    pub seek_percent: u16,
 }
 pub type Shared = Arc<Mutex<Snapshot>>;
 pub fn label(hit: Hit, playing: bool) -> &'static str {
@@ -60,6 +61,7 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::Play if playing => "暂停",
         Hit::Play => "播放",
         Hit::Previous => "上一首",
+        Hit::Seek => "播放进度",
         Hit::Next => "下一首",
         Hit::Volume => "音量",
         Hit::Timer => "开始或暂停倒计时",
@@ -159,7 +161,7 @@ impl Provider {
         }
         s.nodes
             .get(self.child - 1)
-            .filter(|node| matches!(node.hit, Hit::Volume | Hit::TimerRuler))
+            .filter(|node| matches!(node.hit, Hit::Volume | Hit::TimerRuler | Hit::Seek))
             .cloned()
             .ok_or_else(|| Error::from(E_INVALIDARG))
     }
@@ -331,6 +333,8 @@ impl IRangeValueProvider_Impl for Provider {
         let state = self.snapshot()?;
         Ok(if node.hit == Hit::TimerRuler {
             state.timer_minutes as f64
+        } else if node.hit == Hit::Seek {
+            state.seek_percent as f64
         } else {
             state.volume as f64
         })
@@ -434,6 +438,8 @@ impl IAccessible_Impl for Provider {
         let n = self.resolve(v, &s)?;
         Ok(if n > 0 && s.nodes[n - 1].hit == Hit::Volume {
             BSTR::from(s.volume.to_string())
+        } else if n > 0 && s.nodes[n - 1].hit == Hit::Seek {
+            BSTR::from(s.seek_percent.to_string())
         } else if n > 0 && s.nodes[n - 1].hit == Hit::TimerRuler {
             BSTR::from(s.timer_minutes.to_string())
         } else {
@@ -448,7 +454,10 @@ impl IAccessible_Impl for Provider {
         let n = self.resolve(v, &s)?;
         Ok(number(if n == 0 {
             ROLE_SYSTEM_CLIENT
-        } else if matches!(s.nodes[n - 1].hit, Hit::Volume | Hit::TimerRuler) {
+        } else if matches!(
+            s.nodes[n - 1].hit,
+            Hit::Volume | Hit::TimerRuler | Hit::Seek
+        ) {
             ROLE_SYSTEM_SLIDER
         } else {
             ROLE_SYSTEM_PUSHBUTTON
@@ -510,7 +519,12 @@ impl IAccessible_Impl for Provider {
         let s = self.snapshot()?;
         let n = self.resolve(v, &s)?;
         Ok(BSTR::from(
-            if n > 0 && matches!(s.nodes[n - 1].hit, Hit::Volume | Hit::TimerRuler) {
+            if n > 0
+                && matches!(
+                    s.nodes[n - 1].hit,
+                    Hit::Volume | Hit::TimerRuler | Hit::Seek
+                )
+            {
                 "调整"
             } else {
                 "按下"
@@ -594,7 +608,7 @@ impl IAccessible_Impl for Provider {
             let s = self.snapshot()?;
             let n = self.resolve(v, &s)?;
             let limits = match n.checked_sub(1).and_then(|i| s.nodes.get(i)).map(|n| n.hit) {
-                Some(Hit::Volume) => 0..=100,
+                Some(Hit::Volume | Hit::Seek) => 0..=100,
                 Some(Hit::TimerRuler) => 1..=1440,
                 _ => return Err(E_INVALIDARG.into()),
             };

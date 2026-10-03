@@ -9,12 +9,15 @@ mod icons;
 mod media;
 mod players;
 mod render;
+mod settings;
 mod spectrum;
 mod system_audio;
 mod timer_window;
 mod weather;
 mod weather_settings;
 const WM_MOUSELEAVE: u32 = 0x02A3;
+// Explicit test-fixture instances only; production settings never enable faults.
+const SETTINGS_CONTROL_FAULT: u32 = 0x8056;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
 use std::{
@@ -65,6 +68,8 @@ enum Event {
     Players(usize, isize),
     PlayersUpdated,
     ConfigSaved,
+    ConfigTick,
+    HoverExpired,
     Weather,
     City(usize, isize),
     Spectrum,
@@ -85,6 +90,7 @@ enum Event {
     Preferences,
     Access(u32, usize, u32, u16),
     Diagnostic,
+    SettingsControlFault(u32),
     Close,
 }
 thread_local! {static EVENTS:RefCell<VecDeque<Event>>=const{RefCell::new(VecDeque::new())};}
@@ -151,6 +157,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             enqueue(Event::Diagnostic);
             LRESULT(0)
         }
+        SETTINGS_CONTROL_FAULT => {
+            enqueue(Event::SettingsControlFault(wp.0 as u32));
+            LRESULT(0)
+        }
         WM_GETOBJECT if lp.0 as i32 == OBJID_CLIENT.0 => ACCESSIBLE.with(|a| {
             a.borrow()
                 .as_ref()
@@ -175,7 +185,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_TIMER => {
-            enqueue(Event::Tick);
+            enqueue(match wp.0 {
+                2 => Event::ConfigTick,
+                3 => Event::HoverExpired,
+                _ => Event::Tick,
+            });
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
@@ -279,6 +293,12 @@ struct App {
     player_dialog: Option<players::Dialog>,
     configuration: configuration::Service,
     saving_window: Option<isize>,
+    ui_v2: bool,
+    inspection_previous: Option<(bool, Page)>,
+    hover_leave_at: Option<Instant>,
+    region_ms: Vec<f64>,
+    region_updates: u64,
+    render_cpu_ms: Vec<f64>,
     audio: Option<system_audio::AudioService>,
     spectrum: Option<spectrum::SpectrumService>,
     live_spectrum: bool,
@@ -447,6 +467,7 @@ impl App {
             return Err(Error::from_win32());
         }
         self.region = points;
+        self.region_updates += 1;
         Ok(())
     }
     unsafe fn update_accessibility(&self) -> Result<()> {
@@ -544,6 +565,24 @@ impl App {
         state.focus = self.model.focus;
         state.volume = volume;
         state.timer_minutes = self.model.timer_minutes;
+        let seek_percent = self
+            .model
+            .media
+            .as_ref()
+            .filter(|snapshot| snapshot.timeline.duration_ms > 0)
+            .map(|snapshot| {
+                (100. * snapshot.timeline.position(self.model.now, snapshot.playing) as f64
+                    / snapshot.timeline.duration_ms as f64)
+                    .round() as u16
+            })
+            .unwrap_or(0);
+        let seek_changed = state.seek_percent != seek_percent;
+        state.seek_percent = seek_percent;
+        let seek_id = state
+            .nodes
+            .iter()
+            .position(|node| node.hit == Hit::Seek)
+            .map(|index| index as i32 + 1);
         let volume_id = state
             .nodes
             .iter()
@@ -561,6 +600,16 @@ impl App {
         }
         if focus_changed {
             NotifyWinEvent(EVENT_OBJECT_FOCUS, self.window, OBJID_CLIENT.0, focus_id);
+        }
+        if seek_changed {
+            if let Some(seek_id) = seek_id {
+                NotifyWinEvent(
+                    EVENT_OBJECT_VALUECHANGE,
+                    self.window,
+                    OBJID_CLIENT.0,
+                    seek_id,
+                );
+            }
         }
         if volume_changed {
             if let Some(volume_id) = volume_id {
@@ -582,6 +631,9 @@ impl App {
         if self.spectrum.is_some() && !self.spectrum_visible() {
             self.model.spectrum = Some(SpectrumVisual::default());
         }
+        self.model.ui_state.interaction.pressed = self.down.is_some();
+        self.model.ui_state.interaction.dragging = self.dragged && self.down.is_some();
+        self.model.ui_state.interaction.inspection_lock = self.inspection_previous.is_some();
         self.model.step(dt, (now - self.start).as_secs_f64());
         if let Some(window) = &self.timer_window {
             window.update(&self.model);
@@ -595,10 +647,16 @@ impl App {
             }
         }
         if self.suspended {
+            self.model.ui_state.primary = isle_ui::state::PrimarySurfaceMode::Hidden;
             self.sync_timer()?;
             return Ok(());
         }
+        let region_started = Instant::now();
         self.region()?;
+        if self.log.is_some() && self.region_ms.len() < 36000 {
+            self.region_ms
+                .push(region_started.elapsed().as_secs_f64() * 1000.);
+        }
         if self.renderer.is_none() {
             self.renderer = Some(Renderer::new(self.window, self.scale)?);
         }
@@ -631,6 +689,10 @@ impl App {
         self.font_family = self.renderer.as_ref().unwrap().font_family;
         self.model.title_overflow = self.renderer.as_ref().unwrap().title_overflow;
         self.model.content_animating = self.renderer.as_ref().unwrap().content_animating;
+        if self.log.is_some() && self.render_cpu_ms.len() < 36000 {
+            self.render_cpu_ms
+                .push(self.renderer.as_ref().unwrap().render_cpu_ms);
+        }
         let presented = Instant::now();
         if self.log.is_some() && self.model.continuous() && self.start.elapsed().as_secs() >= 5 {
             if let Some(last) = self.last_present {
@@ -653,6 +715,15 @@ impl App {
         !self.suspended && self.model.continuous()
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
+        let _ = KillTimer(self.window, 2);
+        if let Some(delay) = self.configuration.next_save_delay() {
+            SetTimer(
+                self.window,
+                2,
+                delay.as_millis().clamp(1, u32::MAX as u128) as u32,
+                None,
+            );
+        }
         if self.settings.is_none() && !self.test_fixture {
             let job =
                 if !self.suspended && self.model.expanded && self.model.page() == Page::Weather {
@@ -675,6 +746,9 @@ impl App {
             );
         }
         if let Some(service) = &self.media {
+            service.set_artwork_display(
+                self.ui_v2 && self.model.expanded && self.model.page() == Page::Music,
+            );
             service.set_active(
                 self.floating_player.is_some()
                     || !self.suspended
@@ -729,7 +803,158 @@ impl App {
             && (!self.model.expanded || self.model.page() == Page::Music)
             && self.model.media.as_ref().is_none_or(|media| media.playing)
     }
+    unsafe fn queue_settings(&mut self, edit: configuration::Edit, delay: Duration) -> Result<()> {
+        if let Err(error) = self.configuration.apply_edit(edit.clone(), delay) {
+            if let Some(settings) = &self.settings {
+                settings.set_save_state(weather_settings::SaveState::Error(error));
+            }
+        } else {
+            self.apply_runtime_edit(&edit)?;
+            self.update_save_state();
+        }
+        self.sync_timer()
+    }
+    unsafe fn save_settings_window_placement(&mut self, delay: Duration) -> Result<()> {
+        if self.ui_v2 {
+            if let Some(placement) = self
+                .settings
+                .as_mut()
+                .and_then(|settings| settings.take_placement_update())
+            {
+                self.queue_settings(configuration::Edit::WindowPlacement(Some(placement)), delay)?;
+            }
+        }
+        Ok(())
+    }
+    unsafe fn update_save_state(&self) {
+        if let Some(settings) = &self.settings {
+            let state = if let Some(error) = self
+                .configuration
+                .last_error()
+                .or(self.configuration.load_error.as_deref())
+            {
+                weather_settings::SaveState::Error(error.to_string())
+            } else if self.configuration.busy() {
+                weather_settings::SaveState::Saving
+            } else if self.configuration.dirty() {
+                weather_settings::SaveState::Dirty
+            } else {
+                weather_settings::SaveState::Saved
+            };
+            settings.set_save_state(state);
+        }
+    }
+    fn restore_inspection(&mut self) {
+        if let Some((expanded, page)) = self.inspection_previous.take() {
+            if expanded {
+                self.model.switch(page);
+            } else if self.model.expanded {
+                self.model.toggle();
+            }
+            if self
+                .hover_leave_at
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                self.hover_leave_at = None;
+                self.model.hovered = false;
+                self.model.retarget();
+            }
+        }
+    }
+    fn seek_at(&mut self, x: f32) {
+        let rect = self.model.progress_rect();
+        if rect.w > 0. {
+            self.seek_fraction((x - rect.x) / rect.w);
+        }
+    }
+    fn seek_fraction(&mut self, fraction: f32) {
+        if !fraction.is_finite() || !self.model.enabled(Hit::Seek) {
+            return;
+        }
+        if let Some(snapshot) = &mut self.model.media {
+            let position =
+                (fraction.clamp(0., 1.) as f64 * snapshot.timeline.duration_ms as f64) as u64;
+            if let Some(service) = &self.media {
+                service.control(snapshot.session, media::Action::Seek(position));
+            } else if !self.test_fixture {
+                return;
+            }
+            snapshot.timeline.position_ms = position;
+            snapshot.timeline.received_at = self.start.elapsed().as_secs_f64();
+        }
+    }
+    unsafe fn apply_runtime_edit(&mut self, edit: &configuration::Edit) -> Result<()> {
+        match edit {
+            configuration::Edit::WindowPlacement(_) => {}
+            configuration::Edit::City(city) => {
+                self.model.weather = isle_core::weather::View {
+                    city: Some(city.clone()),
+                    ..Default::default()
+                };
+                self.weather.request(None);
+            }
+            configuration::Edit::Players(selection) => {
+                if let Some(media) = &self.media {
+                    media.set_selection(selection.clone());
+                }
+                if self.model.media.is_some() {
+                    self.model.media = Some(Default::default());
+                }
+                self.down = None;
+                let _ = ReleaseCapture();
+            }
+            configuration::Edit::Controls(controls) => {
+                self.model.time_zone = controls.time_zone.clone();
+                self.always_on_top = controls.always_on_top;
+                self.apply_topmost()?;
+                if let Some(player) = &self.floating_player {
+                    player.set_topmost(controls.floating_always_on_top)?;
+                }
+                self.model.reduced = self
+                    .reduced_override
+                    .unwrap_or_else(|| system_reduced_motion())
+                    || !controls.animations
+                    || controls.reduced;
+                self.model.set_tool_mask(controls.mask());
+            }
+            configuration::Edit::Appearance(appearance) => {
+                self.model.show_spectrum = appearance.show_spectrum;
+                self.model.spectrum_random = appearance.spectrum_mode == "random";
+                if self.live_spectrum && appearance.show_spectrum && !self.model.spectrum_random {
+                    self.model
+                        .spectrum
+                        .get_or_insert_with(SpectrumVisual::default);
+                    if self.spectrum.is_none() {
+                        self.spectrum = spectrum::SpectrumService::new(self.window).ok();
+                    }
+                } else {
+                    self.spectrum = None;
+                    self.model.spectrum = None;
+                }
+                self.edge_position = appearance.edge_position;
+                self.model.attached = appearance.style == "edge";
+                self.model.edge = match appearance.edge.as_str() {
+                    "right" => Edge::Right,
+                    "bottom" => Edge::Bottom,
+                    "left" => Edge::Left,
+                    _ => Edge::Top,
+                };
+                self.model.compact_length = appearance.compact_length;
+                self.model.collapsed_shoulder_radius = appearance.collapsed_shoulder_radius;
+                self.model.expanded_shoulder_radius = appearance.expanded_shoulder_radius;
+                self.model.expanded_corner_radius = appearance.expanded_corner_radius;
+                self.model.background_color = rgb_color(&appearance.floating_fill_color);
+                self.model.use_album_color = appearance.floating_use_album_color;
+                self.model.retarget();
+                self.position()?;
+            }
+        }
+        Ok(())
+    }
     unsafe fn action(&mut self, hit: Hit) {
+        if self.inspection_previous.is_some() && matches!(hit, Hit::Blank | Hit::Tool(4)) {
+            return;
+        }
         if hit == Hit::Timer {
             self.model.now = self.start.elapsed().as_secs_f64();
             if let Some(deadline) = self.model.timer_deadline {
@@ -742,11 +967,22 @@ impl App {
                     SetForegroundWindow(settings.hwnd);
                 }
             } else {
-                match weather_settings::Settings::new(
-                    self.window,
-                    &self.configuration.controls,
-                    &self.configuration.appearance,
-                ) {
+                let result = if self.ui_v2 {
+                    weather_settings::Settings::new_v2_with_placement_and_control_fixture(
+                        self.window,
+                        &self.configuration.controls,
+                        &self.configuration.appearance,
+                        self.configuration.window_placement().cloned(),
+                        self.test_fixture && self.log.is_some(),
+                    )
+                } else {
+                    weather_settings::Settings::new(
+                        self.window,
+                        &self.configuration.controls,
+                        &self.configuration.appearance,
+                    )
+                };
+                match result {
                     Ok(settings) => {
                         self.weather.request(None);
                         if let Some(error) = &self.configuration.load_error {
@@ -754,9 +990,13 @@ impl App {
                         }
                         settings.saving(self.configuration.busy());
                         self.settings = Some(settings);
+                        if self.ui_v2 {
+                            self.update_save_state();
+                        }
                     }
-                    Err(_) => {
-                        MessageBoxW(self.window, w!("无法打开天气设置"), w!("Isle"), MB_OK);
+                    Err(error) => {
+                        eprintln!("settings window creation failed: {error}");
+                        MessageBoxW(self.window, w!("无法打开设置窗口"), w!("Isle"), MB_OK);
                     }
                 }
             }
@@ -856,6 +1096,8 @@ impl App {
                     | Event::Players(_, _)
                     | Event::PlayersUpdated
                     | Event::ConfigSaved
+                    | Event::ConfigTick
+                    | Event::HoverExpired
                     | Event::City(_, _)
                     | Event::Diagnostic
                     | Event::Floating(_, _)
@@ -945,14 +1187,36 @@ impl App {
                     match action {
                         players::CLOSE => self.player_dialog = None,
                         players::SAVE
+                            if self.ui_v2
+                                && self
+                                    .player_dialog
+                                    .as_ref()
+                                    .is_some_and(|d| d.ready_to_apply()) =>
+                        {
+                            let selection = self.player_dialog.as_ref().unwrap().selection();
+                            self.queue_settings(
+                                configuration::Edit::Players(selection),
+                                Duration::from_millis(150),
+                            )?;
+                            self.player_dialog
+                                .as_ref()
+                                .unwrap()
+                                .message("设置已实时生效，正在自动保存");
+                        }
+                        players::SAVE
                             if !self.configuration.busy()
                                 && self.player_dialog.as_ref().is_some_and(|d| d.ready()) =>
                         {
                             let selection = self.player_dialog.as_ref().unwrap().selection();
                             if self
                                 .configuration
-                                .save(configuration::Edit::Players(selection))
+                                .save(configuration::Edit::Players(selection.clone()))
                             {
+                                if self.ui_v2 {
+                                    self.apply_runtime_edit(&configuration::Edit::Players(
+                                        selection,
+                                    ))?;
+                                }
                                 self.player_dialog.as_mut().unwrap().saving(true);
                                 if let Some(settings) = &self.settings {
                                     settings.saving(true);
@@ -971,7 +1235,84 @@ impl App {
             Event::City(action, hwnd) => {
                 if self.settings.as_ref().is_some_and(|s| s.hwnd.0 == hwnd) {
                     match action {
-                        weather_settings::SEARCH if !self.configuration.busy() => {
+                        weather_settings::RETRY_SAVE if self.ui_v2 => {
+                            self.configuration.retry();
+                            self.update_save_state();
+                            self.sync_timer()?;
+                        }
+                        weather_settings::REVERT_SAVED if self.ui_v2 => {
+                            self.configuration.revert();
+                            self.player_dialog = None;
+                            self.apply_runtime_edit(&configuration::Edit::Controls(
+                                self.configuration.controls.clone(),
+                            ))?;
+                            self.apply_runtime_edit(&configuration::Edit::Appearance(
+                                self.configuration.appearance.clone(),
+                            ))?;
+                            if let Some(city) = self.configuration.city.clone() {
+                                self.apply_runtime_edit(&configuration::Edit::City(city))?;
+                            } else {
+                                self.model.weather = Default::default();
+                                self.weather.request(None);
+                            }
+                            self.apply_runtime_edit(&configuration::Edit::Players(
+                                self.configuration.selection.clone(),
+                            ))?;
+                            if let Some(settings) = &mut self.settings {
+                                settings.sync_settings(
+                                    &self.configuration.controls,
+                                    &self.configuration.appearance,
+                                );
+                            }
+                            self.update_save_state();
+                        }
+                        weather_settings::INSPECTION_LOCK if self.ui_v2 => {
+                            let locked = self
+                                .settings
+                                .as_ref()
+                                .is_some_and(|settings| settings.inspection_locked());
+                            if locked && self.inspection_previous.is_none() {
+                                self.inspection_previous =
+                                    Some((self.model.expanded, self.model.page()));
+                                if !self.model.expanded {
+                                    self.model.switch(Page::Music);
+                                }
+                            } else if !locked {
+                                self.restore_inspection();
+                            }
+                        }
+                        weather_settings::PLACEMENT_CHANGED if self.ui_v2 => {
+                            self.save_settings_window_placement(Duration::from_millis(200))?;
+                            changed = false;
+                        }
+                        weather_settings::APPLY if self.ui_v2 => {
+                            if let Some(city) = self
+                                .settings
+                                .as_ref()
+                                .and_then(|settings| settings.selected())
+                            {
+                                self.queue_settings(
+                                    configuration::Edit::City(city),
+                                    Duration::from_millis(150),
+                                )?;
+                            }
+                        }
+                        weather_settings::APPLY_CONTROLS if self.ui_v2 => {
+                            let controls = self.settings.as_ref().unwrap().controls();
+                            self.queue_settings(
+                                configuration::Edit::Controls(controls),
+                                Duration::from_millis(150),
+                            )?;
+                        }
+                        weather_settings::APPLY_APPEARANCE if self.ui_v2 => {
+                            if let Some(appearance) = self.settings.as_ref().unwrap().appearance() {
+                                self.queue_settings(
+                                    configuration::Edit::Appearance(appearance),
+                                    Duration::from_millis(350),
+                                )?;
+                            }
+                        }
+                        weather_settings::SEARCH if self.ui_v2 || !self.configuration.busy() => {
                             let settings = self.settings.as_mut().unwrap();
                             let query = settings.query();
                             self.weather.request(None);
@@ -1013,16 +1354,18 @@ impl App {
                                 settings.message("沿边位置需为 0–100，颜色需为 #RRGGBB");
                             }
                         }
-                        weather_settings::PLAYERS if !self.configuration.busy() => {
+                        weather_settings::PLAYERS if self.ui_v2 || !self.configuration.busy() => {
                             if let Some(dialog) = &self.player_dialog {
                                 if IsWindowEnabled(self.window).as_bool() {
                                     SetForegroundWindow(dialog.hwnd);
                                 }
                             } else {
-                                match players::Dialog::new(
-                                    self.window,
-                                    &self.configuration.selection,
-                                ) {
+                                let constructor = if self.ui_v2 {
+                                    players::Dialog::new_live
+                                } else {
+                                    players::Dialog::new
+                                };
+                                match constructor(self.window, &self.configuration.selection) {
                                     Ok(dialog) => self.player_dialog = Some(dialog),
                                     Err(_) => self
                                         .settings
@@ -1033,12 +1376,66 @@ impl App {
                             }
                         }
                         weather_settings::CLOSE => {
+                            self.save_settings_window_placement(Duration::from_millis(200))?;
+                            self.restore_inspection();
                             self.player_dialog = None;
                             self.settings = None;
                             self.weather.request(None);
                         }
                         _ => {}
                     }
+                }
+            }
+            Event::ConfigSaved if self.ui_v2 => {
+                if self.configuration.take().is_some() {
+                    if let Some(dialog) = &mut self.player_dialog {
+                        dialog.saving(false);
+                        dialog.message(if let Some(error) = self.configuration.last_error() {
+                            error
+                        } else if self.configuration.busy() || self.configuration.dirty() {
+                            "正在自动保存…"
+                        } else {
+                            "已保存"
+                        });
+                    }
+                }
+                self.update_save_state();
+                self.sync_timer()?;
+                changed = false;
+            }
+            Event::ConfigTick => {
+                let _ = KillTimer(self.window, 2);
+                self.configuration.tick();
+                self.update_save_state();
+                self.sync_timer()?;
+                changed = false;
+            }
+            Event::HoverExpired => {
+                let _ = KillTimer(self.window, 3);
+                if let Some(deadline) = self
+                    .hover_leave_at
+                    .filter(|deadline| *deadline > Instant::now())
+                {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    SetTimer(
+                        self.window,
+                        3,
+                        remaining.as_millis().clamp(1, u32::MAX as u128) as u32,
+                        None,
+                    );
+                    return Ok(true);
+                }
+                if self
+                    .hover_leave_at
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                    && self.down.is_none()
+                    && self.inspection_previous.is_none()
+                {
+                    self.hover_leave_at = None;
+                    self.model.hovered = false;
+                    self.model.retarget();
+                } else {
+                    changed = false;
                 }
             }
             Event::ConfigSaved => {
@@ -1050,6 +1447,7 @@ impl App {
                     self.saving_window = None;
                     match outcome.result {
                         Ok(()) => match outcome.edit {
+                            configuration::Edit::WindowPlacement(_) => {}
                             configuration::Edit::City(city) => {
                                 self.model.weather = isle_core::weather::View {
                                     city: Some(city),
@@ -1240,6 +1638,9 @@ impl App {
                     self.model.media = Some(update.snapshot);
                     self.model.media_failed = update.error.is_some();
                     self.media_error = update.error;
+                    if self.ui_v2 {
+                        self.model.retarget();
+                    }
                 }
                 if let Some(player) = &self.floating_player {
                     player.update(
@@ -1253,6 +1654,15 @@ impl App {
             Event::Close => return Ok(false),
             Event::Diagnostic => {
                 self.report();
+                return Ok(true);
+            }
+            Event::SettingsControlFault(kind) => {
+                if self.test_fixture && self.ui_v2 && self.log.is_some() {
+                    if let Some(settings) = &self.settings {
+                        let _ = settings.test_control_fault(kind);
+                    }
+                    self.report();
+                }
                 return Ok(true);
             }
             Event::Access(message, child, revision, value) => {
@@ -1280,6 +1690,11 @@ impl App {
                             self.model.volume = value as f32
                         }
                         accessibility::VALUE
+                            if hit == Hit::Seek && value <= 100 && self.model.enabled(hit) =>
+                        {
+                            self.seek_fraction(value as f32 / 100.);
+                        }
+                        accessibility::VALUE
                             if hit == Hit::TimerRuler && (1..=1440).contains(&value) =>
                         {
                             self.model.set_timer_minutes(value as f32);
@@ -1292,6 +1707,9 @@ impl App {
             Event::Cancel => {
                 self.down = None;
                 self.dragged = false;
+                if self.ui_v2 && self.hover_leave_at.is_some() {
+                    SetTimer(self.window, 3, 1, None);
+                }
             }
             Event::Tick => {
                 let elapsed = self.start.elapsed().as_secs_f64();
@@ -1373,7 +1791,11 @@ impl App {
             }
             Event::Leave => {
                 self.hover = None;
-                if !self.model.expanded && self.model.hovered {
+                if self.ui_v2 {
+                    self.hover_leave_at = Some(Instant::now() + Duration::from_millis(150));
+                    SetTimer(self.window, 3, 150, None);
+                    changed = false;
+                } else if !self.model.expanded && self.model.hovered {
                     self.model.hovered = false;
                     self.model.retarget();
                 }
@@ -1381,6 +1803,10 @@ impl App {
             Event::Move(x, y) => {
                 let p = self.point(x, y);
                 let next = self.model.hit(p);
+                if next.is_some() {
+                    self.hover_leave_at = None;
+                    let _ = KillTimer(self.window, 3);
+                }
                 changed = self.hover != next;
                 self.hover = next;
                 if !self.model.expanded && !self.model.hovered && next.is_some() {
@@ -1399,6 +1825,8 @@ impl App {
                             self.model.scroll_by(-dx);
                         } else if hit == Hit::Volume && self.model.enabled(hit) {
                             self.model.volume = (initial_scroll - dx / 10.).round().clamp(0., 100.);
+                        } else if hit == Hit::Seek && self.model.enabled(hit) {
+                            self.seek_at(p.x);
                         } else if hit == Hit::TimerRuler {
                             self.model.set_timer_minutes(initial_scroll - dx / 10.);
                         }
@@ -1424,6 +1852,9 @@ impl App {
             }
             Event::Up(x, y) => {
                 let p = self.point(x, y);
+                if self.down.is_some_and(|(_, hit, _)| hit == Hit::Seek) {
+                    self.seek_at(p.x);
+                }
                 if let Some((_, hit, _)) = self.down.take() {
                     if !self.dragged && self.model.hit(p) == Some(hit) {
                         if hit == Hit::Volume && self.model.enabled(hit) {
@@ -1431,6 +1862,8 @@ impl App {
                             self.model.volume = (self.model.volume + (p.x - r.x - r.w / 2.) / 10.)
                                 .round()
                                 .clamp(0., 100.);
+                        } else if hit == Hit::Seek && self.model.enabled(hit) {
+                            self.seek_at(p.x);
                         } else if hit == Hit::TimerRuler {
                             let r = self.model.ruler();
                             self.model.set_timer_minutes(
@@ -1440,6 +1873,9 @@ impl App {
                             self.action(hit);
                         }
                     }
+                }
+                if self.ui_v2 && self.hover_leave_at.is_some() {
+                    SetTimer(self.window, 3, 1, None);
                 }
             }
             Event::Wheel(delta) => {
@@ -1452,7 +1888,7 @@ impl App {
             Event::Key(key) => match key {
                 0x77 => self.action(Hit::Tool(3)),
                 0x78 => self.open_timer_window(),
-                0x1b => self.model.back(),
+                0x1b if self.inspection_previous.is_none() => self.model.back(),
                 0x20 => {
                     if let Some(hit) = self.model.focus {
                         self.action(hit);
@@ -1481,6 +1917,9 @@ impl App {
                 0x09 => self
                     .model
                     .move_focus(GetKeyState(VK_SHIFT.0 as i32) < 0, false),
+                0x23 | 0x24 if self.model.focus == Some(Hit::Seek) => {
+                    self.seek_fraction(if key == 0x24 { 0. } else { 1. });
+                }
                 0x23 | 0x24 if self.model.focus == Some(Hit::TimerRuler) => {
                     self.model
                         .set_timer_minutes(if key == 0x24 { 1. } else { 1440. });
@@ -1510,6 +1949,20 @@ impl App {
                             self.model.timer_minutes as f32
                                 + if key == 0x25 { step } else { -step },
                         );
+                    } else if self.model.focus == Some(Hit::Seek) {
+                        if let Some(snapshot) = &self.model.media {
+                            let position =
+                                snapshot.timeline.position(self.model.now, snapshot.playing) as f64;
+                            let duration = snapshot.timeline.duration_ms as f64;
+                            let delta = if key == 0x25 || key == 0x28 {
+                                -5000.
+                            } else {
+                                5000.
+                            };
+                            if duration > 0. {
+                                self.seek_fraction(((position + delta) / duration) as f32);
+                            }
+                        }
                     } else if self.model.focus == Some(Hit::Volume)
                         && self.model.enabled(Hit::Volume)
                     {
@@ -1565,6 +2018,43 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            let p95_of = |values: &[f64]| {
+                let mut sorted = values.to_vec();
+                sorted.sort_by(f64::total_cmp);
+                sorted
+                    .get(sorted.len().saturating_sub(1) * 95 / 100)
+                    .copied()
+                    .unwrap_or(0.)
+            };
+            let album = self.model.shared_album_rect();
+            let progress = self.model.progress_rect();
+            let target = self.model.target_layout();
+            text.push_str(&format!(",\"regionUpdates\":{}", self.region_updates));
+            text.push_str(&format!(",\"continuous\":{},\"surfaceTargetRect\":[{},{},{},{}],\"progressRect\":[{},{},{},{}]",
+                self.continuous(), target.surface.x,target.surface.y,target.surface.w,target.surface.h,
+                progress.x,progress.y,progress.w,progress.h));
+            text.push_str(&format!(",\"artworkSide\":{},\"mediaSeekCapable\":{},\"mediaPositionMillis\":{},\"mediaDurationMillis\":{}",
+                self.model.media.as_ref().and_then(|media| media.cover.as_ref()).map(|cover| cover.width).unwrap_or(0),
+                self.model.media.as_ref().is_some_and(|media| media.seek),
+                self.model.media.as_ref().map(|media| media.timeline.position(self.model.now, media.playing)).unwrap_or(0),
+                self.model.media.as_ref().map(|media| media.timeline.duration_ms).unwrap_or(0)));
+            let surface_origin = self.model.origin();
+            text.push_str(&format!(",\"albumRect\":[{},{},{},{}],\"surfaceRect\":[{},{},{},{}],\"expanded\":{},\"hovered\":{},\"inspectionLocked\":{},\"motionTimeScale\":{}",
+                album.x,album.y,album.w,album.h,surface_origin.x,surface_origin.y,self.model.width.value,self.model.height.value,
+                self.model.expanded,self.model.hovered,self.inspection_previous.is_some(),self.model.motion_time_scale));
+            text.push_str(&format!(",\"runtimeRevision\":{},\"persistedRevision\":{},\"configurationDirty\":{},\"configurationSaveError\":{}",
+                self.configuration.runtime_revision(),self.configuration.persisted_revision(),self.configuration.dirty(),self.configuration.last_error().is_some()));
+            text.push_str(&format!(
+                ",\"savingRevision\":{}",
+                self.configuration
+                    .saving_revision()
+                    .map(|revision| revision.to_string())
+                    .unwrap_or_else(|| "null".into())
+            ));
+            text.push_str(&format!(",\"uiV2\":{},\"renderCpuP95Ms\":{},\"regionCpuP95Ms\":{},\"artworkUploadMs\":{},\"blurBuildMs\":{}",
+                self.ui_v2, p95_of(&self.render_cpu_ms), p95_of(&self.region_ms),
+                self.renderer.as_ref().map(|renderer| renderer.artwork_upload_ms).unwrap_or(0.),
+                self.renderer.as_ref().map(|renderer| renderer.blur_build_ms).unwrap_or(0.)));
             text.push_str(&format!(",\"playerDialogAlive\":{},\"playerListReady\":{},\"playerListRows\":{},\"playerSelectionAutomatic\":{},\"playerAllowedCount\":{},\"playerOrderCount\":{}",self.player_dialog.is_some(),self.player_dialog.as_ref().is_some_and(|d|d.ready()),self.player_dialog.as_ref().map(|d|d.row_count()).unwrap_or(0),self.configuration.selection.allowed.is_none(),self.configuration.selection.allowed.as_ref().map(|ids|ids.len()).unwrap_or(0),self.configuration.selection.order.len()));
             text.push_str(&format!(
                 ",\"clockZoneIndex\":{},\"clockZoneSupported\":{}",
@@ -1604,6 +2094,28 @@ impl App {
                 background[0], background[1], background[2], self.model.use_album_color
             ));
             text.push_str(&format!(",{},\"weatherConfigured\":{},\"weatherData\":{},\"weatherError\":{},\"weatherDays\":{},\"settingsWindowAlive\":{}",self.weather.diagnostics(),self.model.weather.city.is_some(),self.model.weather.data.is_some(),self.model.weather.failed,self.model.weather.data.as_ref().map(|d|d.days.len()).unwrap_or(0),self.settings.is_some()));
+            if let Some(diagnostics) = self
+                .settings
+                .as_ref()
+                .and_then(|settings| unsafe { settings.control_diagnostics() })
+            {
+                text.push_str(&format!(
+                    ",\"settingsControlPaint\":{{\"button\":{},\"navigation\":{},\"toggle\":{},\"segmented\":{},\"slider\":{},\"dropdown\":{},\"dropdownChrome\":{},\"targetRecreates\":{},\"nativeFallbacks\":{},\"comboRecoveries\":{},\"highContrast\":{},\"generation\":{},\"rendererEnabled\":{}}}",
+                    diagnostics.button_paints,
+                    diagnostics.nav_button_paints,
+                    diagnostics.toggle_paints,
+                    diagnostics.segment_paints,
+                    diagnostics.slider_paints,
+                    diagnostics.dropdown_paints,
+                    diagnostics.dropdown_chrome_paints,
+                    diagnostics.target_recreates,
+                    diagnostics.native_fallbacks,
+                    diagnostics.combo_recoveries,
+                    diagnostics.high_contrast,
+                    diagnostics.generation,
+                    diagnostics.renderer_enabled,
+                ));
+            }
             if let Some(service) = &self.audio {
                 text.push(',');
                 text.push_str(&service.diagnostics());
@@ -1821,6 +2333,11 @@ unsafe fn run() -> Result<()> {
         track: usize::from(args.iter().any(|a| a == "--long-title")),
         ..Model::default()
     };
+    model.set_ui_v2(args.iter().any(|arg| arg == "--ui-v2"));
+    model.motion_time_scale = value(&args, "--motion-scale")
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| matches!(*value, 1.0 | 0.5 | 0.2))
+        .unwrap_or(1.0);
     if let Some(page) = value(&args, "--page") {
         model.switch(match page.as_str() {
             "volume" => Page::Volume,
@@ -1907,6 +2424,10 @@ unsafe fn run() -> Result<()> {
             title: "封面与弹簧测试".into(),
             artist: "独立测试数据".into(),
             playing: model.playing,
+            previous: model.ui_v2,
+            play_pause: model.ui_v2,
+            next: model.ui_v2,
+            seek: model.ui_v2,
             timeline: isle_core::Timeline {
                 position_ms: 122_000,
                 duration_ms: 244_000,
@@ -1975,7 +2496,13 @@ unsafe fn run() -> Result<()> {
         }),
         test_monitor: value(&args, "--test-monitor")
             .or_else(|| std::env::var("ISLE_TEST_MONITOR").ok()),
+        ui_v2: model.ui_v2,
         model,
+        inspection_previous: None,
+        hover_leave_at: None,
+        region_ms: vec![],
+        region_updates: 0,
+        render_cpu_ms: vec![],
         always_on_top,
         edge_position: appearance.edge_position,
         scale,
@@ -2070,7 +2597,19 @@ unsafe fn run() -> Result<()> {
             }
         }
     }
+    app.save_settings_window_placement(Duration::ZERO)?;
+    if let Err(error) = app.configuration.flush_timeout(Duration::from_secs(2)) {
+        eprintln!("Settings exit flush failed: {error}");
+        if let Some(path) = &app.log {
+            let _ = std::fs::write(
+                std::path::Path::new(path).with_extension("flush-error.txt"),
+                &error,
+            );
+        }
+    }
     app.report();
+    let _ = KillTimer(window, 2);
+    let _ = KillTimer(window, 3);
     if app.interval > 0 {
         let _ = KillTimer(window, 1);
     }

@@ -21,6 +21,7 @@ pub enum Action {
     Toggle,
     Previous,
     Next,
+    Seek(u64),
 }
 enum Command {
     Wake,
@@ -39,9 +40,11 @@ struct Shared {
     updates: AtomicU64,
     manager_alive: AtomicBool,
     active: AtomicBool,
+    display_artwork: AtomicBool,
     stopping: AtomicBool,
     pending: AtomicBool,
     update: Mutex<Update>,
+    seek: Mutex<Option<(u64, u64, Instant)>>,
 }
 pub struct MediaService {
     shared: Arc<Shared>,
@@ -58,9 +61,11 @@ impl MediaService {
             updates: AtomicU64::new(0),
             manager_alive: AtomicBool::new(false),
             active: AtomicBool::new(false),
+            display_artwork: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             pending: AtomicBool::new(false),
             update: Mutex::new(Update::default()),
+            seek: Mutex::new(None),
         });
         let (sender, receiver) = mpsc::sync_channel(8);
         let state = shared.clone();
@@ -91,6 +96,11 @@ impl MediaService {
         })
     }
     pub fn set_selection(&self, selection: Selection) {
+        self.shared
+            .seek
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         *self
             .shared
             .selection
@@ -105,9 +115,14 @@ impl MediaService {
             let _ = self.sender.try_send(Command::Wake);
         }
     }
+    pub fn set_artwork_display(&self, display: bool) {
+        if self.shared.display_artwork.swap(display, Ordering::AcqRel) != display {
+            let _ = self.sender.try_send(Command::Wake);
+        }
+    }
     pub fn diagnostics(&self) -> String {
         format!(
-            "\"mediaActive\":{},\"mediaManagerAlive\":{},\"mediaPolls\":{},\"mediaUpdates\":{},\"artworkBusy\":{},\"artworkJobs\":{},\"artworkHttpRequests\":{},\"artworkCacheEntries\":{}",
+            "\"mediaActive\":{},\"mediaManagerAlive\":{},\"mediaPolls\":{},\"mediaUpdates\":{},\"artworkBusy\":{},\"artworkJobs\":{},\"artworkHttpRequests\":{},\"artworkCacheEntries\":{},\"artworkDisplayCacheEntries\":{}",
             self.shared.active.load(Ordering::Acquire),
             self.shared.manager_alive.load(Ordering::Acquire),
             self.shared.polls.load(Ordering::Relaxed),
@@ -115,10 +130,17 @@ impl MediaService {
             self.shared.artwork.busy.load(Ordering::Acquire),
             self.shared.artwork.jobs.load(Ordering::Relaxed),
             self.shared.artwork.requests.load(Ordering::Relaxed),
-            self.shared.artwork.entries.load(Ordering::Relaxed)
+            self.shared.artwork.entries.load(Ordering::Relaxed),
+            self.shared.artwork.display_entries.load(Ordering::Relaxed)
         )
     }
     pub fn control(&self, session: u64, action: Action) {
+        if let Action::Seek(position) = action {
+            *self.shared.seek.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((session, position, Instant::now()));
+            let _ = self.sender.try_send(Command::Wake);
+            return;
+        }
         let _ = self
             .sender
             .try_send(Command::Control(session, action, Instant::now()));
@@ -302,6 +324,7 @@ fn poll(
     next.previous = controls.IsPreviousEnabled()?;
     next.play_pause = controls.IsPlayPauseToggleEnabled()?;
     next.next = controls.IsNextEnabled()?;
+    next.seek = controls.IsPlaybackPositionEnabled()?;
     let timeline = selected.GetTimelineProperties().ok().and_then(|t| {
         Some((
             (t.Position().ok()?.Duration / 10000).max(0) as u64,
@@ -333,6 +356,11 @@ fn poll(
         artist: next.artist.clone(),
         netease,
         thumbnail: current.thumbnail.clone(),
+        tier: if shared.display_artwork.load(Ordering::Acquire) {
+            crate::artwork::ArtworkTier::Display512
+        } else {
+            crate::artwork::ArtworkTier::Thumbnail128
+        },
     }) {
         if next.timeline.duration_ms == 0 {
             next.timeline.duration_ms = extra.duration;
@@ -360,6 +388,7 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
     while !shared.stopping.load(Ordering::Acquire) {
         let active = shared.active.load(Ordering::Acquire);
         if !active {
+            shared.seek.lock().unwrap_or_else(|e| e.into_inner()).take();
             enrichment.cancel();
             current = None;
             manager = None;
@@ -384,6 +413,19 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
             enrichment.cancel();
             revision = latest;
         }
+        let command = if matches!(command, Some(Command::Control(..))) {
+            command
+        } else {
+            shared
+                .seek
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+                .map(|(session, position, when)| {
+                    Command::Control(session, Action::Seek(position), when)
+                })
+                .or(command)
+        };
         let mut error = None;
         if let Some(Command::Control(target, action, when)) = command {
             if let Some(s) = current
@@ -394,6 +436,13 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                     Action::Toggle if s.snapshot.play_pause => s.value.TryTogglePlayPauseAsync(),
                     Action::Previous if s.snapshot.previous => s.value.TrySkipPreviousAsync(),
                     Action::Next if s.snapshot.next => s.value.TrySkipNextAsync(),
+                    Action::Seek(position)
+                        if s.snapshot.seek && s.snapshot.timeline.duration_ms > 0 =>
+                    {
+                        let position = position.min(s.snapshot.timeline.duration_ms);
+                        s.value
+                            .TryChangePlaybackPositionAsync((position * 10_000) as i64)
+                    }
                     _ => {
                         continue;
                     }

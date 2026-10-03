@@ -1,8 +1,11 @@
 //! Platform-independent media state. Times are monotonic seconds from app start.
+pub mod activity;
 pub mod configuration;
 pub mod preferences;
+pub mod settings;
 pub mod spectrum;
 pub mod weather;
+pub mod widgets;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AudioDevice {
     pub id: String,
@@ -27,14 +30,45 @@ pub struct MediaSnapshot {
     pub previous: bool,
     pub play_pause: bool,
     pub next: bool,
+    pub seek: bool,
     pub timeline: Timeline,
+}
+
+/// Controls the active media session reports as available.
+///
+/// The values are derived from the session snapshot; unsupported optional
+/// controls remain false until a provider exposes real capability data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MediaCapabilities {
+    pub previous: bool,
+    pub play_pause: bool,
+    pub next: bool,
+    pub seek: bool,
+    pub shuffle: bool,
+    pub repeat: bool,
+    pub queue: bool,
+}
+
+impl MediaSnapshot {
+    pub fn capabilities(&self) -> MediaCapabilities {
+        MediaCapabilities {
+            previous: self.previous,
+            play_pause: self.play_pause,
+            next: self.next,
+            seek: self.seek,
+            // GSMTC currently exposes no corresponding capabilities here.
+            shuffle: false,
+            repeat: false,
+            queue: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cover {
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>, // Premultiplied BGRA, bounded to 128 x 128.
+    pub pixels: Vec<u8>, // Premultiplied BGRA, bounded to 512 x 512.
 }
 
 pub fn matching_song(title: &str, artist: &str, found_title: &str, found_artist: &str) -> bool {
@@ -213,6 +247,33 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capabilities_only_report_controls_available_in_the_media_snapshot() {
+        let snapshot = MediaSnapshot {
+            previous: true,
+            play_pause: true,
+            next: false,
+            seek: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            snapshot.capabilities(),
+            MediaCapabilities {
+                previous: true,
+                play_pause: true,
+                next: false,
+                seek: true,
+                shuffle: false,
+                repeat: false,
+                queue: false,
+            }
+        );
+        assert_eq!(
+            MediaSnapshot::default().capabilities(),
+            MediaCapabilities::default()
+        );
+    }
+
     #[test]
     fn search_match_rejects_covers_and_missing_artist() {
         assert!(matching_song(

@@ -1,14 +1,17 @@
 """Exercise process/window teardown and the static scheduler without changing OS settings."""
 import json
+import os
 import subprocess
 import time
+from pathlib import Path
 from interaction import ROOT, OUT, wait_window, close, u
 
 results = []
+exe = Path(os.environ.get('ISLE_TEST_EXE', ROOT/'target/release/isle-native.exe')).resolve()
 for index in range(30):
     report = OUT / f'lifecycle-{index}.json'
     page = ['music', 'volume', 'timer', 'clock', 'weather'][index % 5]
-    proc = subprocess.Popen([str(ROOT/'target/release/isle-native.exe'),
+    proc = subprocess.Popen([str(exe),
                              '--page', page, '--paused', '--reduced-motion', '--log', str(report)])
     hwnd = wait_window(proc)
     try:
@@ -28,7 +31,7 @@ for index in range(30):
 
 # Clock owns a minute-boundary timer, never a continuous frame timer at rest.
 report = OUT/'clock-lifecycle.json'
-proc = subprocess.Popen([str(ROOT/'target/release/isle-native.exe'), '--page', 'clock',
+proc = subprocess.Popen([str(exe), '--page', 'clock',
                          '--paused', '--reduced-motion', '--log', str(report)])
 hwnd = wait_window(proc)
 try:

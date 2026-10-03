@@ -1,5 +1,5 @@
 //! Preserve the complete JSON document, including fields not yet used by native UI.
-use crate::{preferences::AppPreferences, weather::City};
+use crate::{preferences::AppPreferences, settings::SettingsWindowPlacement, weather::City};
 use serde_json::{Map, Value};
 
 pub const MAX_BYTES: usize = 1024 * 1024;
@@ -114,6 +114,7 @@ impl Document {
         Ok(doc)
     }
     pub fn preferences(&self) -> Result<AppPreferences, String> {
+        self.window_placement()?;
         let mut known = self.0.clone();
         // Keep aliases in the saved document, but canonical values win during typed decoding.
         known.remove("edgeShoulderRadius");
@@ -131,6 +132,15 @@ impl Document {
                 return Err("天气城市配置无效".into());
             }
         }
+        let widgets: Vec<crate::widgets::WidgetConfig> = self
+            .0
+            .get("widgetShelf")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| "Shelf widget configuration is invalid".to_string())?
+            .unwrap_or_else(crate::widgets::defaults);
+        crate::widgets::validate(&widgets)?;
         if prefs.island_edge_position > 100 {
             return Err("贴边位置必须在 0–100 之间".into());
         }
@@ -305,6 +315,66 @@ impl Document {
             .insert("weatherLocation".into(), Value::Object(value));
         Ok(())
     }
+    pub fn widgets(&self) -> Result<Vec<crate::widgets::WidgetConfig>, String> {
+        let widgets = self
+            .0
+            .get("widgetShelf")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| "Shelf widget configuration is invalid".to_string())?
+            .unwrap_or_else(crate::widgets::defaults);
+        crate::widgets::validate(&widgets)?;
+        Ok(widgets)
+    }
+    pub fn window_placement(&self) -> Result<Option<SettingsWindowPlacement>, String> {
+        let Some(value) = self.0.get("settingsWindowPlacement") else {
+            return Ok(None);
+        };
+        let placement: SettingsWindowPlacement = serde_json::from_value(value.clone())
+            .map_err(|_| "设置窗口位置配置无效".to_string())?;
+        placement.validate()?;
+        Ok(Some(placement))
+    }
+    pub fn set_window_placement(
+        &mut self,
+        placement: Option<&SettingsWindowPlacement>,
+    ) -> Result<(), String> {
+        match placement {
+            Some(placement) => {
+                placement.validate()?;
+                let serialized =
+                    serde_json::to_value(placement).map_err(|_| "设置窗口位置序列化失败")?;
+                let serialized = serialized
+                    .as_object()
+                    .ok_or_else(|| "设置窗口位置序列化失败".to_string())?;
+                let mut fields = self
+                    .0
+                    .get("settingsWindowPlacement")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                for (key, value) in serialized {
+                    fields.insert(key.clone(), value.clone());
+                }
+                self.0
+                    .insert("settingsWindowPlacement".into(), Value::Object(fields));
+            }
+            None => {
+                self.0.remove("settingsWindowPlacement");
+            }
+        }
+        Ok(())
+    }
+    pub fn set_widgets(&mut self, widgets: &[crate::widgets::WidgetConfig]) -> Result<(), String> {
+        crate::widgets::validate(widgets)?;
+        self.0
+            .insert("widgetShelf".into(), serde_json::to_value(widgets).unwrap());
+        Ok(())
+    }
+    pub fn clear_city(&mut self) {
+        self.0.remove("weatherLocation");
+    }
     pub fn bytes(&self) -> Result<Vec<u8>, String> {
         let bytes = serde_json::to_vec_pretty(&self.0).map_err(|_| "配置序列化失败")?;
         if bytes.len() > MAX_BYTES {
@@ -476,6 +546,74 @@ mod tests {
             "B"
         );
     }
+    #[test]
+    fn widget_edits_preserve_unknown_entries_and_nested_fields() {
+        let mut doc = Document::parse(br#"{"futureRoot":{"v":9},"widgetShelf":[{"id":"future-widget","order":7,"span":9,"enabled":true,"future":{"nested":[1,null,3]}},{"id":"music","order":0,"span":1,"enabled":true}]}"#).unwrap();
+        let mut widgets = doc.widgets().unwrap();
+        assert_eq!(widgets[0].id, "future-widget");
+        assert_eq!(widgets[0].span, 9);
+        widgets[1].order = 2;
+        doc.set_widgets(&widgets).unwrap();
+        let saved: Value = serde_json::from_slice(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(saved["futureRoot"]["v"], 9);
+        assert_eq!(saved["widgetShelf"][0]["future"]["nested"][2], 3);
+        assert_eq!(saved["widgetShelf"][0]["span"], 9);
+    }
+    #[test]
+    fn settings_placement_roundtrip_preserves_unknown_fields_and_can_be_cleared() {
+        let mut doc = Document::parse(
+            br#"{"future":{"keep":[1,null,3]},"settingsWindowPlacement":{"x":-1920,"y":120,"widthDip":820,"heightDip":760,"dpi":144,"future":{"keep":["a",null,3]}}}"#,
+        )
+        .unwrap();
+        let initial = doc.window_placement().unwrap().unwrap();
+        assert_eq!(initial.x, -1920);
+        assert_eq!(initial.width_dip, 820);
+
+        let moved = SettingsWindowPlacement {
+            x: -1280,
+            y: 80,
+            width_dip: 900,
+            height_dip: 700,
+            dpi: 192,
+        };
+        doc.set_window_placement(Some(&moved)).unwrap();
+        let saved = Document::parse(&doc.bytes().unwrap()).unwrap();
+        assert_eq!(saved.window_placement().unwrap(), Some(moved));
+        assert_eq!(saved.0["future"]["keep"], serde_json::json!([1, null, 3]));
+        assert_eq!(
+            saved.0["settingsWindowPlacement"]["future"]["keep"],
+            serde_json::json!(["a", null, 3])
+        );
+
+        let mut saved = saved;
+        saved.set_window_placement(None).unwrap();
+        let cleared = Document::parse(&saved.bytes().unwrap()).unwrap();
+        assert_eq!(cleared.window_placement().unwrap(), None);
+        assert_eq!(cleared.0["future"]["keep"], serde_json::json!([1, null, 3]));
+    }
+
+    #[test]
+    fn invalid_settings_placement_blocks_document_parse_and_mutation() {
+        for invalid in [
+            br#"{"settingsWindowPlacement":null}"#.as_slice(),
+            br#"{"settingsWindowPlacement":{"x":0,"y":0,"widthDip":0,"heightDip":760,"dpi":96}}"#,
+            br#"{"settingsWindowPlacement":{"x":0,"y":0,"widthDip":820,"heightDip":760,"dpi":1200}}"#,
+            br#"{"settingsWindowPlacement":{"x":0,"y":0,"widthDip":999999,"heightDip":760,"dpi":96}}"#,
+        ] {
+            assert!(Document::parse(invalid).is_err());
+        }
+        let mut doc = Document::default();
+        let invalid = SettingsWindowPlacement {
+            x: 0,
+            y: 0,
+            width_dip: 820,
+            height_dip: 760,
+            dpi: 0,
+        };
+        assert!(doc.set_window_placement(Some(&invalid)).is_err());
+        assert!(doc.window_placement().unwrap().is_none());
+    }
+
     #[test]
     fn canonical_fields_win_aliases_and_independent_topmost_is_inherited() {
         let doc =

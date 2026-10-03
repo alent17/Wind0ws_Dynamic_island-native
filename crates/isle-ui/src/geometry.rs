@@ -10,12 +10,20 @@ pub struct Point {
     pub x: f32,
     pub y: f32,
 }
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub x: f32,
     pub y: f32,
     pub w: f32,
     pub h: f32,
+}
+impl Rect {
+    pub fn center(self) -> Point {
+        Point {
+            x: self.x + self.w * 0.5,
+            y: self.y + self.h * 0.5,
+        }
+    }
 }
 impl Rect {
     pub fn contains(self, p: Point) -> bool {

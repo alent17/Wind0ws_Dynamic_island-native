@@ -23,6 +23,7 @@ version = "1.0.11"
 dependencies = [
  "isle-core",
  "isle-ui",
+ "serde_json",
  "windows",
 ]
 

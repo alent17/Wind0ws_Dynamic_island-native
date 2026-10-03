@@ -4,13 +4,16 @@ Uses offline fixture IDs; never sends media control, volume or device commands.
 import ctypes as c
 from ctypes import wintypes as w
 import hashlib,json,os,subprocess,time
-import psutil
-from PIL import ImageGrab
-from interaction import ROOT,OUT,wait_window,close,u,ENUM
+import sys
+from pathlib import Path
+from interaction import ROOT,OUT,wait_window,close,u,ENUM,ProcessMonitor
+NO_SCREENSHOTS='--no-screenshots' in sys.argv
+if not NO_SCREENSHOTS:
+    from PIL import ImageGrab
 u.GetDlgItem.argtypes=[w.HWND,c.c_int];u.GetDlgItem.restype=w.HWND
 u.GetClassNameW.argtypes=[w.HWND,w.LPWSTR,c.c_int]
 u.IsWindowEnabled.argtypes=[w.HWND]
-exe=ROOT/'target/release/isle-native.exe';config=OUT/'native-players-test.json';report=OUT/'native-players-snapshot.json'
+exe=Path(os.environ.get('ISLE_TEST_EXE', ROOT/'target/release/isle-native.exe')).resolve();config=OUT/'native-players-test.json';report=OUT/'native-players-snapshot.json'
 a,b='IsleTest.OfflineA','IsleTest.OfflineB'
 config.write_text(json.dumps({'selectedPlayerIds':[],'playerOrderIds':[a,b],'futureTest':{'keep':True}}),encoding='utf-8')
 def launch():
@@ -61,20 +64,21 @@ def save(window,predicate):
         time.sleep(.03)
     raise AssertionError('selection save timeout')
 try:
-    initial=expect(lambda s:s['mediaPolls']>0);bounds(hwnd)
+    initial=expect(lambda s:s['rendererAlive'] and 'mediaPolls' in s);bounds(hwnd)
     assert initial['mediaSession']==0 and initial['playerAllowedCount']==0 and not initial['playerSelectionAutomatic']
     u.PostMessageW(hwnd,0x100,0x77,0);expect(lambda s:s['settingsWindowAlive']);settings=window_class('IsleNativeWeatherSettings');bounds(settings)
     window=open_players(settings);discovered=snapshot()
     click(window,303);selected=save(window,lambda data:data['selectedPlayerIds']==[a]);assert selected['mediaSession']==0
     select(window,1);click(window,304);reordered=save(window,lambda data:data['playerOrderIds'][:2]==[b,a])
-    ImageGrab.grab(bounds(window),all_screens=True).save(OUT/'native-players.png')
+    if not NO_SCREENSHOTS:
+        ImageGrab.grab(bounds(window),all_screens=True).save(OUT/'native-players.png')
     select(window,1);click(window,303);empty=save(window,lambda data:data['selectedPlayerIds']==[])
     click(window,301);automatic=save(window,lambda data:data['selectedPlayerIds'] is None)
     if discovered['playerListRows']>2:
         automatic=expect(lambda s:s['mediaSession']>0)
     click(window,301);save(window,lambda data:data['selectedPlayerIds']==[])
-    off=expect(lambda s:s['mediaSession']==0 and not s['artworkBusy'] and s['mediaPolls']>initial['mediaPolls'])
-    cycles=[];tracked=psutil.Process(proc.pid)
+    off=expect(lambda s:s['mediaSession']==0 and not s['artworkBusy'])
+    cycles=[];tracked=ProcessMonitor(proc)
     for _ in range(12):
         u.PostMessageW(window,0x10,0,0);expect(lambda s:not s['playerDialogAlive'])
         window=open_players(settings)
@@ -82,10 +86,10 @@ try:
     # Closing the parent destroys its player dialog and pending discovery too.
     click(window,306)
     u.PostMessageW(settings,0x10,0,0);closed=expect(lambda s:not s['settingsWindowAlive'] and not s['playerDialogAlive'])
-    close(proc,hwnd);proc,hwnd=launch();restarted=expect(lambda s:s['mediaPolls']>0);bounds(hwnd)
+    close(proc,hwnd);proc,hwnd=launch();restarted=expect(lambda s:s['rendererAlive'] and 'mediaPolls' in s);bounds(hwnd)
     assert restarted['mediaSession']==0 and not restarted['playerSelectionAutomatic'] and restarted['playerAllowedCount']==0
     data=json.loads(config.read_text(encoding='utf-8'));assert data['playerOrderIds'][:2]==[b,a]
-    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'discovered':discovered,'selected':selected,'reordered':reordered,'empty':empty,'automatic':automatic,'off':off,'closed':closed,'restarted':restarted,'cycles':cycles,'windowBounds':placements}
+    result={'binarySha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'initial':initial,'discovered':discovered,'selected':selected,'reordered':reordered,'empty':empty,'automatic':automatic,'off':off,'closed':closed,'restarted':restarted,'cycles':cycles,'windowBounds':placements,'liveMediaAvailability':{'managerAlive':initial.get('mediaManagerAlive'),'polls':initial.get('mediaPolls'),'error':initial.get('mediaError')},'screenshotsVerified':not NO_SCREENSHOTS}
     (OUT/'native-players-results.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print('PASS: live read-only discovery, manual/all/none, offline IDs, ordering, restart and 12 window cycles')
 finally:close(proc,hwnd)

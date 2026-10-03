@@ -2,7 +2,7 @@ param([int]$Seconds = 60, [int]$Repetitions = 3,
     [string]$Scene = 'all', [string]$OutputName = 'measurement-v3')
 $ErrorActionPreference = 'Stop'
 $nativeRoot = Split-Path $PSScriptRoot
-$exe = Join-Path $nativeRoot 'target/release/isle-native.exe'
+$exe = if ($env:ISLE_TEST_EXE) { $env:ISLE_TEST_EXE } else { Join-Path $nativeRoot 'target/release/isle-native.exe' }
 $outputDir = Join-Path (Join-Path $nativeRoot 'artifacts') $OutputName
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 $scenarios = @(

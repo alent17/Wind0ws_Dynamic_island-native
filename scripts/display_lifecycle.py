@@ -4,8 +4,10 @@ Does not modify desktop resolution, monitor layout or Windows DPI preferences.
 import ctypes as c
 from ctypes import wintypes as w
 import json
+import os
 import subprocess
 import time
+from pathlib import Path
 from interaction import ROOT, OUT, wait_window, close, u, g
 
 u.ShowWindow.argtypes = [w.HWND, c.c_int]
@@ -37,7 +39,7 @@ def snapshot(hwnd, path):
     raise AssertionError('diagnostic snapshot timeout')
 
 results=[]
-exe=str(ROOT/'target/release/isle-native.exe')
+exe=str(Path(os.environ.get('ISLE_TEST_EXE', ROOT/'target/release/isle-native.exe')).resolve())
 for dpi in [96,120,144,192]:
     for small in [False,True]:
         for edge in ['top','right','bottom','left']:

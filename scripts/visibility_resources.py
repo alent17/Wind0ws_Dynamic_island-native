@@ -1,16 +1,18 @@
 """One exploratory visibility run: 10s visible, 60s hidden, 10s restored."""
 import json
+import os
 import subprocess
 import time
-import psutil
+from pathlib import Path
 import ctypes as c
 from ctypes import wintypes as w
-from interaction import ROOT, OUT, wait_window, close, u
+from interaction import ROOT, OUT, wait_window, close, u, ProcessMonitor
 u.ShowWindow.argtypes=[w.HWND,c.c_int]
 report=OUT/'visibility-snapshot.json'
-proc=subprocess.Popen([str(ROOT/'target/release/isle-native.exe'),'--page','music','--long-title','--benchmark','--log',str(report)])
+exe=Path(os.environ.get('ISLE_TEST_EXE', ROOT/'target/release/isle-native.exe')).resolve()
+proc=subprocess.Popen([str(exe),'--page','music','--long-title','--benchmark','--log',str(report)])
 hwnd=wait_window(proc)
-tracked=psutil.Process(proc.pid)
+tracked=ProcessMonitor(proc)
 rows=[]
 def snap():
     prior=report.stat().st_mtime_ns if report.exists() else 0
@@ -28,7 +30,7 @@ def sample(scene,seconds):
         time.sleep(1)
         now=time.monotonic();cpu=tracked.cpu_times();total=cpu.user+cpu.system
         mem=tracked.memory_info()
-        rows.append({'scene':scene,'cpuMachinePercent':100*(total-last_cpu)/(now-last)/psutil.cpu_count(),
+        rows.append({'scene':scene,'cpuMachinePercent':100*(total-last_cpu)/(now-last)/(os.cpu_count() or 1),
                      'privateMiB':mem.private/1024**2,'workingSetMiB':mem.rss/1024**2,'handles':tracked.num_handles()})
         last=now;last_cpu=total
     after=snap()

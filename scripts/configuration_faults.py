@@ -4,11 +4,12 @@ from ctypes import wintypes as w
 import hashlib
 import json
 import os
+from pathlib import Path
 import subprocess
 import time
 from interaction import ROOT, OUT, wait_window, close, u
 
-exe=ROOT/'target/release/isle-native.exe'
+exe=Path(os.environ.get('ISLE_TEST_EXE', ROOT/'target/release/isle-native.exe')).resolve()
 folder=OUT/'configuration-faults'
 folder.mkdir(exist_ok=True)
 cases={'malformed':b'{broken', 'wrong-type':b'{"showClockTool":"yes"}',

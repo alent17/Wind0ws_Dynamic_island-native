@@ -3,6 +3,7 @@ use isle_ui::{geometry::*, model::*};
 #[path = "panels.rs"]
 mod panels;
 use std::collections::HashMap;
+use std::time::Instant;
 use windows::{
     core::*,
     Foundation::Numerics::Matrix3x2,
@@ -28,6 +29,10 @@ pub struct Renderer {
     ruler_dragging: bool,
     icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
+    previous_cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
+    glass_cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
+    artwork_fade: isle_ui::spring::Spring,
+    last_draw_now: Option<f64>,
     disc_brush: Option<ID2D1BitmapBrush>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
@@ -39,11 +44,16 @@ pub struct Renderer {
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
     brush: ID2D1SolidColorBrush,
+    glass_brush: ID2D1LinearGradientBrush,
     formats: HashMap<(u32, i32), IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub title_overflow: bool,
     pub opaque_preview: bool,
+    /// CPU time for draw submission through EndDraw, excluding swap-chain Present.
+    pub render_cpu_ms: f64,
+    pub artwork_upload_ms: f64,
+    pub blur_build_ms: f64,
 }
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -58,6 +68,98 @@ fn rect(r: Rect) -> D2D_RECT_F {
         right: r.x + r.w,
         bottom: r.y + r.h,
     }
+}
+fn artwork_source(cover: &isle_core::Cover) -> D2D_RECT_F {
+    let (width, height) = (cover.width as f32, cover.height as f32);
+    if width > height {
+        let inset = (width - height) * 0.5;
+        D2D_RECT_F {
+            left: inset,
+            top: 0.,
+            right: width - inset,
+            bottom: height,
+        }
+    } else {
+        let inset = (height - width) * 0.5;
+        D2D_RECT_F {
+            left: 0.,
+            top: inset,
+            right: width,
+            bottom: height - inset,
+        }
+    }
+}
+
+fn should_build_glass_blur(ui_v2: bool, artwork_visible: bool) -> bool {
+    ui_v2 && artwork_visible
+}
+
+/// Make a small, cached blur source when artwork changes. This is never run
+/// from the frame renderer after the cache has been built.
+fn blurred_cover(cover: &isle_core::Cover) -> Vec<u8> {
+    const SIDE: usize = 96;
+    const RADIUS: isize = 10;
+    let mut small = vec![0_u8; SIDE * SIDE * 4];
+    let (width, height) = (cover.width as usize, cover.height as usize);
+    if width == 0 || height == 0 {
+        return small;
+    }
+    for y in 0..SIDE {
+        let y0 = y * height / SIDE;
+        let y1 = ((y + 1) * height / SIDE).max(y0 + 1).min(height);
+        for x in 0..SIDE {
+            let x0 = x * width / SIDE;
+            let x1 = ((x + 1) * width / SIDE).max(x0 + 1).min(width);
+            let mut sum = [0_u64; 4];
+            let mut count = 0_u64;
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let at = (sy * width + sx) * 4;
+                    if at + 4 <= cover.pixels.len() {
+                        for (channel, value) in sum.iter_mut().enumerate() {
+                            *value += u64::from(cover.pixels[at + channel]);
+                        }
+                        count += 1;
+                    }
+                }
+            }
+            let at = (y * SIDE + x) * 4;
+            if count != 0 {
+                for c in 0..4 {
+                    small[at + c] = (sum[c] / count) as u8;
+                }
+            }
+        }
+    }
+    let mut horizontal = vec![0_u8; small.len()];
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            for c in 0..4 {
+                let (mut sum, mut count) = (0_u32, 0_u32);
+                for dx in -RADIUS..=RADIUS {
+                    let sx = (x as isize + dx).clamp(0, SIDE as isize - 1) as usize;
+                    sum += u32::from(small[(y * SIDE + sx) * 4 + c]);
+                    count += 1;
+                }
+                horizontal[(y * SIDE + x) * 4 + c] = (sum / count) as u8;
+            }
+        }
+    }
+    let mut output = vec![0_u8; small.len()];
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            for c in 0..4 {
+                let (mut sum, mut count) = (0_u32, 0_u32);
+                for dy in -RADIUS..=RADIUS {
+                    let sy = (y as isize + dy).clamp(0, SIDE as isize - 1) as usize;
+                    sum += u32::from(horizontal[(sy * SIDE + x) * 4 + c]);
+                    count += 1;
+                }
+                output[(y * SIDE + x) * 4 + c] = (sum / count) as u8;
+            }
+        }
+    }
+    output
 }
 fn write_media_time(milliseconds: u64, output: &mut [u16]) -> usize {
     let seconds = milliseconds / 1_000;
@@ -365,6 +467,34 @@ impl Renderer {
         target.SetRoot(&visual)?;
         composition.Commit()?;
         let brush = ctx.CreateSolidColorBrush(&color(1., 1., 1., 1.), None)?;
+        let glass_stops = [
+            D2D1_GRADIENT_STOP {
+                position: 0.,
+                color: color(0., 0., 0., 0.97),
+            },
+            D2D1_GRADIENT_STOP {
+                position: 0.2,
+                color: color(0., 0., 0., 0.94),
+            },
+            D2D1_GRADIENT_STOP {
+                position: 0.56,
+                color: color(0., 0., 0., 0.84),
+            },
+            D2D1_GRADIENT_STOP {
+                position: 1.,
+                color: color(0., 0., 0., 0.74),
+            },
+        ];
+        let glass_stops =
+            ctx.CreateGradientStopCollection(&glass_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
+        let glass_brush = ctx.CreateLinearGradientBrush(
+            &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: point(0., 0.),
+                endPoint: point(0., HOST),
+            },
+            None,
+            &glass_stops,
+        )?;
         let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
         let fonts = load_fonts(&write);
         let font_family = if fonts.is_some() {
@@ -385,8 +515,13 @@ impl Renderer {
             _target: target,
             _visual: visual,
             brush,
+            glass_brush,
             formats: HashMap::new(),
             cover: None,
+            previous_cover: None,
+            glass_cover: None,
+            artwork_fade: isle_ui::spring::Spring::new(1.),
+            last_draw_now: None,
             disc_brush: None,
             digits: Vec::new(),
             digits_page: (0, false),
@@ -399,6 +534,9 @@ impl Renderer {
             frames: 0,
             title_overflow: false,
             opaque_preview: false,
+            render_cpu_ms: 0.,
+            artwork_upload_ms: 0.,
+            blur_build_ms: 0.,
         })
     }
     unsafe fn ink(&self, c: D2D1_COLOR_F) {
@@ -414,6 +552,109 @@ impl Renderer {
             },
             &self.brush,
         );
+    }
+    unsafe fn draw_shared_album(&self, m: &Model, r: Rect) -> Result<()> {
+        let radius = m
+            .layout_snapshot()
+            .album
+            .map_or(10., |album| album.radius)
+            .clamp(0., r.w.min(r.h) * 0.5);
+        self.fill(r, radius, color(1., 1., 1., 0.06));
+        if self.cover.is_none() {
+            let icon = r.w.min(r.h) * 0.56;
+            self.icons.draw(
+                Icon::Music,
+                r.x + (r.w - icon) * 0.5,
+                r.y + (r.h - icon) * 0.5,
+                icon,
+                2.,
+                color(1., 1., 1., 0.34),
+            )?;
+            return Ok(());
+        }
+
+        let geometry = self
+            .factory
+            .CreateRoundedRectangleGeometry(&D2D1_ROUNDED_RECT {
+                rect: rect(r),
+                radiusX: radius,
+                radiusY: radius,
+            })?;
+        let mut layer = D2D1_LAYER_PARAMETERS {
+            contentBounds: rect(r),
+            geometricMask: std::mem::ManuallyDrop::new(Some(geometry.cast()?)),
+            maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            maskTransform: Matrix3x2 {
+                M11: 1.,
+                M22: 1.,
+                ..Default::default()
+            },
+            opacity: 1.,
+            ..Default::default()
+        };
+        self.ctx.PushLayer(&layer, None);
+        std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
+
+        let spinning = m.ui_v2 && !m.expanded && m.disc_spinning();
+        if spinning {
+            let (sin, cos) = m.disc_angle.sin_cos();
+            let center = r.center();
+            self.ctx.SetTransform(&Matrix3x2 {
+                M11: cos,
+                M12: sin,
+                M21: -sin,
+                M22: cos,
+                M31: center.x - center.x * cos + center.y * sin,
+                M32: center.y - center.x * sin - center.y * cos,
+            });
+        }
+
+        let fade = self.artwork_fade.value.clamp(0., 1.);
+        if let Some((cover, bitmap, _)) = &self.previous_cover {
+            let source = artwork_source(cover);
+            self.ctx.DrawBitmap(
+                bitmap,
+                Some(&rect(r)),
+                1. - fade,
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                Some(&source),
+            );
+        }
+        if let Some((cover, bitmap, _)) = &self.cover {
+            let source = artwork_source(cover);
+            self.ctx.DrawBitmap(
+                bitmap,
+                Some(&rect(r)),
+                if self.previous_cover.is_some() {
+                    fade
+                } else {
+                    1.
+                },
+                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                Some(&source),
+            );
+        }
+        if spinning {
+            self.ctx.SetTransform(&Matrix3x2 {
+                M11: 1.,
+                M22: 1.,
+                ..Default::default()
+            });
+        }
+        self.ctx.PopLayer();
+
+        self.ink(color(1., 1., 1., 0.12));
+        self.ctx.DrawRoundedRectangle(
+            &D2D1_ROUNDED_RECT {
+                rect: rect(r),
+                radiusX: radius,
+                radiusY: radius,
+            },
+            &self.brush,
+            1.,
+            None,
+        );
+        Ok(())
     }
     unsafe fn format_with_weight(
         &mut self,
@@ -501,6 +742,21 @@ impl Renderer {
         pressed: Option<Hit>,
         dragging: bool,
     ) -> Result<()> {
+        let render_started = Instant::now();
+        let dt = self
+            .last_draw_now
+            .map_or(0., |last| (m.now - last).clamp(0., 0.1) as f32);
+        self.last_draw_now = Some(m.now);
+        self.artwork_fade.advance(
+            isle_ui::motion::MotionPolicy {
+                reduced: m.reduced,
+                time_scale: m.motion_time_scale,
+            }
+            .dt(dt, isle_ui::motion::MotionProfile::Content),
+        );
+        if !self.artwork_fade.active() {
+            self.previous_cover = None;
+        }
         if self.digits_page != (m.generation, m.expanded) {
             self.digits.clear();
             self.ruler_motion = None;
@@ -509,6 +765,7 @@ impl Renderer {
         self.number_used = false;
         self.ruler_dragging = dragging;
         self.content_animating = false;
+        self.content_animating |= self.artwork_fade.active();
         if !m.expanded {
             self.page_enter = None;
         }
@@ -543,6 +800,12 @@ impl Renderer {
                 .as_ref()
                 .is_none_or(|(old, _, _)| !std::sync::Arc::ptr_eq(old, cover))
             {
+                let upload_started = Instant::now();
+                self.previous_cover = self.cover.take();
+                let had_previous = self.previous_cover.is_some();
+                self.artwork_fade =
+                    isle_ui::spring::Spring::new(if had_previous { 0. } else { 1. });
+                self.artwork_fade.set(1., m.reduced || !had_previous);
                 let bitmap = self.ctx.CreateBitmap(
                     D2D_SIZE_U {
                         width: cover.width,
@@ -561,10 +824,41 @@ impl Renderer {
                 )?;
                 self.disc_brush = Some(self.ctx.CreateBitmapBrush(&bitmap, None, None)?);
                 self.cover = Some((cover.clone(), bitmap, cover_spectrum_palette(cover)));
+                self.artwork_upload_ms = upload_started.elapsed().as_secs_f64() * 1000.;
+            }
+            if should_build_glass_blur(m.ui_v2, m.cover_visible())
+                && self
+                    .glass_cover
+                    .as_ref()
+                    .is_none_or(|(old, _)| !std::sync::Arc::ptr_eq(old, cover))
+            {
+                let blur_started = Instant::now();
+                let pixels = blurred_cover(cover);
+                let bitmap = self.ctx.CreateBitmap(
+                    D2D_SIZE_U {
+                        width: 96,
+                        height: 96,
+                    },
+                    Some(pixels.as_ptr().cast()),
+                    96 * 4,
+                    &D2D1_BITMAP_PROPERTIES {
+                        pixelFormat: D2D1_PIXEL_FORMAT {
+                            format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                            alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                        },
+                        dpiX: 96.,
+                        dpiY: 96.,
+                    },
+                )?;
+                self.glass_cover = Some((cover.clone(), bitmap));
+                self.blur_build_ms = blur_started.elapsed().as_secs_f64() * 1000.;
             }
         } else {
+            self.previous_cover = self.cover.take();
             self.cover = None;
             self.disc_brush = None;
+            self.glass_cover = None;
+            self.artwork_fade = isle_ui::spring::Spring::new(1.);
         }
         // The existing Isle island keeps a black surface. Cover color belongs
         // to the separate floating player, so artwork stays in the cover only.
@@ -578,8 +872,19 @@ impl Renderer {
         sink.AddLines(&points);
         sink.EndFigure(D2D1_FIGURE_END_CLOSED);
         sink.Close()?;
-        self.ink(background_color);
-        self.ctx.FillGeometry(&shape, &self.brush, None);
+        if self.opaque_preview {
+            self.ink(color(1., 1., 1., 1.));
+            self.ctx.FillGeometry(&shape, &self.brush, None);
+        } else if m.ui_v2 && m.expanded {
+            let origin = m.origin();
+            self.glass_brush.SetStartPoint(point(origin.x, origin.y));
+            self.glass_brush
+                .SetEndPoint(point(origin.x, origin.y + m.height.value));
+            self.ctx.FillGeometry(&shape, &self.glass_brush, None);
+        } else {
+            self.ink(background_color);
+            self.ctx.FillGeometry(&shape, &self.brush, None);
+        }
         // Clip every content frame to the same animated outline used for input.
         // A spring interrupted mid-flight must never expose rectangular page edges.
         let mut layer = D2D1_LAYER_PARAMETERS {
@@ -606,9 +911,19 @@ impl Renderer {
             self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
         }
         let c = m.body();
-        if m.expanded && m.width.value > 250. && (m.height.value - m.height.target).abs() < 35. {
+        let render_full_player = (m.expanded
+            && m.width.value > 250.
+            && (m.height.value - m.height.target).abs() < 35.)
+            || (m.ui_v2 && m.page() == Page::Music && m.visual_state.content_opacity.value > 0.01);
+        if render_full_player {
             // Focus and press feedback share the same hit rectangles as input.
             for (hit, r) in m.visual_controls() {
+                let feedback_opacity =
+                    if m.ui_v2 && matches!(hit, Hit::Previous | Hit::Play | Hit::Next) {
+                        m.visual_state.controls_opacity.value.clamp(0., 1.)
+                    } else {
+                        1.
+                    };
                 if pressed == Some(hit) {
                     let inset = r.h
                         * if matches!(hit, Hit::Tool(_)) {
@@ -624,11 +939,11 @@ impl Renderer {
                             h: r.h - inset * 2.,
                         },
                         12.,
-                        color(1., 1., 1., 0.16),
+                        color(1., 1., 1., 0.16 * feedback_opacity),
                     );
                 }
                 if m.focus == Some(hit) {
-                    self.ink(blue);
+                    self.ink(color(blue.r, blue.g, blue.b, feedback_opacity));
                     self.ctx.DrawRoundedRectangle(
                         &D2D1_ROUNDED_RECT {
                             rect: rect(r),
@@ -773,40 +1088,9 @@ impl Renderer {
             });
             match m.page() {
                 Page::Music => {
-                    self.fill(
-                        Rect {
-                            x: c.x,
-                            y: c.y + 4.,
-                            w: 52.,
-                            h: 52.,
-                        },
-                        12.,
-                        color(0.14, 0.22, 0.3, 1.),
-                    );
-                    self.ink(blue);
-                    self.ctx.DrawEllipse(
-                        &D2D1_ELLIPSE {
-                            point: point(c.x + 27., c.y + 31.),
-                            radiusX: 17.,
-                            radiusY: 17.,
-                        },
-                        &self.brush,
-                        1.5,
-                        None,
-                    );
-                    self.glyph(
-                        5,
-                        Rect {
-                            x: c.x + 13.,
-                            y: c.y + 17.,
-                            w: 28.,
-                            h: 28.,
-                        },
-                        white,
-                        16.,
-                    )?;
-                    if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
-                        // Clear the placeholder beneath translucent rounded corners.
+                    if m.ui_v2 {
+                        self.draw_shared_album(m, m.shared_album_rect())?;
+                    } else {
                         self.fill(
                             Rect {
                                 x: c.x,
@@ -815,38 +1099,74 @@ impl Renderer {
                                 h: 52.,
                             },
                             12.,
-                            background_color,
+                            color(0.14, 0.22, 0.3, 1.),
                         );
-                        let bitmap = &self.cover.as_ref().unwrap().1;
-                        self.ctx.DrawBitmap(
-                            bitmap,
-                            Some(&rect(Rect {
-                                x: c.x,
-                                y: c.y + 4.,
-                                w: 52.,
-                                h: 52.,
-                            })),
+                        self.ink(blue);
+                        self.ctx.DrawEllipse(
+                            &D2D1_ELLIPSE {
+                                point: point(c.x + 27., c.y + 31.),
+                                radiusX: 17.,
+                                radiusY: 17.,
+                            },
+                            &self.brush,
+                            1.5,
+                            None,
+                        );
+                        self.glyph(
+                            5,
+                            Rect {
+                                x: c.x + 13.,
+                                y: c.y + 17.,
+                                w: 28.,
+                                h: 28.,
+                            },
+                            white,
+                            16.,
+                        )?;
+                        if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
+                            self.fill(
+                                Rect {
+                                    x: c.x,
+                                    y: c.y + 4.,
+                                    w: 52.,
+                                    h: 52.,
+                                },
+                                12.,
+                                background_color,
+                            );
+                            let bitmap = &self.cover.as_ref().unwrap().1;
+                            let cover = &self.cover.as_ref().unwrap().0;
+                            let source = artwork_source(cover);
+                            self.ctx.DrawBitmap(
+                                bitmap,
+                                Some(&rect(Rect {
+                                    x: c.x,
+                                    y: c.y + 4.,
+                                    w: 52.,
+                                    h: 52.,
+                                })),
+                                1.,
+                                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                                Some(&source),
+                            );
+                        }
+                        self.ink(color(1., 1., 1., 0.1));
+                        self.ctx.DrawRoundedRectangle(
+                            &D2D1_ROUNDED_RECT {
+                                rect: rect(Rect {
+                                    x: c.x - 0.5,
+                                    y: c.y + 3.5,
+                                    w: 53.,
+                                    h: 53.,
+                                }),
+                                radiusX: 12.,
+                                radiusY: 12.,
+                            },
+                            &self.brush,
                             1.,
-                            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                             None,
                         );
                     }
-                    self.ink(color(1., 1., 1., 0.1));
-                    self.ctx.DrawRoundedRectangle(
-                        &D2D1_ROUNDED_RECT {
-                            rect: rect(Rect {
-                                x: c.x - 0.5,
-                                y: c.y + 3.5,
-                                w: 53.,
-                                h: 53.,
-                            }),
-                            radiusX: 12.,
-                            radiusY: 12.,
-                        },
-                        &self.brush,
-                        1.,
-                        None,
-                    );
                     let title = if let Some(media) = &m.media {
                         if media.title.is_empty() {
                             "暂无媒体"
@@ -858,11 +1178,23 @@ impl Renderer {
                     } else {
                         "宇宙尽头的浪漫主义与一场不会结束的午夜公路旅行"
                     };
-                    let title_rect = Rect {
-                        x: c.x + 64.,
-                        y: c.y + 12.,
-                        w: (c.w - 100.).max(24.),
-                        h: 22.,
+                    let title_rect = if m.ui_v2 {
+                        m.layout_snapshot().title.map_or(
+                            Rect {
+                                x: c.x + 64.,
+                                y: c.y + 12.,
+                                w: (c.w - 100.).max(24.),
+                                h: 22.,
+                            },
+                            |element| element.rect,
+                        )
+                    } else {
+                        Rect {
+                            x: c.x + 64.,
+                            y: c.y + 12.,
+                            w: (c.w - 100.).max(24.),
+                            h: 22.,
+                        }
                     };
                     let (layout, title_width) = if let Some(l) = self.layouts.get(title) {
                         l.clone()
@@ -886,7 +1218,12 @@ impl Renderer {
                     };
                     self.ctx
                         .PushAxisAlignedClip(&rect(title_rect), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-                    self.ink(white);
+                    let title_opacity = if m.ui_v2 {
+                        m.visual_state.title.opacity.value.clamp(0., 1.)
+                    } else {
+                        1.
+                    };
+                    self.ink(color(white.r, white.g, white.b, title_opacity));
                     self.ctx.DrawTextLayout(
                         point(title_rect.x - shift, title_rect.y),
                         &layout,
@@ -919,6 +1256,24 @@ impl Renderer {
                             );
                         }
                     }
+                    let artist_rect = if m.ui_v2 {
+                        m.layout_snapshot().artist.map_or(
+                            Rect {
+                                x: c.x + 64.,
+                                y: c.y + 36.,
+                                w: c.w - 100.,
+                                h: 18.,
+                            },
+                            |element| element.rect,
+                        )
+                    } else {
+                        Rect {
+                            x: c.x + 64.,
+                            y: c.y + 36.,
+                            w: c.w - 100.,
+                            h: 18.,
+                        }
+                    };
                     self.text_with_weight(
                         m.media
                             .as_ref()
@@ -932,15 +1287,19 @@ impl Renderer {
                                 }
                             })
                             .unwrap_or("M83 · 原生渲染预览"),
-                        Rect {
-                            x: c.x + 64.,
-                            y: c.y + 36.,
-                            w: c.w - 100.,
-                            h: 18.,
-                        },
+                        artist_rect,
                         11,
                         DWRITE_FONT_WEIGHT_MEDIUM,
-                        color(0.68, 0.68, 0.68, 1.),
+                        color(
+                            0.68,
+                            0.68,
+                            0.68,
+                            if m.ui_v2 {
+                                m.visual_state.artist.opacity.value.clamp(0., 1.)
+                            } else {
+                                1.
+                            },
+                        ),
                     )?;
                     self.spectrum(c.x + c.w - 28., c.y + 30., m);
                     let (elapsed_ms, duration_ms, position_known) = m
@@ -955,7 +1314,7 @@ impl Renderer {
                         })
                         .unwrap_or((0, 0, false));
                     let progress = if duration_ms == 0 {
-                        if m.media.is_none() {
+                        if m.media.is_none() && !m.ui_v2 {
                             0.46
                         } else {
                             0.
@@ -965,14 +1324,29 @@ impl Renderer {
                     } else {
                         (elapsed_ms as f32 / duration_ms as f32).clamp(0., 1.)
                     };
-                    let progress_y = c.y + 68.;
-                    let progress_x = c.x + 34.;
-                    let progress_width = (c.w - 76.).max(24.);
-                    let progress_color = color(1., 1., 1., 0.19);
-                    let time_color = color(0.55, 0.55, 0.55, 1.);
+                    let progress_rect = if m.ui_v2 {
+                        m.progress_rect()
+                    } else {
+                        Rect {
+                            x: c.x + 34.,
+                            y: c.y + 65.,
+                            w: (c.w - 76.).max(24.),
+                            h: 12.,
+                        }
+                    };
+                    let progress_y = progress_rect.y + progress_rect.h * 0.5;
+                    let progress_x = progress_rect.x;
+                    let progress_width = progress_rect.w;
+                    let progress_opacity = if m.ui_v2 {
+                        m.visual_state.progress.opacity.value.clamp(0., 1.)
+                    } else {
+                        1.
+                    };
+                    let progress_color = color(1., 1., 1., 0.19 * progress_opacity);
+                    let time_color = color(0.55, 0.55, 0.55, progress_opacity);
                     let mut elapsed_label = [0_u16; 24];
                     let elapsed_label_len =
-                        if (position_known && duration_ms > 0) || m.media.is_none() {
+                        if (position_known && duration_ms > 0) || (m.media.is_none() && !m.ui_v2) {
                             write_media_time(elapsed_ms, &mut elapsed_label)
                         } else {
                             elapsed_label[..5].copy_from_slice(&[
@@ -987,9 +1361,9 @@ impl Renderer {
                     self.text_utf16(
                         &elapsed_label[..elapsed_label_len],
                         Rect {
-                            x: c.x,
+                            x: if m.ui_v2 { progress_x - 31. } else { c.x },
                             y: progress_y - 5.,
-                            w: 26.,
+                            w: if m.ui_v2 { 27. } else { 26. },
                             h: 16.,
                         },
                         11,
@@ -998,7 +1372,7 @@ impl Renderer {
                     )?;
                     let mut remaining_label = [0_u16; 25];
                     let remaining_label_len =
-                        if (position_known && duration_ms > 0) || m.media.is_none() {
+                        if (position_known && duration_ms > 0) || (m.media.is_none() && !m.ui_v2) {
                             remaining_label[0] = u16::from(b'-');
                             1 + write_media_time(
                                 duration_ms.saturating_sub(elapsed_ms),
@@ -1017,7 +1391,11 @@ impl Renderer {
                     self.text_utf16(
                         &remaining_label[..remaining_label_len],
                         Rect {
-                            x: c.x + c.w - 34.,
+                            x: if m.ui_v2 {
+                                progress_x + progress_width + 4.
+                            } else {
+                                c.x + c.w - 34.
+                            },
                             y: progress_y - 5.,
                             w: 34.,
                             h: 16.,
@@ -1031,7 +1409,7 @@ impl Renderer {
                             x: progress_x,
                             y: progress_y - 1.5,
                             w: progress_width,
-                            h: 6.,
+                            h: if m.ui_v2 { 4. } else { 6. },
                         },
                         3.,
                         progress_color,
@@ -1041,28 +1419,51 @@ impl Renderer {
                             x: progress_x,
                             y: progress_y - 1.5,
                             w: progress_width * progress,
-                            h: 6.,
+                            h: if m.ui_v2 { 4. } else { 6. },
                         },
                         3.,
-                        white,
+                        color(white.r, white.g, white.b, progress_opacity),
                     );
                     for (hit, r) in m.visual_controls() {
                         if matches!(hit, Hit::Previous | Hit::Play | Hit::Next) {
-                            let white = if m.enabled(hit) {
-                                white
+                            let control_opacity = if m.ui_v2 {
+                                m.visual_state.controls_opacity.value.clamp(0., 1.)
                             } else {
-                                color(0.3, 0.32, 0.35, 1.)
+                                1.
                             };
-                            if m.enabled(hit) && (hover == Some(hit) || m.focus == Some(hit)) {
-                                self.fill(r, 12., color(1., 1., 1., 0.1));
+                            let button_available = if m.ui_v2 {
+                                m.media.as_ref().is_some_and(|media| match hit {
+                                    Hit::Previous => media.capabilities().previous,
+                                    Hit::Play => media.capabilities().play_pause,
+                                    Hit::Next => media.capabilities().next,
+                                    _ => false,
+                                })
+                            } else {
+                                m.enabled(hit)
+                            };
+                            let white = if button_available {
+                                color(white.r, white.g, white.b, control_opacity)
+                            } else {
+                                color(0.3, 0.32, 0.35, control_opacity)
+                            };
+                            if button_available && (hover == Some(hit) || m.focus == Some(hit)) {
+                                self.fill(r, 12., color(1., 1., 1., 0.1 * control_opacity));
                             }
-                            let x = r.x + 24.;
-                            let y = r.y + 24.;
-                            let icon_scale = if pressed == Some(hit) && m.enabled(hit) {
+                            let center = r.center();
+                            let x = center.x;
+                            let y = center.y;
+                            let nominal_width = if hit == Hit::Play { 42. } else { 36. };
+                            let rect_scale = if m.ui_v2 {
+                                (r.w / nominal_width).clamp(0., 1.)
+                            } else {
+                                1.
+                            };
+                            let press_scale = if pressed == Some(hit) && m.enabled(hit) {
                                 0.94
                             } else {
                                 1.
                             };
+                            let icon_scale = press_scale * rect_scale;
                             if hit == Hit::Play && m.playing {
                                 self.fill(
                                     Rect {
@@ -1154,7 +1555,9 @@ impl Renderer {
         if !self.number_used {
             self.digits.clear();
         }
+        self.content_animating |= self.artwork_fade.active();
         self.ctx.EndDraw(None, None)?;
+        self.render_cpu_ms = render_started.elapsed().as_secs_f64() * 1000.;
         self.swap.Present(1, 0).ok()?;
         self.frames += 1;
         Ok(())
@@ -1200,6 +1603,9 @@ impl Renderer {
         }
     }
     unsafe fn compact_artwork(&self, m: &Model) -> Result<()> {
+        if m.ui_v2 {
+            return self.draw_shared_album(m, m.shared_album_rect());
+        }
         let r = m.compact_cover();
         self.fill(r, 10., color(1., 1., 1., 0.06));
         if let (Some((cover, _, _)), Some(brush)) = (&self.cover, &self.disc_brush) {
@@ -1258,7 +1664,14 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cover_spectrum_palette, format_media_time};
+    use super::{cover_spectrum_palette, format_media_time, should_build_glass_blur};
+
+    #[test]
+    fn cached_glass_blur_is_gated_by_v2_and_visible_album_art() {
+        assert!(!should_build_glass_blur(false, true));
+        assert!(!should_build_glass_blur(true, false));
+        assert!(should_build_glass_blur(true, true));
+    }
 
     #[test]
     fn progress_time_labels_use_the_legacy_minute_second_format() {

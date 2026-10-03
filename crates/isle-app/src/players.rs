@@ -170,9 +170,19 @@ pub struct Dialog {
     automatic: bool,
     valid: bool,
     saving: bool,
+    live_apply: bool,
     discovery: Option<Discovery>,
 }
 impl Dialog {
+    pub unsafe fn new_live(owner: HWND, selection: &Selection) -> Result<Self> {
+        let mut dialog = Self::new(owner, selection)?;
+        dialog.live_apply = true;
+        let _ = DestroyWindow(GetDlgItem(dialog.hwnd, SAVE as i32));
+        let _ = SetWindowTextW(GetDlgItem(dialog.hwnd, CLOSE as i32), w!("关闭"));
+        SendMessageW(dialog.hwnd, WM_USER + 1, WPARAM(CLOSE), LPARAM(0));
+        dialog.message("更改立即生效并自动保存");
+        Ok(dialog)
+    }
     pub unsafe fn new(owner: HWND, selection: &Selection) -> Result<Self> {
         let instance = HINSTANCE(GetModuleHandleW(None)?.0);
         let class = w!("IsleNativePlayers");
@@ -225,6 +235,7 @@ impl Dialog {
             automatic: selection.allowed.is_none(),
             valid: true,
             saving: false,
+            live_apply: false,
             discovery: None,
         };
         dialog.font = CreateFontW(
@@ -510,6 +521,7 @@ impl Dialog {
         if self.saving || !self.valid {
             return;
         }
+        let previous = self.selection();
         let index = self.selected().unwrap_or(0);
         match action {
             301 => {
@@ -539,6 +551,14 @@ impl Dialog {
             }
             306 => self.refresh(),
             _ => {}
+        }
+        if self.live_apply && self.selection() != previous {
+            let _ = PostMessageW(
+                GetWindow(self.hwnd, GW_OWNER),
+                COMMAND,
+                WPARAM(SAVE),
+                LPARAM(self.hwnd.0),
+            );
         }
     }
     unsafe fn refresh(&mut self) {
@@ -571,7 +591,11 @@ impl Dialog {
                     self.message(if self.rows.is_empty() {
                         "未发现播放器；请先打开播放器，再刷新"
                     } else {
-                        "选中项目后勾选或调整顺序，再保存"
+                        if self.live_apply {
+                            "更改立即生效并自动保存"
+                        } else {
+                            "选中项目后勾选或调整顺序，再保存"
+                        }
                     });
                 }
                 Err(error) => {
@@ -585,6 +609,9 @@ impl Dialog {
     }
     pub fn ready(&self) -> bool {
         self.valid && self.discovery.is_none() && !self.saving
+    }
+    pub fn ready_to_apply(&self) -> bool {
+        self.valid && !self.saving && (self.live_apply || self.discovery.is_none())
     }
     pub fn row_count(&self) -> usize {
         self.rows.len()

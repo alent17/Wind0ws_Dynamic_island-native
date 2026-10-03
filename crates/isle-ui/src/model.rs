@@ -1,4 +1,11 @@
-use crate::{geometry::*, spring::Spring};
+use crate::{
+    geometry::*,
+    layout::{self, LayoutInput, LayoutSnapshot},
+    motion::{MotionPolicy, MotionProfile},
+    spring::Spring,
+    state::{ExpandedView, PrimarySurfaceMode, UiState},
+    visual_state::VisualState,
+};
 pub const HOST: f32 = 480.;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Page {
@@ -28,6 +35,24 @@ pub enum Hit {
     DeviceNext,
     Mute,
     WeatherSettings,
+    Seek,
+}
+
+const fn player_control_hit(index: usize) -> Hit {
+    match index {
+        0 => Hit::Previous,
+        1 => Hit::Play,
+        _ => Hit::Next,
+    }
+}
+
+fn player_control_index(hit: Hit) -> Option<usize> {
+    match hit {
+        Hit::Previous => Some(0),
+        Hit::Play => Some(1),
+        Hit::Next => Some(2),
+        _ => None,
+    }
 }
 #[derive(Debug)]
 pub struct PageInstance {
@@ -81,6 +106,12 @@ pub struct Model {
     pub pending_page: Option<(Page, f64)>,
     pub tool_count: usize,
     pub tool_mask: [bool; 7],
+    /// Opt-in renderer/layout path. The legacy UI remains the default so
+    /// existing automation and deployments keep their established surface.
+    pub ui_v2: bool,
+    pub ui_state: UiState,
+    pub visual_state: VisualState,
+    pub motion_time_scale: f32,
 }
 impl Default for Model {
     fn default() -> Self {
@@ -131,6 +162,10 @@ impl Default for Model {
             pending_page: None,
             tool_count: 7,
             tool_mask: [true; 7],
+            ui_v2: false,
+            ui_state: UiState::default(),
+            visual_state: VisualState::default(),
+            motion_time_scale: 1.,
         }
     }
 }
@@ -146,6 +181,41 @@ impl Model {
         }
         self.retarget();
     }
+    pub fn set_ui_v2(&mut self, enabled: bool) {
+        if self.ui_v2 != enabled {
+            self.ui_v2 = enabled;
+            self.retarget();
+        }
+    }
+    pub fn set_interaction(&mut self, interaction: crate::state::InteractionState) {
+        self.hovered = interaction.hovered;
+        self.ui_state.interaction = interaction;
+        self.retarget();
+    }
+    pub fn set_hovered(&mut self, hovered: bool) {
+        let mut interaction = self.ui_state.interaction;
+        interaction.hovered = hovered;
+        self.set_interaction(interaction);
+    }
+    pub fn set_pressed(&mut self, pressed: bool) {
+        self.ui_state.interaction.pressed = pressed;
+    }
+    pub fn set_dragging(&mut self, dragging: bool) {
+        self.ui_state.interaction.dragging = dragging;
+    }
+    pub fn set_inspection_lock(&mut self, locked: bool) {
+        self.ui_state.interaction.inspection_lock = locked;
+    }
+    pub fn set_activities(&mut self, activities: Vec<crate::state::LiveActivity>) {
+        self.ui_state.activities = activities
+            .into_iter()
+            .filter(|activity| activity.valid())
+            .take(2)
+            .collect();
+        if self.ui_v2 {
+            self.retarget();
+        }
+    }
     pub fn progress_tick(&self) -> bool {
         self.expanded
             && self.page() == Page::Music
@@ -154,15 +224,24 @@ impl Model {
             })
     }
     pub fn enabled(&self, hit: Hit) -> bool {
+        if self.ui_v2
+            && matches!(hit, Hit::Previous | Hit::Play | Hit::Next | Hit::Seek)
+            && (!self.expanded || self.page() != Page::Music || self.pending_page.is_some())
+        {
+            return false;
+        }
         if matches!(hit, Hit::Volume | Hit::Mute)
             && self.audio.as_ref().is_some_and(|a| a.device.id.is_empty())
         {
             return false;
         }
         self.media.as_ref().is_none_or(|m| match hit {
-            Hit::Play => m.play_pause,
-            Hit::Previous => m.previous,
-            Hit::Next => m.next,
+            Hit::Play => m.capabilities().play_pause,
+            Hit::Previous => m.capabilities().previous,
+            Hit::Next => m.capabilities().next,
+            Hit::Seek => {
+                m.capabilities().seek && m.timeline.position_known && m.timeline.duration_ms > 0
+            }
             _ => true,
         })
     }
@@ -229,7 +308,66 @@ impl Model {
         self.title_started = self.now;
     }
     pub fn retarget(&mut self) {
-        self.title_started = self.now;
+        let old_primary = self.ui_state.primary;
+        self.ui_state.primary = if !self.expanded {
+            PrimarySurfaceMode::Compact
+        } else {
+            PrimarySurfaceMode::Expanded(ExpandedView::from(self.page()))
+        };
+        if !self.ui_v2 || old_primary != self.ui_state.primary {
+            self.title_started = self.now;
+        }
+        self.ui_state.interaction.hovered = self.hovered;
+        let motion = MotionPolicy {
+            reduced: self.reduced,
+            time_scale: self.motion_time_scale,
+        };
+        if self.ui_v2 {
+            let layout = self.target_layout();
+            self.width.set(layout.surface.w, self.reduced);
+            self.height.set(layout.surface.h, self.reduced);
+            self.radius.set(layout.radius, self.reduced);
+            self.shoulder.set(layout.shoulder, self.reduced);
+            let player_controls = self.full_player_layout().controls;
+            let player_controls_visible = self.expanded && self.page() == Page::Music;
+            let compact_album = self
+                .layout_for(false, Page::Music)
+                .album
+                .map_or(layout.surface, |album| album.rect);
+            let anchor = compact_album.center();
+            let collapsed_control_anchor = Rect {
+                x: anchor.x,
+                y: anchor.y,
+                w: 0.,
+                h: 0.,
+            };
+            let collapsing_music = !self.expanded && self.page() == Page::Music;
+            let control_targets = std::array::from_fn(|index| {
+                let hit = player_control_hit(index);
+                let capability_target = player_controls
+                    .iter()
+                    .find(|control| control.hit == hit)
+                    .map(|control| control.rect);
+                if player_controls_visible {
+                    capability_target
+                } else if collapsing_music && capability_target.is_some() {
+                    Some(collapsed_control_anchor)
+                } else {
+                    None
+                }
+            });
+            let controls_visible =
+                player_controls_visible && control_targets.iter().any(Option::is_some);
+            self.visual_state.retarget(
+                &layout,
+                motion,
+                self.expanded,
+                control_targets,
+                collapsed_control_anchor,
+                controls_visible,
+            );
+            return;
+        }
         let (w, h, r, s) = if self.expanded {
             let bar = if self.visible_tools().next().is_some() {
                 40.
@@ -305,10 +443,22 @@ impl Model {
         if let Some(spectrum) = &mut self.spectrum {
             spectrum.step(dt, self.reduced);
         }
-        self.width.advance(dt);
-        self.height.advance(dt);
-        self.radius.advance(dt);
-        self.shoulder.advance(dt);
+        let policy = MotionPolicy {
+            reduced: self.reduced,
+            time_scale: self.motion_time_scale,
+        };
+        let surface_dt = if self.ui_v2 {
+            policy.dt(dt, MotionProfile::Surface)
+        } else {
+            dt
+        };
+        self.width.advance(surface_dt);
+        self.height.advance(surface_dt);
+        self.radius.advance(surface_dt);
+        self.shoulder.advance(surface_dt);
+        if self.ui_v2 {
+            self.visual_state.advance(dt, policy);
+        }
         if let Some(deadline) = self.timer_deadline {
             self.timer_left = (deadline - now).max(0.);
             if self.timer_left == 0. {
@@ -324,6 +474,7 @@ impl Model {
             || self.height.active()
             || self.radius.active()
             || self.shoulder.active()
+            || (self.ui_v2 && self.visual_state.active())
     }
     pub fn continuous(&self) -> bool {
         self.moving()
@@ -383,6 +534,190 @@ impl Model {
                 w: 20.,
                 h: 20.,
             }
+        }
+    }
+    pub fn target_layout(&self) -> LayoutSnapshot {
+        self.layout_for(self.expanded, self.page())
+    }
+    pub fn full_player_layout(&self) -> LayoutSnapshot {
+        self.layout_for(true, Page::Music)
+    }
+    fn layout_for(&self, expanded: bool, page: Page) -> LayoutSnapshot {
+        let media = self.media.as_ref();
+        let capabilities = media
+            .map(isle_core::MediaSnapshot::capabilities)
+            .unwrap_or_default();
+        layout::compute(LayoutInput {
+            edge: self.edge,
+            attached: self.attached,
+            mode: if expanded {
+                PrimarySurfaceMode::Expanded(ExpandedView::from(page))
+            } else {
+                PrimarySurfaceMode::Compact
+            },
+            page,
+            hovered: self.hovered,
+            timer_active: self.timer_active,
+            timer_finished: self.timer_finished,
+            compact_length: self.compact_length as f32,
+            collapsed_shoulder: self.collapsed_shoulder_radius as f32,
+            expanded_shoulder: self.expanded_shoulder_radius as f32,
+            corner_radius: self.expanded_corner_radius as f32,
+            tool_ids: std::array::from_fn(|i| self.visible_tools().any(|id| id == i)),
+            previous: capabilities.previous,
+            play_pause: capabilities.play_pause,
+            next: capabilities.next,
+            seek: capabilities.seek
+                && media.is_some_and(|m| m.timeline.position_known && m.timeline.duration_ms > 0),
+        })
+    }
+    /// Snapshot expressed in host-local DIP coordinates at the current Spring
+    /// position, suitable for drawing, hit testing, and UI automation.
+    pub fn layout_snapshot(&self) -> LayoutSnapshot {
+        let mut layout = self.target_layout();
+        let target_origin = Point {
+            x: layout.surface.x,
+            y: layout.surface.y,
+        };
+        let current_origin = self.origin();
+        let dx = current_origin.x - target_origin.x;
+        let dy = current_origin.y - target_origin.y;
+        let translate = |r: &mut Rect| {
+            r.x += dx;
+            r.y += dy;
+        };
+        layout.surface = Rect {
+            x: current_origin.x,
+            y: current_origin.y,
+            w: self.width.value,
+            h: self.height.value,
+        };
+        for element in [
+            &mut layout.album,
+            &mut layout.title,
+            &mut layout.artist,
+            &mut layout.progress,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            translate(&mut element.rect);
+        }
+        for control in &mut layout.controls {
+            translate(&mut control.rect);
+        }
+        for element in &mut layout.toolbar {
+            translate(&mut element.rect);
+        }
+        for region in &mut layout.hit_regions {
+            translate(&mut region.rect);
+        }
+        if self.ui_v2 {
+            layout.album = Some(crate::layout::ElementLayout {
+                rect: self.visual_state.album.rect.rect(),
+                radius: self.visual_state.album.radius.value,
+                opacity: self.visual_state.album.opacity.value,
+            });
+            let visible = |opacity: f32| opacity > 0.01;
+            layout.title = visible(self.visual_state.title.opacity.value).then_some(
+                crate::layout::ElementLayout {
+                    rect: self.visual_state.title.rect.rect(),
+                    radius: self.visual_state.title.radius.value,
+                    opacity: self.visual_state.title.opacity.value,
+                },
+            );
+            layout.artist = visible(self.visual_state.artist.opacity.value).then_some(
+                crate::layout::ElementLayout {
+                    rect: self.visual_state.artist.rect.rect(),
+                    radius: self.visual_state.artist.radius.value,
+                    opacity: self.visual_state.artist.opacity.value,
+                },
+            );
+            layout.progress = visible(self.visual_state.progress.opacity.value).then_some(
+                crate::layout::ElementLayout {
+                    rect: self.visual_state.progress.rect.rect(),
+                    radius: self.visual_state.progress.radius.value,
+                    opacity: self.visual_state.progress.opacity.value,
+                },
+            );
+            if let Some(progress) = layout.progress {
+                for control in &mut layout.controls {
+                    if control.hit == Hit::Seek {
+                        control.rect = progress.rect;
+                    }
+                }
+                for region in &mut layout.hit_regions {
+                    if region.hit == Hit::Seek {
+                        region.rect = progress.rect;
+                    }
+                }
+            }
+            if self.page() == Page::Music {
+                let mut player_controls = self.full_player_layout().controls;
+                for control in &mut player_controls {
+                    if let Some(index) = player_control_index(control.hit) {
+                        control.rect = self.visual_state.control_rects[index].rect();
+                    } else if control.hit == Hit::Seek {
+                        control.rect = self.visual_state.progress.rect.rect();
+                    }
+                }
+                if self.expanded {
+                    layout.controls = player_controls;
+                    layout.hit_regions = layout
+                        .controls
+                        .iter()
+                        .map(|control| crate::layout::HitRegion {
+                            hit: control.hit,
+                            rect: control.rect,
+                        })
+                        .collect();
+                } else if self.visual_state.controls_opacity.value > 0.01 {
+                    // Keep fading button geometry available to the renderer,
+                    // while the interactive API rejects controls in compact
+                    // mode and the hit-region snapshot stays empty.
+                    layout.controls = player_controls
+                        .into_iter()
+                        .filter(|control| player_control_index(control.hit).is_some())
+                        .collect();
+                    layout.hit_regions.clear();
+                } else {
+                    layout.controls.clear();
+                    layout.hit_regions.clear();
+                }
+            }
+        }
+        layout
+    }
+    pub fn progress_rect(&self) -> Rect {
+        if self.ui_v2 {
+            return self
+                .layout_snapshot()
+                .progress
+                .map_or(Rect::default(), |p| p.rect);
+        }
+        let c = self.body();
+        Rect {
+            x: c.x + 34.,
+            y: c.y + 65.,
+            w: (c.w - 76.).max(24.),
+            h: 12.,
+        }
+    }
+    pub fn shared_album_rect(&self) -> Rect {
+        if self.ui_v2 {
+            self.layout_snapshot()
+                .album
+                .map_or_else(|| self.compact_cover(), |album| album.rect)
+        } else if self.expanded && self.page() == Page::Music {
+            let c = self.body();
+            Rect {
+                x: c.x,
+                y: c.y + 4.,
+                w: 52.,
+                h: 52.,
+            }
+        } else {
+            self.compact_cover()
         }
     }
     pub fn origin(&self) -> Point {
@@ -543,12 +878,27 @@ impl Model {
         self.focus = None;
     }
     pub fn controls(&self) -> Vec<(Hit, Rect)> {
+        if self.ui_v2 && !self.expanded {
+            return vec![];
+        }
         self.visual_controls()
             .into_iter()
             .filter(|(hit, _)| self.pending_page.is_none() || matches!(hit, Hit::Tool(_)))
             .collect()
     }
     pub fn visual_controls(&self) -> Vec<(Hit, Rect)> {
+        if !self.expanded
+            && self.ui_v2
+            && self.page() == Page::Music
+            && self.visual_state.controls_opacity.value > 0.01
+        {
+            return self
+                .layout_snapshot()
+                .controls
+                .into_iter()
+                .map(|control| (control.hit, control.rect))
+                .collect();
+        }
         if !self.expanded {
             return vec![];
         }
@@ -577,6 +927,15 @@ impl Model {
         let p = self.detail_content();
         match self.page() {
             Page::Music => {
+                if self.ui_v2 {
+                    v.extend(
+                        self.layout_snapshot()
+                            .controls
+                            .into_iter()
+                            .map(|c| (c.hit, c.rect)),
+                    );
+                    return v;
+                }
                 for (i, hit) in [Hit::Previous, Hit::Play, Hit::Next]
                     .into_iter()
                     .enumerate()
@@ -800,7 +1159,8 @@ impl Model {
             | Hit::Mute
             | Hit::Volume
             | Hit::TimerRuler
-            | Hit::WeatherSettings => {}
+            | Hit::WeatherSettings
+            | Hit::Seek => {}
         }
     }
 }
@@ -1214,5 +1574,440 @@ mod tests {
         assert_eq!(marquee(48., 1.), 0.);
         assert_eq!(marquee(48., 3.5), 48.);
         assert!((marquee(48., 6.4)).abs() < 0.001);
+    }
+
+    #[test]
+    fn ui_v2_seek_hit_target_tracks_the_animated_progress_rect() {
+        let mut m = Model {
+            reduced: false,
+            show_spectrum: false,
+            media: Some(isle_core::MediaSnapshot {
+                seek: true,
+                timeline: isle_core::Timeline {
+                    duration_ms: 90_000,
+                    position_known: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        for i in 1..=24 {
+            m.step(1. / 120., i as f64 / 120.);
+        }
+
+        let snapshot = m.layout_snapshot();
+        let progress = snapshot.progress.expect("music progress is laid out").rect;
+        let seek = snapshot
+            .controls
+            .iter()
+            .find(|control| control.hit == Hit::Seek)
+            .unwrap();
+        let region = snapshot
+            .hit_regions
+            .iter()
+            .find(|region| region.hit == Hit::Seek)
+            .unwrap();
+        assert_eq!(m.progress_rect(), progress);
+        assert_eq!(seek.rect, progress);
+        assert_eq!(region.rect, progress);
+        assert_eq!(m.hit(progress.center()), Some(Hit::Seek));
+    }
+
+    #[test]
+    fn ui_v2_player_controls_reverse_from_their_current_rect_and_velocity() {
+        for fraction in [0.2_f32, 0.5, 0.8] {
+            let mut m = Model {
+                reduced: false,
+                show_spectrum: false,
+                media: Some(isle_core::MediaSnapshot {
+                    previous: true,
+                    play_pause: true,
+                    next: true,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            m.set_ui_v2(true);
+            m.switch(Page::Music);
+            let target_width = m.visual_state.control_rects[1].w.target;
+            for i in 1..=480 {
+                m.step(1. / 120., i as f64 / 120.);
+                if m.visual_state.control_rects[1].w.value >= target_width * fraction {
+                    break;
+                }
+            }
+
+            let before = m.visual_state.control_rects[1].rect();
+            let velocity = [
+                m.visual_state.control_rects[1].x.velocity,
+                m.visual_state.control_rects[1].y.velocity,
+                m.visual_state.control_rects[1].w.velocity,
+                m.visual_state.control_rects[1].h.velocity,
+            ];
+            m.toggle();
+            assert_eq!(m.visual_state.control_rects[1].rect(), before);
+            assert_eq!(
+                [
+                    m.visual_state.control_rects[1].x.velocity,
+                    m.visual_state.control_rects[1].y.velocity,
+                    m.visual_state.control_rects[1].w.velocity,
+                    m.visual_state.control_rects[1].h.velocity,
+                ],
+                velocity,
+                "collapse discarded control velocity at {fraction}"
+            );
+            assert!(m.visual_state.control_rects[1].w.target < before.w);
+            assert!(
+                m.controls().is_empty(),
+                "collapsed controls stayed interactive"
+            );
+
+            // Reopening before the collapse settles must preserve the same
+            // animated position and velocity a second time.
+            let before_reopen = m.visual_state.control_rects[1].rect();
+            let velocity_reopen = m.visual_state.control_rects[1].w.velocity;
+            m.toggle();
+            assert_eq!(m.visual_state.control_rects[1].rect(), before_reopen);
+            assert_eq!(m.visual_state.control_rects[1].w.velocity, velocity_reopen);
+            assert!(m.visual_state.control_rects[1].w.target > before_reopen.w);
+
+            for i in 1..=480 {
+                m.step(1. / 120., 5. + i as f64 / 120.);
+            }
+            assert!(!m.moving());
+            assert!(!m.continuous());
+        }
+    }
+
+    #[test]
+    fn ui_v2_player_draw_hit_and_accessibility_rects_share_the_current_spring_value() {
+        let mut m = Model {
+            reduced: false,
+            show_spectrum: false,
+            media: Some(isle_core::MediaSnapshot {
+                previous: true,
+                play_pause: true,
+                next: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        for i in 1..=8 {
+            m.step(1. / 120., i as f64 / 120.);
+        }
+
+        let snapshot = m.layout_snapshot();
+        for hit in [Hit::Previous, Hit::Play, Hit::Next] {
+            let drawn = m
+                .visual_controls()
+                .into_iter()
+                .find(|(candidate, _)| *candidate == hit)
+                .unwrap()
+                .1;
+            let accessible = m
+                .controls()
+                .into_iter()
+                .find(|(candidate, _)| *candidate == hit)
+                .unwrap()
+                .1;
+            let control = snapshot
+                .controls
+                .iter()
+                .find(|control| control.hit == hit)
+                .unwrap();
+            let region = snapshot
+                .hit_regions
+                .iter()
+                .find(|region| region.hit == hit)
+                .unwrap();
+            assert_eq!(drawn, accessible);
+            assert_eq!(drawn, control.rect);
+            assert_eq!(drawn, region.rect);
+            let target = m
+                .full_player_layout()
+                .controls
+                .into_iter()
+                .find(|candidate| candidate.hit == hit)
+                .unwrap()
+                .rect;
+            assert_ne!(drawn, target, "{hit:?} bypassed its in-flight Rect Spring");
+        }
+
+        for i in 1..=480 {
+            m.step(1. / 120., 1. + i as f64 / 120.);
+        }
+        for hit in [Hit::Previous, Hit::Play, Hit::Next] {
+            let rect = m
+                .controls()
+                .into_iter()
+                .find(|(candidate, _)| *candidate == hit)
+                .unwrap()
+                .1;
+            assert_eq!(m.hit(rect.center()), Some(hit));
+        }
+
+        m.toggle();
+        assert!(
+            !m.visual_controls().is_empty(),
+            "non-reduced collapse must retain outgoing controls for drawing"
+        );
+        assert!(m.controls().is_empty());
+        assert!(m.layout_snapshot().hit_regions.is_empty());
+        assert!(!m.enabled(Hit::Play));
+        let collapse_started = m.now;
+        for i in 1..=480 {
+            m.step(1. / 120., collapse_started + i as f64 / 120.);
+        }
+        assert!(m.visual_controls().is_empty());
+        assert!(!m.moving());
+    }
+
+    #[test]
+    fn ui_v2_revoking_all_player_capabilities_does_not_animate_invisible_controls() {
+        let mut m = Model {
+            reduced: false,
+            show_spectrum: false,
+            media: Some(isle_core::MediaSnapshot {
+                previous: true,
+                play_pause: true,
+                next: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        for i in 1..=480 {
+            m.step(1. / 120., i as f64 / 120.);
+        }
+        assert!(!m.moving());
+        assert!(!m.controls().is_empty());
+
+        let media = m.media.as_mut().unwrap();
+        media.previous = false;
+        media.play_pause = false;
+        media.next = false;
+        media.seek = false;
+        m.retarget();
+
+        assert!(m.layout_snapshot().controls.is_empty());
+        assert!(!m
+            .visual_controls()
+            .iter()
+            .any(|(hit, _)| { matches!(hit, Hit::Previous | Hit::Play | Hit::Next | Hit::Seek) }));
+        assert_eq!(m.visual_state.controls_opacity.value, 0.);
+        assert!(!m.moving());
+        assert!(!m.continuous());
+    }
+
+    #[test]
+    fn ui_v2_player_capability_removal_is_immediate_and_reduced_motion_settles() {
+        let mut m = Model {
+            reduced: false,
+            show_spectrum: false,
+            media: Some(isle_core::MediaSnapshot {
+                previous: true,
+                play_pause: true,
+                next: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        for i in 1..=36 {
+            m.step(1. / 120., i as f64 / 120.);
+        }
+        assert!(m.controls().iter().any(|(hit, _)| *hit == Hit::Previous));
+
+        m.media.as_mut().unwrap().previous = false;
+        m.retarget();
+        assert!(!m
+            .visual_controls()
+            .iter()
+            .any(|(hit, _)| *hit == Hit::Previous));
+        assert!(!m.controls().iter().any(|(hit, _)| *hit == Hit::Previous));
+        assert!(!m.enabled(Hit::Previous));
+        assert!(!m
+            .layout_snapshot()
+            .controls
+            .iter()
+            .any(|control| control.hit == Hit::Previous));
+
+        m.reduced = true;
+        m.retarget();
+        assert!(!m.moving());
+        assert!(!m.continuous());
+        for index in 0..3 {
+            let current = m.visual_state.control_rects[index].rect();
+            let target = m.visual_state.control_rects[index].target();
+            assert_eq!(current, target);
+        }
+
+        m.switch(Page::Timer);
+        assert!(m
+            .visual_controls()
+            .iter()
+            .all(|(hit, _)| !matches!(hit, Hit::Previous | Hit::Play | Hit::Next)));
+        assert!(!m.enabled(Hit::Play));
+    }
+
+    #[test]
+    fn ui_v2_omits_missing_disabled_and_unknown_timeline_controls() {
+        let mut m = Model {
+            reduced: true,
+            show_spectrum: false,
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        assert!(!m
+            .visual_controls()
+            .iter()
+            .any(|(hit, _)| matches!(hit, Hit::Previous | Hit::Play | Hit::Next | Hit::Seek)));
+
+        m.media = Some(isle_core::MediaSnapshot {
+            previous: true,
+            play_pause: false,
+            next: true,
+            seek: true,
+            timeline: isle_core::Timeline {
+                position_known: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        m.retarget();
+        let controls = m.visual_controls();
+        assert!(controls.iter().any(|(hit, _)| *hit == Hit::Previous));
+        assert!(!controls.iter().any(|(hit, _)| *hit == Hit::Play));
+        assert!(controls.iter().any(|(hit, _)| *hit == Hit::Next));
+        assert!(!controls.iter().any(|(hit, _)| *hit == Hit::Seek));
+        assert!(!m.enabled(Hit::Seek));
+
+        m.media.as_mut().unwrap().timeline.duration_ms = 90_000;
+        m.media.as_mut().unwrap().seek = false;
+        m.retarget();
+        assert!(!m.visual_controls().iter().any(|(hit, _)| *hit == Hit::Seek));
+    }
+
+    #[test]
+    fn ui_v2_shared_album_reverses_without_losing_position_or_velocity() {
+        for fraction in [0.2_f32, 0.5, 0.8] {
+            let mut m = Model {
+                show_spectrum: false,
+                ..Default::default()
+            };
+            m.set_ui_v2(true);
+            let compact_width = m.shared_album_rect().w;
+            m.reduced = false;
+            m.switch(Page::Music);
+
+            let target_width = m.visual_state.album.rect.w.target;
+            let threshold = compact_width + (target_width - compact_width) * fraction;
+            for i in 1..=360 {
+                m.step(1. / 120., i as f64 / 120.);
+                if m.visual_state.album.rect.w.value >= threshold {
+                    break;
+                }
+            }
+            assert!(
+                m.visual_state.album.rect.w.value >= threshold - 0.1,
+                "fraction {fraction}"
+            );
+            let current_width = m.visual_state.album.rect.w.value;
+            let velocity = m.visual_state.album.rect.w.velocity;
+            let current_rect = m.shared_album_rect();
+            m.toggle();
+            assert_eq!(
+                m.shared_album_rect(),
+                current_rect,
+                "position jumped while reversing at {fraction}"
+            );
+            assert_eq!(
+                m.visual_state.album.rect.w.velocity, velocity,
+                "velocity was discarded at {fraction}"
+            );
+            assert!(m.visual_state.album.rect.w.target < current_width);
+
+            for i in 1..=360 {
+                m.step(1. / 120., 4. + i as f64 / 120.);
+            }
+            assert!(!m.visual_state.album.rect.active());
+            assert!((m.shared_album_rect().w - compact_width).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn ui_v2_layout_stays_bounded_on_all_edges_and_reduced_motion_settles() {
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            for attached in [true, false] {
+                let mut m = Model {
+                    edge,
+                    attached,
+                    reduced: true,
+                    show_spectrum: false,
+                    ..Default::default()
+                };
+                m.set_ui_v2(true);
+                m.switch(Page::Music);
+                let layout = m.layout_snapshot();
+                let album = layout.album.unwrap().rect;
+                assert!(album.x >= 0. && album.y >= 0.);
+                assert!(album.x + album.w <= HOST && album.y + album.h <= HOST);
+                assert!(layout.surface.x >= 0. && layout.surface.y >= 0.);
+                assert!(layout.surface.x + layout.surface.w <= HOST);
+                assert!(layout.surface.y + layout.surface.h <= HOST);
+                assert!(!m.moving());
+                assert!(!m.continuous());
+            }
+        }
+    }
+
+    #[test]
+    fn ui_v2_album_art_is_only_visible_for_music_and_compact_surface() {
+        let mut m = Model {
+            media: Some(isle_core::MediaSnapshot {
+                cover: Some(std::sync::Arc::new(isle_core::Cover {
+                    width: 1,
+                    height: 1,
+                    pixels: vec![0; 4],
+                })),
+                ..Default::default()
+            }),
+            reduced: true,
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        assert!(m.cover_visible());
+        for page in [Page::Timer, Page::Volume, Page::Clock, Page::Weather] {
+            m.switch(page);
+            assert!(!m.cover_visible(), "unexpected album art on {page:?}");
+        }
+        m.switch(Page::Music);
+        assert!(m.cover_visible());
+        m.toggle();
+        assert!(m.cover_visible());
+    }
+
+    #[test]
+    fn ui_v2_springs_stop_requesting_frames_after_settling() {
+        let mut m = Model {
+            show_spectrum: false,
+            ..Default::default()
+        };
+        m.set_ui_v2(true);
+        m.switch(Page::Music);
+        assert!(m.continuous());
+        for i in 1..=480 {
+            m.step(1. / 120., i as f64 / 120.);
+        }
+        assert!(!m.moving());
+        assert!(!m.continuous());
     }
 }

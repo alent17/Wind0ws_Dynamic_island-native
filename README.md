@@ -2,6 +2,14 @@
 
 main 默认的 Windows x64 原生程序。使用 Rust、Win32、Direct2D、DirectWrite、DXGI 与 DirectComposition；不依赖 Tauri、Wry 或 WebView2。旧版 WebView 源码使用根目录 web:* 命令构建。
 
+UI 2.0 开发路径通过 `--ui-v2` 启用，默认保留兼容版本。V2 设置直接更新真实 Isle 并合并后台保存，提供保存错误、重试和恢复；运行时 revision 与已落盘 revision 分开。`--motion-scale 1|0.5|0.2` 用于本次运行的动画检查。完整完成范围和待验收项目见 [进度表](../docs/native-ui-v2-progress.md) 与 [企业级执行门禁](../docs/native-ui-v2-execution.md)，当前开发构建不代表正式发布验收。
+
+V2 集成回归使用隔离配置和演示媒体，运行 `python native/scripts/ui_v2.py`、`python native/scripts/ui_v2_players.py` 与 `python native/scripts/ui_v2_motion.py`。后者覆盖五档模拟 DPI、四边布局、共享封面、指针 seek、30 次展开收起和 idle 帧 / Region 更新检查；真实硬件 DPI、截图及屏幕阅读器另行记录。
+
+`python native/scripts/ui_v2_placement.py` 验证 V2 设置窗位置的手动保存、重开 / 重启、默认不写回、离屏恢复、未知字段和父窗口退出补取，以及紧凑导航、横滚与 Tab / End。位置使用物理坐标和外窗 DIP 尺寸，恢复按当前目标显示器 DPI；模拟 DPI 不改变 OS，实际视口仍受真实工作区和最小跟踪尺寸限制。该脚本记录请求 / 实际尺寸与 SHA，不能替代小屏、混合 DPI 和截图验收。
+
+程序运行时可用 `--target-dir native/target/ui2-candidate` 构建独立候选，避免替换被 Windows 锁定的可执行文件。测试脚本支持 `ISLE_TEST_EXE` 指定该候选，默认仍使用 `native/target/release/isle-native.exe`；QA 记录必须包含实际二进制 SHA-256。当前回归及崩溃修复证据见 [QA 记录](../docs/native-ui-v2-qa.md) 与 [独立审查](../docs/native-ui-v2-review.md)。
+
 ## 构建与运行
 
 需要 Rust MSVC 工具链、Visual Studio C++ Build Tools 和 Windows SDK。
@@ -78,7 +86,7 @@ cargo build --release --manifest-path native/Cargo.toml
 
 只读媒体生命周期测试：`python native/scripts/live_media.py`，可见和隐藏各采样 60 秒，再执行 12 次切页释放/重建。测试不发送播放控制；输出不包含歌名或播放器身份。
 
-添加 `--require-artwork` 可验证真实封面和补全时长（需正在播放可匹配曲目）。网络/解码使用独立线程、8 秒任务预算和切页取消；响应限制 2 MiB，解码源最大 4096 边长且不超过 16MP，输出 128×128 BGRA。最近 8 首共约 512 KiB 像素缓存，GPU 仅保留当前可见封面。默认单元测试不联网；可选的网易云 CDN 回退验证使用 `cargo test --manifest-path native/Cargo.toml live_provider_downloads -- --ignored --nocapture`。
+添加 `--require-artwork` 可验证真实封面和补全时长（需正在播放可匹配曲目）。网络/解码使用独立线程、8 秒任务预算和切页取消；响应限制 2 MiB，解码源最大 4096 边长且不超过 16MP。缩略图输出 128×128 BGRA，V2 展开异步请求 512×512；同曲目高清结果不会被晚到的缩略图降级。CPU 缓存上限为 8 张缩略图和 4 张高清图，V2 GPU 只保留当前图、过渡前一图及当前 Blur 缓存。默认单元测试不联网；可选的网易云 CDN 回退验证使用 `cargo test --manifest-path native/Cargo.toml live_provider_downloads -- --ignored --nocapture`。
 
 ## 验证
 
@@ -97,6 +105,8 @@ python native/scripts/visibility_resources.py
 截图脚本需要 Pillow。`interaction.py` 按进程 ID 定位自己的窗口，并创建另一个进程的背景窗口检查透明区域的窗口路由；不会向安装版 Isle 发送指令。该检查使用 `WindowFromPoint` 和向返回窗口发送消息，不等价于鼠标硬件输入的全链路验收。
 
 资源可见性测试还需要 psutil；无障碍脚本通过 Windows PowerShell 的 .NET Framework interop 从另一个进程访问接口。`--test-dpi`、`--test-work-area WxH`、`--test-countdown-ms` 仅为测试覆盖参数，不修改系统显示或现有应用设置。`WM_APP+60` 在启用 `--log` 时写出当前诊断快照，不触发绘制。
+
+设置控件的资源前置检查：`python native/scripts/manifest_controls.py --exe native/target/ui2-controls/release/isle-native.exe`。脚本映射 EXE 资源并在自身进程创建临时 activation context，核对 manifest #1、Common Controls v6、PMv2、asInvoker，以及原 ICON / VERSIONINFO；输出到 `native/artifacts/manifest-controls/results.json`。仅用于可信的本地构建：它不运行目标 EXE，但会加载该 context 解析的 ComCtl32 DLL 并调用其 DllGetVersion，结果保留实际 DLL 路径。它不证明目标进程 custom-draw、DPI 或视觉状态，须配合同一 SHA 的窗口兼容回归。Python 标准库即可运行。
 
 所有测试输出位于忽略提交的 `native/artifacts/`。性能报告里的 `drawAndPresentP95Ms` 包含 Present 等待，**不是帧间隔，也不是输入延迟**。CPU 百分比按机器全部逻辑处理器归一化；私有内存和工作集分别记录。
 
