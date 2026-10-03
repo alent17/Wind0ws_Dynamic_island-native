@@ -93,6 +93,88 @@ enum Event {
     SettingsControlFault(u32),
     Close,
 }
+impl Event {
+    fn diagnostic_stage(&self) -> &'static str {
+        match self {
+            Self::Floating(..) => "event.floating_command",
+            Self::TimerWindow(..) => "event.timer_window_command",
+            Self::Players(..) => "event.players_command",
+            Self::PlayersUpdated => "event.players_updated",
+            Self::ConfigSaved => "event.configuration_saved",
+            Self::ConfigTick => "event.configuration_tick",
+            Self::HoverExpired => "event.hover_expired",
+            Self::Weather => "event.weather_updated",
+            Self::City(..) => "event.city_command",
+            Self::Spectrum => "event.spectrum_updated",
+            Self::Audio => "event.audio_updated",
+            Self::Media => "event.media_updated",
+            Self::Paint => "event.paint",
+            Self::Tick => "event.tick",
+            Self::Move(..) => "event.pointer_move",
+            Self::Down(..) => "event.pointer_down",
+            Self::Up(..) => "event.pointer_up",
+            Self::Wheel(..) => "event.pointer_wheel",
+            Self::Key(..) => "event.key_down",
+            Self::Leave => "event.pointer_leave",
+            Self::Cancel => "event.pointer_cancel",
+            Self::Resize => "event.resize",
+            Self::Dpi(..) => "event.dpi_changed",
+            Self::Visibility(..) => "event.visibility_changed",
+            Self::Preferences => "event.preferences_changed",
+            Self::Access(..) => "event.accessibility",
+            Self::Diagnostic => "event.diagnostic",
+            Self::SettingsControlFault(..) => "event.settings_control_fault",
+            Self::Close => "event.close",
+        }
+    }
+}
+fn stage_error(stage: &str, error: Error) -> Error {
+    Error::new(error.code(), format!("[{stage}] {error}").into())
+}
+fn stage_result<T>(stage: &str, result: Result<T>) -> Result<T> {
+    result.map_err(|error| stage_error(stage, error))
+}
+fn stage_io<T>(stage: &str, result: std::io::Result<T>) -> Result<T> {
+    result.map_err(|error| {
+        Error::new(
+            E_FAIL,
+            format!("[{stage}] {error}; OS code: {:?}", error.raw_os_error()).into(),
+        )
+    })
+}
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn stage_error_keeps_hresult_and_names_the_failed_stage() {
+        let error = stage_error("startup.renderer", Error::from(E_FAIL));
+
+        assert_eq!(error.code(), E_FAIL);
+        assert!(error.to_string().contains("[startup.renderer]"));
+    }
+
+    #[test]
+    fn io_error_reports_stage_and_original_os_code() {
+        let error = stage_io::<()>(
+            "startup.configuration",
+            Err(std::io::Error::from_raw_os_error(2)),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), E_FAIL);
+        assert!(error.to_string().contains("[startup.configuration]"));
+        assert!(error.to_string().contains("OS code: Some(2)"));
+    }
+
+    #[test]
+    fn event_diagnostic_uses_a_readable_name() {
+        assert_eq!(
+            Event::Dpi(144, RECT::default()).diagnostic_stage(),
+            "event.dpi_changed"
+        );
+    }
+}
 thread_local! {static EVENTS:RefCell<VecDeque<Event>>=const{RefCell::new(VecDeque::new())};}
 thread_local! {static ACCESSIBLE:RefCell<Option<IAccessible>>=const{RefCell::new(None)};}
 fn enqueue(e: Event) {
@@ -658,7 +740,10 @@ impl App {
                 .push(region_started.elapsed().as_secs_f64() * 1000.);
         }
         if self.renderer.is_none() {
-            self.renderer = Some(Renderer::new(self.window, self.scale)?);
+            self.renderer = Some(stage_result(
+                "runtime.renderer_create",
+                Renderer::new(self.window, self.scale),
+            )?);
         }
         let start = Instant::now();
         if let Err(error) = self.renderer.as_mut().unwrap().draw(
@@ -674,7 +759,10 @@ impl App {
             // Release the previous composition target before binding a new one
             // to the same HWND, including the device-loss recovery path.
             self.renderer = None;
-            self.renderer = Some(Renderer::new(self.window, self.scale)?);
+            self.renderer = Some(stage_result(
+                "runtime.renderer_recreate_after_draw_failure",
+                Renderer::new(self.window, self.scale),
+            )?);
             self.renderer.as_mut().unwrap().draw(
                 &self.model,
                 self.hover,
@@ -2199,7 +2287,10 @@ unsafe fn system_reduced_motion() -> bool {
     }
 }
 unsafe fn run() -> Result<()> {
-    CoInitializeEx(None, COINIT_APARTMENTTHREADED)?;
+    stage_result(
+        "startup.com_initialize",
+        CoInitializeEx(None, COINIT_APARTMENTTHREADED),
+    )?;
     let _fonts = PrivateFonts::load();
     let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     let mut args: Vec<String> = std::env::args().collect();
@@ -2221,17 +2312,20 @@ unsafe fn run() -> Result<()> {
     {
         args.push("--live-media".into());
     }
-    let instance = GetModuleHandleW(None)?;
+    let instance = stage_result("startup.get_module_handle", GetModuleHandleW(None))?;
     let class = w!("IsleNativePrototype");
     let wc = WNDCLASSW {
         lpfnWndProc: Some(procedure),
         hInstance: instance.into(),
         lpszClassName: class,
-        hCursor: LoadCursorW(None, IDC_ARROW)?,
+        hCursor: stage_result("startup.load_cursor", LoadCursorW(None, IDC_ARROW))?,
         ..Default::default()
     };
     if RegisterClassW(&wc) == 0 {
-        return Err(Error::from_win32());
+        return Err(stage_error(
+            "startup.register_window_class",
+            Error::from_win32(),
+        ));
     }
     let window = CreateWindowExW(
         WS_EX_NOREDIRECTIONBITMAP
@@ -2254,7 +2348,10 @@ unsafe fn run() -> Result<()> {
         None,
     );
     if window.0 == 0 {
-        return Err(Error::from_win32());
+        return Err(stage_error(
+            "startup.create_main_window",
+            Error::from_win32(),
+        ));
     }
     let accessible = std::sync::Arc::new(std::sync::Mutex::new(accessibility::Snapshot {
         hwnd: window.0,
@@ -2266,16 +2363,18 @@ unsafe fn run() -> Result<()> {
         .as_ref()
         .map(std::path::PathBuf::from)
         .unwrap_or_else(configuration::config_path);
-    let configuration = configuration::Service::new(
-        window,
-        config_path,
-        if config_override.is_none() {
-            configuration::legacy_path()
-        } else {
-            None
-        },
-    )
-    .map_err(|_| Error::from(E_FAIL))?;
+    let configuration = stage_io(
+        "startup.load_configuration",
+        configuration::Service::new(
+            window,
+            config_path,
+            if config_override.is_none() {
+                configuration::legacy_path()
+            } else {
+                None
+            },
+        ),
+    )?;
     clock::warm_up();
     let appearance = configuration.appearance.clone();
     let configured_edge = match appearance.edge.as_str() {
@@ -2456,12 +2555,18 @@ unsafe fn run() -> Result<()> {
         floating_player: None,
         timer_window: None,
         player_dialog: None,
-        weather: weather::Service::new(window).map_err(|_| Error::from(E_FAIL))?,
+        weather: stage_io(
+            "startup.create_weather_service",
+            weather::Service::new(window),
+        )?,
         settings: None,
         configuration,
         saving_window: None,
         spectrum: if model.spectrum.is_some() {
-            Some(spectrum::SpectrumService::new(window)?)
+            Some(stage_result(
+                "startup.create_spectrum_service",
+                spectrum::SpectrumService::new(window),
+            )?)
         } else {
             None
         },
@@ -2469,15 +2574,18 @@ unsafe fn run() -> Result<()> {
             .iter()
             .any(|a| a == "--live-spectrum" || a == "--live-media"),
         audio: if model.audio.is_some() && !test_fixture {
-            Some(system_audio::AudioService::new(window).map_err(|_| Error::from(E_FAIL))?)
+            Some(stage_io(
+                "startup.create_audio_service",
+                system_audio::AudioService::new(window),
+            )?)
         } else {
             None
         },
         media: if model.media.is_some() && !test_fixture {
-            Some(
-                media::MediaService::new(window, start, media_selection)
-                    .map_err(|_| Error::from(E_FAIL))?,
-            )
+            Some(stage_io(
+                "startup.create_media_service",
+                media::MediaService::new(window, start, media_selection),
+            )?)
         } else {
             None
         },
@@ -2521,18 +2629,18 @@ unsafe fn run() -> Result<()> {
         frames_ms: vec![],
         intervals_ms: vec![],
         last_present: None,
-        frame_timer: frame_timer::FrameTimer::new()?,
+        frame_timer: stage_result("startup.create_frame_timer", frame_timer::FrameTimer::new())?,
         reduced_override: args.iter().any(|a| a == "--reduced-motion").then_some(true),
     };
-    app.position()?;
-    app.redraw()?;
+    stage_result("startup.position_main_window", app.position())?;
+    stage_result("startup.initial_render", app.redraw())?;
     if args.iter().any(|a| a == "--benchmark") {
         // Keep the same rendering path while preventing input from changing a
         // measured scenario. Only the sampling harness opts into this mode.
         EnableWindow(window, false);
     }
     ShowWindow(window, SW_SHOWNOACTIVATE);
-    app.apply_topmost()?;
+    stage_result("startup.apply_window_z_order", app.apply_topmost())?;
     if args.iter().any(|arg| arg == "--open-floating") {
         app.action(Hit::Tool(2));
     }
@@ -2545,7 +2653,8 @@ unsafe fn run() -> Result<()> {
         if continuous {
             let deadline = app.last + Duration::from_nanos(16_666_667);
             app.frame_timer
-                .arm(deadline.saturating_duration_since(Instant::now()))?;
+                .arm(deadline.saturating_duration_since(Instant::now()))
+                .map_err(|error| stage_error("runtime.arm_frame_timer", error))?;
         } else {
             app.frame_timer.cancel();
         }
@@ -2557,7 +2666,10 @@ unsafe fn run() -> Result<()> {
         let result =
             MsgWaitForMultipleObjectsEx(Some(&handles), u32::MAX, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if result == WAIT_FAILED {
-            return Err(Error::from_win32());
+            return Err(stage_error(
+                "runtime.wait_for_messages",
+                Error::from_win32(),
+            ));
         }
         if continuous && result == WAIT_OBJECT_0 {
             enqueue(Event::Tick);
@@ -2586,10 +2698,8 @@ unsafe fn run() -> Result<()> {
         loop {
             let event = EVENTS.with(|q| q.borrow_mut().pop_front());
             if let Some(event) = event {
-                let event_kind = std::mem::discriminant(&event);
-                if !app.handle(event).map_err(|error| {
-                    Error::new(error.code(), format!("{event_kind:?}: {error}").into())
-                })? {
+                let event_stage = event.diagnostic_stage();
+                if !stage_result(event_stage, app.handle(event))? {
                     break 'running;
                 }
             } else {
@@ -2597,7 +2707,10 @@ unsafe fn run() -> Result<()> {
             }
         }
     }
-    app.save_settings_window_placement(Duration::ZERO)?;
+    stage_result(
+        "shutdown.save_settings_window_placement",
+        app.save_settings_window_placement(Duration::ZERO),
+    )?;
     if let Err(error) = app.configuration.flush_timeout(Duration::from_secs(2)) {
         eprintln!("Settings exit flush failed: {error}");
         if let Some(path) = &app.log {
@@ -2613,10 +2726,11 @@ unsafe fn run() -> Result<()> {
     if app.interval > 0 {
         let _ = KillTimer(window, 1);
     }
-    app.accessible
-        .lock()
-        .map_err(|_| Error::from(E_FAIL))?
-        .closed = true;
+    stage_result(
+        "shutdown.close_accessibility_provider",
+        app.accessible.lock().map_err(|_| Error::from(E_FAIL)),
+    )?
+    .closed = true;
     UiaReturnRawElementProvider(
         window,
         WPARAM(0),
@@ -2632,15 +2746,23 @@ unsafe fn run() -> Result<()> {
     app.settings = None;
     app.weather.request(None);
     app.spectrum = None;
-    DestroyWindow(window)?;
+    stage_result("shutdown.destroy_main_window", DestroyWindow(window))?;
     drop(app);
     CoUninitialize();
     Ok(())
 }
 fn main() {
     if let Err(error) = unsafe { run() } {
-        let message = format!("Isle Native: {error}");
-        let _ = std::fs::write(std::env::temp_dir().join("isle-native-error.log"), &message);
+        let message = format!(
+            "Isle Native failed: {error} (HRESULT 0x{:08X})",
+            error.code().0 as u32
+        );
+        let report = format!(
+            "Time: {:?}\n{message}\n\nBacktrace:\n{}",
+            std::time::SystemTime::now(),
+            std::backtrace::Backtrace::force_capture()
+        );
+        let _ = std::fs::write(std::env::temp_dir().join("isle-native-error.log"), report);
         unsafe {
             MessageBoxW(
                 None,
