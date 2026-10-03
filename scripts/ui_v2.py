@@ -28,7 +28,7 @@ folder = Path(os.environ.get('ISLE_TEST_OUTPUT_DIR', OUT / 'ui-v2')).resolve()
 try:
     folder.relative_to(OUT.resolve())
 except ValueError as error:
-    raise RuntimeError('ISLE_TEST_OUTPUT_DIR must stay under native/artifacts') from error
+    raise RuntimeError('ISLE_TEST_OUTPUT_DIR must stay under artifacts') from error
 folder.mkdir(exist_ok=True)
 config = folder / 'settings.json'
 report = folder / 'snapshot.json'

@@ -1,0 +1,50 @@
+{
+  "runtime": "Chrome headless production fixture, not native WebView",
+  "results": [
+    {
+      "scene": "paused-compact",
+      "sampleSeconds": 60,
+      "rendererTaskCpuPercent": 0.02879013870581192,
+      "startHeap": 3293040,
+      "endHeap": 2668148,
+      "domNodes": 767,
+      "listeners": 49
+    },
+    {
+      "scene": "playing-compact",
+      "sampleSeconds": 60,
+      "rendererTaskCpuPercent": 8.377040256808026,
+      "startHeap": 4618764,
+      "endHeap": 3830228,
+      "domNodes": 764,
+      "listeners": 49
+    },
+    {
+      "scene": "music-expanded",
+      "sampleSeconds": 60,
+      "rendererTaskCpuPercent": 7.771034086062912,
+      "startHeap": 3286944,
+      "endHeap": 3705288,
+      "domNodes": 762,
+      "listeners": 36
+    },
+    {
+      "scene": "volume-detail",
+      "sampleSeconds": 60,
+      "rendererTaskCpuPercent": 0.02451748133857045,
+      "startHeap": 4772188,
+      "endHeap": 3728588,
+      "domNodes": 906,
+      "listeners": 43
+    },
+    {
+      "scene": "unmounted",
+      "sampleSeconds": 60,
+      "rendererTaskCpuPercent": 0.024001862766167364,
+      "startHeap": 5096108,
+      "endHeap": 2554116,
+      "domNodes": 9,
+      "listeners": 0
+    }
+  ]
+}

@@ -397,7 +397,7 @@ mod tests {
     mod legacy {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../src-tauri/src/models/settings.rs"
+            "/tests/fixtures/legacy_settings.rs"
         ));
     }
     #[test]

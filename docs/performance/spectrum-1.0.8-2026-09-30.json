@@ -1,0 +1,76 @@
+{
+  "date": "2026-09-30",
+  "scope": "Chrome headless production fixture, synthetic random spectrum. Thirty seconds per scene after warm-up; TaskDuration CPU and JS heap only. Excludes native audio capture, WebView2 process memory and GPU.",
+  "baseline": "HEAD Spectrum.svelte (24 Hz), other modules from current working tree; synthetic mode does not use spectrumStore.",
+  "runs": {
+    "baseline": {
+      "runtime": "Chrome headless production fixture; playback scenes animate a synthetic random spectrum. Renderer TaskDuration and JS heap only; not native WebView process CPU or total memory.",
+      "results": [
+        {
+          "scene": "playing-compact",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 1.1132908901615064,
+          "startHeap": 4849360,
+          "endHeap": 2785952,
+          "domNodes": 279,
+          "listeners": 37
+        },
+        {
+          "scene": "music-expanded",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 1.0251094649835417,
+          "startHeap": 3509664,
+          "endHeap": 2901232,
+          "domNodes": 923,
+          "listeners": 40
+        }
+      ]
+    },
+    "discardedPerFrameRaf": {
+      "runtime": "Chrome headless production fixture; playback scenes animate a synthetic random spectrum. Renderer TaskDuration and JS heap only; not native WebView process CPU or total memory.",
+      "results": [
+        {
+          "scene": "playing-compact",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 2.26083302248522,
+          "startHeap": 4961584,
+          "endHeap": 2812504,
+          "domNodes": 279,
+          "listeners": 37
+        },
+        {
+          "scene": "music-expanded",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 1.9626848770235619,
+          "startHeap": 3656976,
+          "endHeap": 2928608,
+          "domNodes": 923,
+          "listeners": 40
+        }
+      ]
+    },
+    "final": {
+      "runtime": "Chrome headless production fixture; playback scenes animate a synthetic random spectrum. Renderer TaskDuration and JS heap only; not native WebView process CPU or total memory.",
+      "results": [
+        {
+          "scene": "playing-compact",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 0.9814842217901679,
+          "startHeap": 4931992,
+          "endHeap": 2789416,
+          "domNodes": 279,
+          "listeners": 37
+        },
+        {
+          "scene": "music-expanded",
+          "sampleSeconds": 30,
+          "rendererTaskCpuPercent": 0.9335631411199357,
+          "startHeap": 3797568,
+          "endHeap": 2906968,
+          "domNodes": 923,
+          "listeners": 40
+        }
+      ]
+    }
+  }
+}

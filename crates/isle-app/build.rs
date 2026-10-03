@@ -1,24 +1,32 @@
 use std::{env, fs, path::PathBuf, process::Command};
 
 fn main() {
-    // Ship the existing licensed font assets beside the executable. No font
+    // Optionally copy user-provided font assets beside the executable. No font
     // installation, registry writes or dependency on the repository at runtime.
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let source = manifest.join("../../../public/fonts");
+    let source = manifest.join("../../public/fonts");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     embed_windows_identity(&manifest, &out);
     let destination = out.ancestors().nth(3).unwrap().join("fonts");
     fs::create_dir_all(&destination).unwrap();
+    let mut missing_fonts = false;
     for weight in ["Regular", "Medium", "Bold"] {
         let file = format!("MiSans-{weight}.ttf");
         let source = source.join(&file);
         println!("cargo:rerun-if-changed={}", source.display());
         let target = destination.join(file);
+        if !source.is_file() {
+            missing_fonts = true;
+            continue;
+        }
         // DirectWrite maps these files while a test window is running. Avoid
         // rewriting unchanged font bytes during incremental builds.
         if fs::read(&source).ok() != fs::read(&target).ok() {
             fs::copy(source, target).unwrap();
         }
+    }
+    if missing_fonts {
+        println!("cargo:warning=MiSans font files are not included; Isle will use the Windows fallback font.");
     }
     let icon_license = manifest.join("../../assets/icons/LICENSE");
     println!("cargo:rerun-if-changed={}", icon_license.display());
@@ -35,7 +43,7 @@ fn embed_windows_identity(manifest: &std::path::Path, out: &std::path::Path) {
     }
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let numeric = format!("{},0", version.replace('.', ","));
-    let icon = manifest.join("../../../src-tauri/icons/icon.ico");
+    let icon = manifest.join("../../assets/icon.ico");
     let app_manifest = manifest.join("isle.manifest");
     println!("cargo:rerun-if-changed={}", icon.display());
     println!("cargo:rerun-if-changed={}", app_manifest.display());

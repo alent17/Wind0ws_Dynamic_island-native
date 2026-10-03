@@ -1,0 +1,1470 @@
+{
+  "binarySha256": "2cdbdc17067c3a829af54733ac1a19726ff82d098255554dd808e04e6d443428",
+  "sampleSeconds": 60,
+  "baseline": {
+    "initial": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 5.1658504,
+      "frames": 33,
+      "drawAndPresentP95Ms": 1.5279,
+      "livePages": 1,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 0,
+      "presentCallIntervalP95Ms": 0,
+      "intervalSamples": 0,
+      "suspended": false,
+      "rendererAlive": true,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false
+    },
+    "visibleSamples": [
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.21875,
+        "workingSetMiB": 46.1015625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12617086563316746,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12617086563316746,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12828407224966307,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12629324280645454,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12815780839899785,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.9375,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.70703125,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.70703125,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.2525864856129091,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12815780839899785,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.37887972841869516,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12828407224966307,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.12629324280623172,
+        "privateMiB": 57.0546875,
+        "workingSetMiB": 45.7265625,
+        "handles": 454
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12629324280645454,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12629324280623172,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12629324280645454,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12815780839899785,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12815780839899785,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12828407224966307,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12629324280623172,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.12629324280645454,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 57.07421875,
+        "workingSetMiB": 45.75,
+        "handles": 456
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.12629324280645454,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 56.97265625,
+        "workingSetMiB": 45.69140625,
+        "handles": 457
+      }
+    ],
+    "visibleEnd": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 66.5953424,
+      "frames": 33,
+      "drawAndPresentP95Ms": 1.5279,
+      "livePages": 1,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 0,
+      "presentCallIntervalP95Ms": 0,
+      "intervalSamples": 0,
+      "suspended": false,
+      "rendererAlive": true,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false
+    }
+  },
+  "spectrum": {
+    "initial": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 5.1635525,
+      "frames": 286,
+      "drawAndPresentP95Ms": 1.479,
+      "livePages": 1,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 16.837822222222222,
+      "presentCallIntervalP95Ms": 17.1392,
+      "intervalSamples": 9,
+      "suspended": false,
+      "rendererAlive": true,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false,
+      "spectrumActive": true,
+      "spectrumCaptureAlive": true,
+      "spectrumPackets": 480,
+      "spectrumAnalyses": 86,
+      "spectrumStarts": 1,
+      "spectrumError": false,
+      "spectrumPeak": 0.4239968
+    },
+    "visibleSamples": [
+      {
+        "cpuMachinePercent": 0.6510416666666666,
+        "privateMiB": 57.44921875,
+        "workingSetMiB": 48.08984375,
+        "handles": 509,
+        "spectrumPeak": 0.44977558
+      },
+      {
+        "cpuMachinePercent": 0.8971046587913789,
+        "privateMiB": 57.28515625,
+        "workingSetMiB": 47.93359375,
+        "handles": 509,
+        "spectrumPeak": 0.451514
+      },
+      {
+        "cpuMachinePercent": 0.6314662140322727,
+        "privateMiB": 57.28515625,
+        "workingSetMiB": 47.9375,
+        "handles": 509,
+        "spectrumPeak": 0.43916708
+      },
+      {
+        "cpuMachinePercent": 1.0252624671919828,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.953125,
+        "handles": 510,
+        "spectrumPeak": 0.4351957
+      },
+      {
+        "cpuMachinePercent": 0.8840526996436221,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.95703125,
+        "handles": 510,
+        "spectrumPeak": 0.43701705
+      },
+      {
+        "cpuMachinePercent": 0.8971046587929851,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.9609375,
+        "handles": 510,
+        "spectrumPeak": 0.43359375
+      },
+      {
+        "cpuMachinePercent": 0.8840526996436221,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.96484375,
+        "handles": 510,
+        "spectrumPeak": 0.45703125
+      },
+      {
+        "cpuMachinePercent": 1.2828407224966305,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.96484375,
+        "handles": 510,
+        "spectrumPeak": 0.43707207
+      },
+      {
+        "cpuMachinePercent": 0.883196059432172,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.96875,
+        "handles": 510,
+        "spectrumPeak": 0.42234623
+      },
+      {
+        "cpuMachinePercent": 0.6414203612471657,
+        "privateMiB": 57.2890625,
+        "workingSetMiB": 47.97265625,
+        "handles": 510,
+        "spectrumPeak": 0.42212778
+      },
+      {
+        "cpuMachinePercent": 1.0093669250653396,
+        "privateMiB": 57.31640625,
+        "workingSetMiB": 48.046875,
+        "handles": 512,
+        "spectrumPeak": 0.43721163
+      },
+      {
+        "cpuMachinePercent": 0.37887972841869516,
+        "privateMiB": 57.31640625,
+        "workingSetMiB": 48.05859375,
+        "handles": 512,
+        "spectrumPeak": 0.41642332
+      },
+      {
+        "cpuMachinePercent": 0.6414203612483153,
+        "privateMiB": 57.3359375,
+        "workingSetMiB": 48.0703125,
+        "handles": 512,
+        "spectrumPeak": 0.43103093
+      },
+      {
+        "cpuMachinePercent": 0.5046834625326698,
+        "privateMiB": 57.3359375,
+        "workingSetMiB": 48.08984375,
+        "handles": 512,
+        "spectrumPeak": 0.45537
+      },
+      {
+        "cpuMachinePercent": 0.5131362889977327,
+        "privateMiB": 57.3359375,
+        "workingSetMiB": 48.08984375,
+        "handles": 512,
+        "spectrumPeak": 0.4582356
+      },
+      {
+        "cpuMachinePercent": 1.2617086563316746,
+        "privateMiB": 57.34375,
+        "workingSetMiB": 48.09765625,
+        "handles": 512,
+        "spectrumPeak": 0.47420382
+      },
+      {
+        "cpuMachinePercent": 0.8979885057476414,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.15234375,
+        "handles": 512,
+        "spectrumPeak": 0.4453125
+      },
+      {
+        "cpuMachinePercent": 0.5051729712249269,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.16796875,
+        "handles": 512,
+        "spectrumPeak": 0.42384052
+      },
+      {
+        "cpuMachinePercent": 1.0252624671919828,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.171875,
+        "handles": 512,
+        "spectrumPeak": 0.45644823
+      },
+      {
+        "cpuMachinePercent": 0.6314662140311585,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.171875,
+        "handles": 512,
+        "spectrumPeak": 0.48046875
+      },
+      {
+        "cpuMachinePercent": 0.8971046587929851,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.17578125,
+        "handles": 512,
+        "spectrumPeak": 0.46784312
+      },
+      {
+        "cpuMachinePercent": 0.8840526996451817,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.17578125,
+        "handles": 512,
+        "spectrumPeak": 0.4729729
+      },
+      {
+        "cpuMachinePercent": 0.7689468503926103,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.1875,
+        "handles": 512,
+        "spectrumPeak": 0.44214535
+      },
+      {
+        "cpuMachinePercent": 0.7577594568387273,
+        "privateMiB": 57.4296875,
+        "workingSetMiB": 48.1875,
+        "handles": 512,
+        "spectrumPeak": 0.45820582
+      },
+      {
+        "cpuMachinePercent": 0.7689468503939872,
+        "privateMiB": 57.46875,
+        "workingSetMiB": 48.2265625,
+        "handles": 516,
+        "spectrumPeak": 0.44713157
+      },
+      {
+        "cpuMachinePercent": 0.7577594568373903,
+        "privateMiB": 57.484375,
+        "workingSetMiB": 48.2421875,
+        "handles": 516,
+        "spectrumPeak": 0.43181005
+      },
+      {
+        "cpuMachinePercent": 0.5126312335959914,
+        "privateMiB": 57.484375,
+        "workingSetMiB": 48.2421875,
+        "handles": 516,
+        "spectrumPeak": 0.4601815
+      },
+      {
+        "cpuMachinePercent": 0.6314662140311585,
+        "privateMiB": 57.484375,
+        "workingSetMiB": 48.2421875,
+        "handles": 516,
+        "spectrumPeak": 0.42174974
+      },
+      {
+        "cpuMachinePercent": 0.6414203612483153,
+        "privateMiB": 57.484375,
+        "workingSetMiB": 48.2421875,
+        "handles": 516,
+        "spectrumPeak": 0.45617372
+      },
+      {
+        "cpuMachinePercent": 0.883196059432172,
+        "privateMiB": 57.83984375,
+        "workingSetMiB": 48.40625,
+        "handles": 516,
+        "spectrumPeak": 0.430594
+      },
+      {
+        "cpuMachinePercent": 0.3848522167482995,
+        "privateMiB": 57.85546875,
+        "workingSetMiB": 48.41796875,
+        "handles": 516,
+        "spectrumPeak": 0.4396047
+      },
+      {
+        "cpuMachinePercent": 0.7570251937990048,
+        "privateMiB": 57.85546875,
+        "workingSetMiB": 48.41796875,
+        "handles": 516,
+        "spectrumPeak": 0.43359375
+      },
+      {
+        "cpuMachinePercent": 0.8979885057476414,
+        "privateMiB": 57.85546875,
+        "workingSetMiB": 48.41796875,
+        "handles": 516,
+        "spectrumPeak": 0.42169854
+      },
+      {
+        "cpuMachinePercent": 0.8840526996436221,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4296875,
+        "handles": 516,
+        "spectrumPeak": 0.40685925
+      },
+      {
+        "cpuMachinePercent": 0.3844734251969936,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4453125,
+        "handles": 516,
+        "spectrumPeak": 0.43763348
+      },
+      {
+        "cpuMachinePercent": 0.6314662140311585,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4453125,
+        "handles": 516,
+        "spectrumPeak": 0.4346182
+      },
+      {
+        "cpuMachinePercent": 0.8971046587929851,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4453125,
+        "handles": 516,
+        "spectrumPeak": 0.45352045
+      },
+      {
+        "cpuMachinePercent": 0.6314662140322727,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.44921875,
+        "handles": 516,
+        "spectrumPeak": 0.43356225
+      },
+      {
+        "cpuMachinePercent": 0.7689468503926103,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.45703125,
+        "handles": 516,
+        "spectrumPeak": 0.4140625
+      },
+      {
+        "cpuMachinePercent": 0.6314662140322727,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.45703125,
+        "handles": 516,
+        "spectrumPeak": 0.42382342
+      },
+      {
+        "cpuMachinePercent": 0.6407890419949893,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4609375,
+        "handles": 516,
+        "spectrumPeak": 0.41015625
+      },
+      {
+        "cpuMachinePercent": 0.7577594568373903,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.4609375,
+        "handles": 516,
+        "spectrumPeak": 0.42456713
+      },
+      {
+        "cpuMachinePercent": 0.6407890419949893,
+        "privateMiB": 57.890625,
+        "workingSetMiB": 48.46484375,
+        "handles": 517,
+        "spectrumPeak": 0.4462167
+      },
+      {
+        "cpuMachinePercent": 0.7577594568373903,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.55859375,
+        "handles": 516,
+        "spectrumPeak": 0.44495296
+      },
+      {
+        "cpuMachinePercent": 0.6414203612483153,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.578125,
+        "handles": 516,
+        "spectrumPeak": 0.4418798
+      },
+      {
+        "cpuMachinePercent": 0.7570251937990048,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.578125,
+        "handles": 516,
+        "spectrumPeak": 0.45703125
+      },
+      {
+        "cpuMachinePercent": 0.769704433496599,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.58203125,
+        "handles": 516,
+        "spectrumPeak": 0.41970885
+      },
+      {
+        "cpuMachinePercent": 1.0093669250653396,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.4231414
+      },
+      {
+        "cpuMachinePercent": 0.5131362889986523,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.41005617
+      },
+      {
+        "cpuMachinePercent": 0.7577594568373903,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.4375
+      },
+      {
+        "cpuMachinePercent": 0.7689468503939872,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.36483663
+      },
+      {
+        "cpuMachinePercent": 0.6314662140311585,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.42486978
+      },
+      {
+        "cpuMachinePercent": 0.5126312335959914,
+        "privateMiB": 58.01953125,
+        "workingSetMiB": 48.5859375,
+        "handles": 516,
+        "spectrumPeak": 0.42798752
+      },
+      {
+        "cpuMachinePercent": 0.6314662140322727,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.53125,
+        "handles": 515,
+        "spectrumPeak": 0.44314992
+      },
+      {
+        "cpuMachinePercent": 0.640789041993842,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.53515625,
+        "handles": 515,
+        "spectrumPeak": 0.3941452
+      },
+      {
+        "cpuMachinePercent": 0.7697044334979783,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.5390625,
+        "handles": 515,
+        "spectrumPeak": 0.4286268
+      },
+      {
+        "cpuMachinePercent": 0.6308543281658373,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.5390625,
+        "handles": 515,
+        "spectrumPeak": 0.42341402
+      },
+      {
+        "cpuMachinePercent": 0.6414203612471657,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.5390625,
+        "handles": 515,
+        "spectrumPeak": 0.45703125
+      },
+      {
+        "cpuMachinePercent": 0.7570251937990048,
+        "privateMiB": 57.921875,
+        "workingSetMiB": 48.5390625,
+        "handles": 515,
+        "spectrumPeak": 0.37807322
+      },
+      {
+        "cpuMachinePercent": 0.7577594568373903,
+        "privateMiB": 57.94921875,
+        "workingSetMiB": 48.5703125,
+        "handles": 515,
+        "spectrumPeak": 0.44567946
+      }
+    ],
+    "visibleEnd": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 66.5953882,
+      "frames": 3902,
+      "drawAndPresentP95Ms": 1.5895,
+      "livePages": 1,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 16.98842537931031,
+      "presentCallIntervalP95Ms": 17.6295,
+      "intervalSamples": 3625,
+      "suspended": false,
+      "rendererAlive": true,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false,
+      "spectrumActive": true,
+      "spectrumCaptureAlive": true,
+      "spectrumPackets": 6623,
+      "spectrumAnalyses": 1187,
+      "spectrumStarts": 1,
+      "spectrumError": false,
+      "spectrumPeak": 0.44910777
+    }
+  },
+  "hidden": {
+    "start": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 66.7615695,
+      "frames": 3909,
+      "drawAndPresentP95Ms": 1.5901999999999998,
+      "livePages": 0,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 16.988425963656354,
+      "presentCallIntervalP95Ms": 17.6356,
+      "intervalSamples": 3632,
+      "suspended": true,
+      "rendererAlive": false,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false,
+      "spectrumActive": false,
+      "spectrumCaptureAlive": false,
+      "spectrumPackets": 6637,
+      "spectrumAnalyses": 1190,
+      "spectrumStarts": 1,
+      "spectrumError": false,
+      "spectrumPeak": 0
+    },
+    "end": {
+      "prototype": true,
+      "renderer": "Direct2D/DirectComposition",
+      "elapsedSeconds": 128.1913561,
+      "frames": 3909,
+      "drawAndPresentP95Ms": 1.5901999999999998,
+      "livePages": 0,
+      "pageGenerations": 1,
+      "regionPoints": 72,
+      "scale": 1,
+      "timerIntervalMs": 0,
+      "fontFamily": "MiSans",
+      "highResolutionTimer": true,
+      "presentCallIntervalMeanMs": 16.988425963656354,
+      "presentCallIntervalP95Ms": 17.6356,
+      "intervalSamples": 3632,
+      "suspended": true,
+      "rendererAlive": false,
+      "timerRunning": false,
+      "timerLeft": 300,
+      "pendingCompletion": false,
+      "spectrumActive": false,
+      "spectrumCaptureAlive": false,
+      "spectrumPackets": 6637,
+      "spectrumAnalyses": 1190,
+      "spectrumStarts": 1,
+      "spectrumError": false,
+      "spectrumPeak": 0
+    },
+    "samples": [
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 22.05078125,
+        "workingSetMiB": 29.40234375,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 22.05078125,
+        "workingSetMiB": 29.40234375,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 21.734375,
+        "workingSetMiB": 29.40234375,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 21.734375,
+        "workingSetMiB": 29.40234375,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 21.734375,
+        "workingSetMiB": 29.40234375,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.12629324280623172,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.12617086563316746,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.12617086563316746,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.53515625,
+        "workingSetMiB": 27.55078125,
+        "handles": 283,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.12629324280623172,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      },
+      {
+        "cpuMachinePercent": 0.0,
+        "privateMiB": 10.5546875,
+        "workingSetMiB": 27.55078125,
+        "handles": 282,
+        "spectrumPeak": 0
+      }
+    ]
+  },
+  "cycles": [
+    {
+      "starts": 3,
+      "privateMiB": 59.296875,
+      "handles": 509
+    },
+    {
+      "starts": 4,
+      "privateMiB": 59.296875,
+      "handles": 509
+    },
+    {
+      "starts": 5,
+      "privateMiB": 59.296875,
+      "handles": 509
+    },
+    {
+      "starts": 6,
+      "privateMiB": 59.296875,
+      "handles": 509
+    },
+    {
+      "starts": 7,
+      "privateMiB": 59.421875,
+      "handles": 509
+    },
+    {
+      "starts": 8,
+      "privateMiB": 59.421875,
+      "handles": 509
+    },
+    {
+      "starts": 9,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    },
+    {
+      "starts": 10,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    },
+    {
+      "starts": 11,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    },
+    {
+      "starts": 12,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    },
+    {
+      "starts": 13,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    },
+    {
+      "starts": 14,
+      "privateMiB": 59.41015625,
+      "handles": 509
+    }
+  ],
+  "final": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 137.1047737,
+    "frames": 4281,
+    "drawAndPresentP95Ms": 1.6597,
+    "livePages": 0,
+    "pageGenerations": 26,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 16.81364111306089,
+    "presentCallIntervalP95Ms": 17.676000000000002,
+    "intervalSamples": 3989,
+    "suspended": true,
+    "rendererAlive": false,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "spectrumActive": false,
+    "spectrumCaptureAlive": false,
+    "spectrumPackets": 6856,
+    "spectrumAnalyses": 1220,
+    "spectrumStarts": 24,
+    "spectrumError": false,
+    "spectrumPeak": 0
+  },
+  "children": [],
+  "nonzeroSignalObserved": true,
+  "playbackCommandsSent": 0
+}

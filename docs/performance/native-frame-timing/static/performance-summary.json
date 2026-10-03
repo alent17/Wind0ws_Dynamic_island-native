@@ -1,0 +1,8 @@
+{
+  "ScenarioRun": "compact-paused, 1",
+  "CpuMachinePercent": 0.006435488895870893,
+  "PrivateMB": 55.1859375,
+  "WorkingSetMB": 41.196354166666666,
+  "PrivateGrowthMB": -0.07421875,
+  "HandleGrowth": 3
+}

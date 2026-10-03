@@ -1,3 +1,5 @@
 /target/
 /artifacts/
 __pycache__/
+
+/public/fonts/

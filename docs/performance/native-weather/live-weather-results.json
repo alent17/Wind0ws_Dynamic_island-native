@@ -1,0 +1,1057 @@
+{
+  "binarySha256": "9508bd9dde7a8eeb844e01cc82a71aaa5d3292fc63f55dfbefcb6afec2672217",
+  "sampleSeconds": 60,
+  "initial": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 0.3664571,
+    "frames": 2,
+    "drawAndPresentP95Ms": 1.7142,
+    "livePages": 1,
+    "pageGenerations": 1,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 56400,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 0,
+    "weatherCacheEntries": 0,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 0,
+    "weatherConfigured": false,
+    "weatherData": false,
+    "weatherError": false,
+    "weatherDays": 0,
+    "settingsWindowAlive": false
+  },
+  "ready": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 4.4337165,
+    "frames": 17,
+    "drawAndPresentP95Ms": 6.143,
+    "livePages": 1,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 52396,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "visibleEnd": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 69.5480593,
+    "frames": 18,
+    "drawAndPresentP95Ms": 6.143,
+    "livePages": 1,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 59990,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "visibleSamples": [
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.13020833333333334,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 53.0234375,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.44921875,
+      "workingSetMiB": 52.79296875,
+      "handles": 623
+    },
+    {
+      "cpuMachinePercent": 0.13020833333333334,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.13020833333333334,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7734375,
+      "handles": 620
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7890625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7890625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7890625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.41015625,
+      "workingSetMiB": 52.7890625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.13020833333333334,
+      "privateMiB": 58.625,
+      "workingSetMiB": 53.140625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.625,
+      "workingSetMiB": 53.140625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.625,
+      "workingSetMiB": 53.140625,
+      "handles": 618
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.08203125,
+      "handles": 615
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.08203125,
+      "handles": 615
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.08203125,
+      "handles": 613
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.08203125,
+      "handles": 612
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.5234375,
+      "workingSetMiB": 53.09765625,
+      "handles": 584
+    }
+  ],
+  "hiddenStart": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 69.595886,
+    "frames": 18,
+    "drawAndPresentP95Ms": 6.143,
+    "livePages": 0,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": true,
+    "rendererAlive": false,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "hiddenEnd": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 129.6488181,
+    "frames": 18,
+    "drawAndPresentP95Ms": 6.143,
+    "livePages": 0,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": true,
+    "rendererAlive": false,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "hiddenSamples": [
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.62890625,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.62890625,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.3203125,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.3203125,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.3203125,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.3203125,
+      "workingSetMiB": 33.890625,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 11.6015625,
+      "workingSetMiB": 31.76953125,
+      "handles": 361
+    }
+  ],
+  "cycles": [
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    },
+    {
+      "privateMiB": 59.5703125,
+      "handles": 576
+    }
+  ],
+  "windowBounds": [
+    [
+      -1200,
+      0,
+      -720,
+      480
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ],
+    [
+      -1238,
+      322,
+      -682,
+      709
+    ]
+  ],
+  "final": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 133.0343654,
+    "frames": 285,
+    "drawAndPresentP95Ms": 2.3003,
+    "livePages": 1,
+    "pageGenerations": 27,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "children": []
+}

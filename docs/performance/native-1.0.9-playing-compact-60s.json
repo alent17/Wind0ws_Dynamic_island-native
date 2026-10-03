@@ -1,0 +1,82 @@
+{
+  "label": "native-1.0.9-playing-compact-60s",
+  "sampleSeconds": 60.0610214,
+  "logicalCores": 12,
+  "scope": "Running Isle and its WebView2 process tree. CPU normalized to machine logical cores; ending private working set matches the Task Manager process memory concept. Scene supplied by user, not automated.",
+  "totalCpuPercentOfMachine": 0.13441191106128383,
+  "totalPrivateWorkingSetBytes": 173076480.0,
+  "processes": [
+    {
+      "pid": 4992,
+      "parentPid": 27656,
+      "role": "app",
+      "version": "1.0.9",
+      "cpuPercentOfMachine": 0.08454942792564629,
+      "privateWorkingSetBytes": 14356480,
+      "workingSetBytes": 70746112,
+      "privateBytes": 16965632
+    },
+    {
+      "pid": 15348,
+      "parentPid": 4992,
+      "role": "browser",
+      "version": null,
+      "cpuPercentOfMachine": 0.008671736197502184,
+      "privateWorkingSetBytes": 34926592,
+      "workingSetBytes": 147795968,
+      "privateBytes": 45699072
+    },
+    {
+      "pid": 29924,
+      "parentPid": 15348,
+      "role": "crashpad-handler",
+      "version": null,
+      "cpuPercentOfMachine": 0.0,
+      "privateWorkingSetBytes": 1855488,
+      "workingSetBytes": 14868480,
+      "privateBytes": 3035136
+    },
+    {
+      "pid": 11428,
+      "parentPid": 15348,
+      "role": "gpu-process",
+      "version": null,
+      "cpuPercentOfMachine": 0.015175538345628821,
+      "privateWorkingSetBytes": 46546944,
+      "workingSetBytes": 108920832,
+      "privateBytes": 96526336
+    },
+    {
+      "pid": 13448,
+      "parentPid": 15348,
+      "role": "utility",
+      "version": null,
+      "cpuPercentOfMachine": 0.0,
+      "privateWorkingSetBytes": 6365184,
+      "workingSetBytes": 41275392,
+      "privateBytes": 11493376
+    },
+    {
+      "pid": 29916,
+      "parentPid": 15348,
+      "role": "utility",
+      "version": null,
+      "cpuPercentOfMachine": 0.0,
+      "privateWorkingSetBytes": 3026944,
+      "workingSetBytes": 21016576,
+      "privateBytes": 7778304
+    },
+    {
+      "pid": 31112,
+      "parentPid": 15348,
+      "role": "renderer",
+      "version": null,
+      "cpuPercentOfMachine": 0.026015208592506552,
+      "privateWorkingSetBytes": 65998848,
+      "workingSetBytes": 132079616,
+      "privateBytes": 91504640
+    }
+  ],
+  "observations": "After this sample, a read-only Windows media probe reported cloudmusic.exe: Playing, and the native Isle host window was visible. Continuous playback, compact mode and spectrum motion throughout the sample were not instrumented. Do not treat the low CPU figure as a controlled active-spectrum acceptance result.",
+  "userConfirmedSpectrumMotionAfterSample": true
+}

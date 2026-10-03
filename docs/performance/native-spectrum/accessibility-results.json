@@ -1,0 +1,10 @@
+﻿{
+    "binarySha256":  "2CDBDC17067C3A829AF54733AC1A19726FF82D098255554DD808E04E6D443428",
+    "syntheticDpi":  144,
+    "uiaDescendants":  8,
+    "uiaInvokePassed":  true,
+    "msaaNamesRolesFocusBoundsValuePassed":  true,
+    "staleProviderRejected":  true,
+    "scaledPointerClickPassed":  true,
+    "collapsedChildrenReleased":  true
+}

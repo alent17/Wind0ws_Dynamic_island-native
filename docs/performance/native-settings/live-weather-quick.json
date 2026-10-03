@@ -1,0 +1,519 @@
+{
+  "binarySha256": "5264a1be36e7e1cac2d4690828114f17cadcfd8a6d29694b3af84d4b01b5d484",
+  "sampleSeconds": 5,
+  "initial": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 0.3640828,
+    "frames": 2,
+    "drawAndPresentP95Ms": 1.4335,
+    "livePages": 1,
+    "pageGenerations": 1,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 28432,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 0,
+    "weatherCacheEntries": 0,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 0,
+    "weatherConfigured": false,
+    "weatherData": false,
+    "weatherError": false,
+    "weatherDays": 0,
+    "settingsWindowAlive": false
+  },
+  "ready": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 4.7246984,
+    "frames": 18,
+    "drawAndPresentP95Ms": 5.5519,
+    "livePages": 1,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 24138,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "visibleEnd": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 14.7961694,
+    "frames": 18,
+    "drawAndPresentP95Ms": 5.5519,
+    "livePages": 1,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 24138,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "visibleSamples": [
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.18359375,
+      "workingSetMiB": 53.5078125,
+      "handles": 622
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.18359375,
+      "workingSetMiB": 53.5078125,
+      "handles": 622
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.18359375,
+      "workingSetMiB": 53.5078125,
+      "handles": 622
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.18359375,
+      "workingSetMiB": 53.5078125,
+      "handles": 622
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 58.18359375,
+      "workingSetMiB": 53.5078125,
+      "handles": 622
+    }
+  ],
+  "hiddenStart": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 14.8467305,
+    "frames": 18,
+    "drawAndPresentP95Ms": 5.5519,
+    "livePages": 0,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": true,
+    "rendererAlive": false,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "hiddenEnd": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 19.8718299,
+    "frames": 18,
+    "drawAndPresentP95Ms": 5.5519,
+    "livePages": 0,
+    "pageGenerations": 2,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": true,
+    "rendererAlive": false,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "hiddenSamples": [
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.640625,
+      "workingSetMiB": 34.51171875,
+      "handles": 399
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.640625,
+      "workingSetMiB": 34.51171875,
+      "handles": 399
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.328125,
+      "workingSetMiB": 34.51171875,
+      "handles": 399
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.328125,
+      "workingSetMiB": 34.51171875,
+      "handles": 399
+    },
+    {
+      "cpuMachinePercent": 0.0,
+      "privateMiB": 22.328125,
+      "workingSetMiB": 34.51171875,
+      "handles": 399
+    }
+  ],
+  "cycles": [
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.0390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 59.00390625,
+      "handles": 612
+    },
+    {
+      "privateMiB": 58.93359375,
+      "handles": 612
+    }
+  ],
+  "windowBounds": [
+    [
+      -1200,
+      0,
+      -720,
+      480
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1238,
+      242,
+      -682,
+      789
+    ],
+    [
+      -1200,
+      0,
+      -720,
+      480
+    ]
+  ],
+  "final": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 23.628348,
+    "frames": 285,
+    "drawAndPresentP95Ms": 3.8605,
+    "livePages": 1,
+    "pageGenerations": 27,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 3,
+    "weatherCacheEntries": 1,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 200,
+    "weatherConfigured": true,
+    "weatherData": true,
+    "weatherError": false,
+    "weatherDays": 3,
+    "settingsWindowAlive": false
+  },
+  "children": [],
+  "restarted": {
+    "prototype": true,
+    "renderer": "Direct2D/DirectComposition",
+    "elapsedSeconds": 0.3792457,
+    "frames": 2,
+    "drawAndPresentP95Ms": 1.8178,
+    "livePages": 1,
+    "pageGenerations": 1,
+    "regionPoints": 72,
+    "scale": 1,
+    "timerIntervalMs": 0,
+    "fontFamily": "MiSans",
+    "highResolutionTimer": true,
+    "presentCallIntervalMeanMs": 0,
+    "presentCallIntervalP95Ms": 0,
+    "intervalSamples": 0,
+    "suspended": false,
+    "rendererAlive": true,
+    "timerRunning": false,
+    "timerLeft": 300,
+    "pendingCompletion": false,
+    "configurationValid": true,
+    "configurationSaving": false,
+    "visibleTools": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "reducedMotion": true,
+    "weatherBusy": false,
+    "weatherRequests": 0,
+    "weatherCacheEntries": 0,
+    "weatherHresult": 0,
+    "weatherHttpStatus": 0,
+    "weatherConfigured": true,
+    "weatherData": false,
+    "weatherError": false,
+    "weatherDays": 0,
+    "settingsWindowAlive": false
+  }
+}
