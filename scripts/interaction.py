@@ -55,6 +55,20 @@ class _FileTime(c.Structure):
     _fields_ = [('low', w.DWORD), ('high', w.DWORD)]
 
 
+class _MonitorInfoExW(c.Structure):
+    _fields_ = [
+        ('cbSize', w.DWORD), ('rcMonitor', w.RECT), ('rcWork', w.RECT),
+        ('dwFlags', w.DWORD), ('szDevice', w.WCHAR * 32),
+    ]
+
+
+_MONITOR_ENUM = c.WINFUNCTYPE(w.BOOL, w.HANDLE, w.HDC, c.POINTER(w.RECT), w.LPARAM)
+u.EnumDisplayMonitors.argtypes = [w.HDC, c.POINTER(w.RECT), _MONITOR_ENUM, w.LPARAM]
+u.EnumDisplayMonitors.restype = w.BOOL
+u.GetMonitorInfoW.argtypes = [w.HANDLE, c.POINTER(_MonitorInfoExW)]
+u.GetMonitorInfoW.restype = w.BOOL
+
+
 _psapi = c.WinDLL('psapi', use_last_error=True)
 _psapi.GetProcessMemoryInfo.argtypes = [
     w.HANDLE, c.POINTER(_ProcessMemoryCountersEx), w.DWORD]
@@ -140,7 +154,77 @@ def close(proc, hwnd):
             raise
 
 
+def test_monitor_rect():
+    expected = r'\\.\DISPLAY2'
+    requested = os.environ.get('ISLE_TEST_MONITOR')
+    if requested != expected:
+        raise RuntimeError(f'ISLE_TEST_MONITOR must be {expected!r}, got {requested!r}')
+
+    matches = []
+    failures = []
+
+    @_MONITOR_ENUM
+    def visit(handle, _dc, _rect, _data):
+        info = _MonitorInfoExW()
+        info.cbSize = c.sizeof(info)
+        if not u.GetMonitorInfoW(handle, c.byref(info)):
+            failures.append(c.get_last_error())
+            return True
+        if info.szDevice.casefold() == expected.casefold():
+            matches.append(info.rcMonitor)
+        return True
+
+    if not u.EnumDisplayMonitors(None, None, visit, 0):
+        raise c.WinError(c.get_last_error())
+    if failures:
+        raise c.WinError(failures[0])
+    if len(matches) != 1:
+        raise RuntimeError(f'expected one {expected} monitor, found {len(matches)}')
+    return matches[0]
+
+
+def assert_window_on_monitor(hwnd, monitor, label='window'):
+    bounds = w.RECT()
+    if not u.GetWindowRect(hwnd, c.byref(bounds)):
+        raise c.WinError(c.get_last_error())
+    center_x = (bounds.left + bounds.right) // 2
+    center_y = (bounds.top + bounds.bottom) // 2
+    if not (monitor.left <= center_x < monitor.right and
+            monitor.top <= center_y < monitor.bottom):
+        raise AssertionError(
+            f'{label} center ({center_x},{center_y}) is outside DISPLAY2 '
+            f'[{monitor.left},{monitor.top},{monitor.right},{monitor.bottom}]')
+    return bounds
+
+
+def wait_window_on_monitor(hwnd, monitor, label='window', timeout=3.0):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            return assert_window_on_monitor(hwnd, monitor, label)
+        except AssertionError as error:
+            last_error = error
+            time.sleep(.05)
+    raise last_error or TimeoutError(f'{label} did not settle on DISPLAY2')
+
+
+def save_test_screenshot(path, bounds):
+    from PIL import ImageGrab
+    expected_size = (bounds.right - bounds.left, bounds.bottom - bounds.top)
+    image = ImageGrab.grab(
+        (bounds.left, bounds.top, bounds.right, bounds.bottom), all_screens=True)
+    if image.size != expected_size:
+        raise AssertionError(f'screenshot size {image.size} does not match window {expected_size}')
+    if image.getbbox() is None:
+        raise AssertionError(f'screenshot is blank: {path}')
+    image.save(path)
+
+
 def probe():
+    monitor = test_monitor_rect()
+    probe_x = monitor.left + 12
+    probe_y = monitor.top + 12
     clicks = 0
     @PROC
     def wnd(hwnd, msg, wp, lp):
@@ -160,8 +244,9 @@ def probe():
     wc.name = 'IsleCrossProcessProbe'
     assert u.RegisterClassW(c.byref(wc))
     hwnd = u.CreateWindowExW(0x80, wc.name, 'Native test surface', 0x90000000,
-                             0, 0, 480, 480, None, None, None, None)
+                             probe_x, probe_y, 480, 480, None, None, None, None)
     assert hwnd
+    assert_window_on_monitor(hwnd, monitor, 'cross-process probe')
     msg = w.MSG()
     while u.GetMessageW(c.byref(msg), None, 0, 0) > 0:
         u.TranslateMessage(c.byref(msg))
@@ -170,7 +255,7 @@ def probe():
 
 
 def run():
-    from PIL import ImageGrab
+    monitor = test_monitor_rect()
     results = []
     background = subprocess.Popen([sys.executable, __file__, '--probe'])
     behind = wait_window(background, 'IsleCrossProcessProbe')
@@ -186,6 +271,7 @@ def run():
                 proc = subprocess.Popen(args)
                 hwnd = wait_window(proc)
                 try:
+                    bounds = wait_window_on_monitor(hwnd, monitor, name)
                     # Device creation is asynchronous with our HWND discovery.
                     # Wait for the renderer to publish its first non-empty region.
                     g.CreateRectRgn.restype = w.HRGN
@@ -204,8 +290,6 @@ def run():
                         g.GetRgnBox(region, c.byref(visible))
                     finally:
                         g.DeleteObject(region)
-                    bounds = w.RECT()
-                    u.GetWindowRect(hwnd, c.byref(bounds))
                     u.SetWindowPos(behind, w.HWND(-1), bounds.left, bounds.top,
                                    bounds.right-bounds.left, bounds.bottom-bounds.top, 0x10)
                     u.SetWindowPos(hwnd, w.HWND(-1), 0, 0, 0, 0, 0x13)
@@ -226,7 +310,7 @@ def run():
                     u.SendMessageW(hwnd, 0x202, 0, (100 << 16) | 240)
                     time.sleep(.05)
                     if '--no-screenshots' not in sys.argv:
-                        ImageGrab.grab((bounds.left,bounds.top,bounds.right,bounds.bottom)).save(OUT/(name+'.png'))
+                        save_test_screenshot(OUT / (name + '.png'), bounds)
                     close(proc, hwnd)
                     data = json.loads(report.read_text())
                     assert data['livePages'] == 1, (name, 'cancelled gesture collapsed page')
