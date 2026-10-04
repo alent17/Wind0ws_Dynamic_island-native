@@ -134,7 +134,9 @@ const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 4] = [
 const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 10.;
 const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
 const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
+const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.82;
 const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
+const _: () = assert!(DYNAMIC_GLASS_REFRACTION_START > DYNAMIC_GLASS_FADE_START);
 
 fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
     profile
@@ -1053,7 +1055,7 @@ impl Renderer {
                 self.scale,
                 RefractionStrip {
                     x: origin.x + inset,
-                    y: origin.y + m.height.value * 0.82,
+                    y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
                     width: strip_width,
                     source_height: (m.height.value * 0.14).max(DYNAMIC_GLASS_REFRACTION_WIDTH),
                     output_height: DYNAMIC_GLASS_REFRACTION_WIDTH,
@@ -1298,7 +1300,7 @@ impl Renderer {
                     let inset = m.radius.value.max(20.);
                     let destination = rect(Rect {
                         x: origin.x + inset,
-                        y: origin.y + m.height.value * DYNAMIC_GLASS_FADE_START,
+                        y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
                         w: *width as f32 / self.scale,
                         h: *height as f32 / self.scale,
                     });
@@ -2104,7 +2106,8 @@ mod tests {
         cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
         normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
         DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
-        DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
+        DYNAMIC_GLASS_REFRACTION_START, DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
+        MAX_CROSSFADE_LAYERS,
     };
 
     #[test]
@@ -2131,6 +2134,8 @@ mod tests {
     fn dynamic_glass_has_a_clipped_inner_refraction_band_and_fading_highlight() {
         assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 10.0);
         assert_eq!(DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, 0.75);
+        assert!(glass_opacity_at(DYNAMIC_GLASS_REFRACTION_START) < 1.0);
+        assert!(glass_opacity_at(DYNAMIC_GLASS_REFRACTION_START) > 0.0);
         assert_eq!(glass_rim_opacity_at(0.0), 0.0);
         assert_eq!(glass_rim_opacity_at(DYNAMIC_GLASS_FADE_START), 0.0);
         assert!(glass_rim_opacity_at(0.82) > 0.0);
