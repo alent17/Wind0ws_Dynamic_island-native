@@ -22,6 +22,7 @@ const SETTINGS_CONTROL_FAULT: u32 = 0x8056;
 const TEST_ARTWORK_CHANGE: u32 = 0x803D;
 const TEST_ARTWORK_UPGRADE: u32 = 0x803E;
 const TEST_MOUSE_MOVE: u32 = 0x803F;
+const TEST_ACTIVITIES: u32 = 0x8040;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
 use std::{
@@ -95,6 +96,7 @@ enum Event {
     Preferences,
     Access(u32, usize, u32, u16),
     Diagnostic,
+    TestActivities(usize),
     TestArtworkChange,
     TestArtworkUpgrade,
     SettingsControlFault(u32),
@@ -131,6 +133,7 @@ impl Event {
             Self::Preferences => "event.preferences_changed",
             Self::Access(..) => "event.accessibility",
             Self::Diagnostic => "event.diagnostic",
+            Self::TestActivities(_) => "event.test_activities",
             Self::TestArtworkChange => "event.test_artwork_change",
             Self::TestArtworkUpgrade => "event.test_artwork_upgrade",
             Self::SettingsControlFault(..) => "event.settings_control_fault",
@@ -255,6 +258,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         TEST_ARTWORK_UPGRADE => {
             enqueue(Event::TestArtworkUpgrade);
+            LRESULT(0)
+        }
+        TEST_ACTIVITIES => {
+            enqueue(Event::TestActivities(wp.0.min(3)));
             LRESULT(0)
         }
         SETTINGS_CONTROL_FAULT => {
@@ -1866,6 +1873,12 @@ impl App {
                 self.report();
                 return Ok(true);
             }
+            Event::TestActivities(count) => {
+                if self.test_fixture && self.ui_v2 {
+                    self.model.set_activities(test_activity_fixtures(count));
+                    changed = !self.suspended;
+                }
+            }
             Event::TestArtworkChange => {
                 if self.test_fixture && self.ui_v2 {
                     self.test_artwork_generation = self.test_artwork_generation.wrapping_add(1);
@@ -2316,10 +2329,28 @@ impl App {
                 .take(2)
                 .map(|activity| activity.id.as_str())
                 .collect();
+            let activity_motions: Vec<_> = self
+                .model
+                .visual_state
+                .activity_slots
+                .iter()
+                .map(|slot| {
+                    serde_json::json!({
+                        "id": slot.activity.as_ref().map(|activity| activity.id.as_str()),
+                        "rect": [slot.rect.x.value, slot.rect.y.value, slot.rect.w.value, slot.rect.h.value],
+                        "targetRect": [slot.rect.x.target, slot.rect.y.target, slot.rect.w.target, slot.rect.h.target],
+                        "velocity": [slot.rect.x.velocity, slot.rect.y.velocity, slot.rect.w.velocity, slot.rect.h.velocity],
+                        "opacity": slot.opacity.value,
+                        "targetOpacity": slot.opacity.target,
+                        "opacityVelocity": slot.opacity.velocity,
+                    })
+                })
+                .collect();
             text.push_str(&format!(
-                ",\"activityRects\":{},\"activityIds\":{}",
+                ",\"activityRects\":{},\"activityIds\":{},\"activityMotions\":{}",
                 serde_json::to_string(&activity_rects).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(&activity_ids).unwrap_or_else(|_| "[]".into())
+                serde_json::to_string(&activity_ids).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&activity_motions).unwrap_or_else(|_| "[]".into())
             ));
             text.push_str(&format!(
                 ",\"activityQueued\":{},\"activityNextExpiry\":{}",
@@ -2532,6 +2563,45 @@ impl App {
 }
 fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
+}
+fn test_activity_fixtures(count: usize) -> Vec<isle_core::activity::LiveActivity> {
+    use isle_core::activity::{ActivityKind, LiveActivity};
+
+    [
+        LiveActivity {
+            id: "fixture.timer".into(),
+            kind: ActivityKind::Timer,
+            title: "倒计时".into(),
+            value: "1:24 · 进行中".into(),
+            progress: Some(0.3),
+            priority: 120,
+            expires_at: None,
+            completed: false,
+        },
+        LiveActivity {
+            id: "fixture.volume".into(),
+            kind: ActivityKind::Volume,
+            title: "音量".into(),
+            value: "42% · 未静音".into(),
+            progress: Some(0.42),
+            priority: 90,
+            expires_at: None,
+            completed: false,
+        },
+        LiveActivity {
+            id: "fixture.media".into(),
+            kind: ActivityKind::Media,
+            title: "音乐".into(),
+            value: "播放中".into(),
+            progress: None,
+            priority: 60,
+            expires_at: None,
+            completed: false,
+        },
+    ]
+    .into_iter()
+    .take(count.min(3))
+    .collect()
 }
 fn test_artwork(generation: u32, side: u32) -> std::sync::Arc<isle_core::Cover> {
     test_artwork_dimensions(generation, side, side)
@@ -2912,39 +2982,7 @@ unsafe fn run() -> Result<()> {
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(0)
                 .min(3);
-            let fixtures = [
-                isle_core::activity::LiveActivity {
-                    id: "fixture.timer".into(),
-                    kind: isle_core::activity::ActivityKind::Timer,
-                    title: "倒计时".into(),
-                    value: "1:24 · 进行中".into(),
-                    progress: Some(0.3),
-                    priority: 120,
-                    expires_at: None,
-                    completed: false,
-                },
-                isle_core::activity::LiveActivity {
-                    id: "fixture.volume".into(),
-                    kind: isle_core::activity::ActivityKind::Volume,
-                    title: "音量".into(),
-                    value: "42% · 未静音".into(),
-                    progress: Some(0.42),
-                    priority: 90,
-                    expires_at: None,
-                    completed: false,
-                },
-                isle_core::activity::LiveActivity {
-                    id: "fixture.media".into(),
-                    kind: isle_core::activity::ActivityKind::Media,
-                    title: "音乐".into(),
-                    value: "播放中".into(),
-                    progress: None,
-                    priority: 60,
-                    expires_at: None,
-                    completed: false,
-                },
-            ];
-            model.set_activities(fixtures.into_iter().take(activity_count).collect());
+            model.set_activities(test_activity_fixtures(activity_count));
         }
     }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {

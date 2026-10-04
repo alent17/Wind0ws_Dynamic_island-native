@@ -507,6 +507,13 @@ impl Model {
             });
             let controls_visible =
                 player_controls_visible && control_targets.iter().any(Option::is_some);
+            let activities = self.activity_manager.slots();
+            let activity_targets = if !self.expanded {
+                crate::layout::activity_slots(layout.surface, self.edge, activities.len())
+            } else {
+                Vec::new()
+            };
+            let center = layout.surface.center();
             self.visual_state.retarget(
                 &layout,
                 motion,
@@ -514,6 +521,17 @@ impl Model {
                 control_targets,
                 collapsed_control_anchor,
                 controls_visible,
+            );
+            self.visual_state.retarget_activity_slots(
+                &activity_targets,
+                &activities,
+                Rect {
+                    x: center.x,
+                    y: center.y,
+                    w: 0.,
+                    h: 0.,
+                },
+                motion,
             );
             return;
         }
@@ -837,8 +855,12 @@ impl Model {
                 }
             }
         }
-        layout.activities = if self.ui_v2 && !self.expanded {
-            crate::layout::activity_slots(layout.surface, self.edge, self.ui_state.activities.len())
+        layout.activities = if self.ui_v2 {
+            self.visual_state
+                .activity_slots
+                .iter()
+                .filter_map(|slot| slot.layout())
+                .collect()
         } else {
             Vec::new()
         };
@@ -1865,6 +1887,63 @@ mod tests {
         assert!(!m.dismiss_activity(VOLUME_ACTIVITY_ID));
     }
     #[test]
+    fn activity_slot_spring_enters_exits_and_reverses_from_current_velocity() {
+        let mut m = Model::default();
+        m.set_ui_v2(true);
+        let activity = crate::state::LiveActivity {
+            id: "spring.activity".into(),
+            kind: crate::state::ActivityKind::Media,
+            title: "Spring activity".into(),
+            value: "Playing".into(),
+            progress: None,
+            priority: 10,
+            expires_at: None,
+            completed: false,
+        };
+
+        assert!(m.update_activity(activity.clone()));
+        let entering = &m.visual_state.activity_slots[0];
+        assert_eq!(entering.opacity.value, 0.);
+        assert_eq!(entering.opacity.target, 1.);
+        assert_ne!(entering.rect.rect(), entering.rect.target());
+        assert!(entering.active());
+        m.step(0.05, 0.05);
+        assert!(!m.layout_snapshot().activities.is_empty());
+
+        assert!(m.dismiss_activity("spring.activity"));
+        let exiting = &m.visual_state.activity_slots[0];
+        assert_eq!(exiting.opacity.target, 0.);
+        let position = exiting.rect.x.value;
+        let velocity = exiting.rect.x.velocity;
+        assert_ne!(exiting.rect.target().x, position);
+        m.step(0.03, 0.08);
+        assert_ne!(m.visual_state.activity_slots[0].rect.x.value, position);
+
+        let reversing_position = m.visual_state.activity_slots[0].rect.x.value;
+        let reversing_velocity = m.visual_state.activity_slots[0].rect.x.velocity;
+        assert!(m.update_activity(activity));
+        let reversing = &m.visual_state.activity_slots[0];
+        assert_eq!(reversing.opacity.target, 1.);
+        assert_eq!(reversing.rect.x.value, reversing_position);
+        assert_eq!(reversing.rect.x.velocity, reversing_velocity);
+        assert_ne!(reversing_velocity, velocity);
+        for frame in 0..240 {
+            m.step(1. / 120., 0.08 + (frame + 1) as f64 / 120.);
+        }
+        assert_eq!(m.visual_state.activity_slots[0].opacity.value, 1.);
+        assert_eq!(
+            m.visual_state.activity_slots[0].rect.rect(),
+            m.visual_state.activity_slots[0].rect.target()
+        );
+
+        assert!(m.dismiss_activity("spring.activity"));
+        for frame in 0..360 {
+            m.step(1. / 120., 2.08 + (frame + 1) as f64 / 120.);
+        }
+        assert!(m.visual_state.activity_slots[0].activity.is_none());
+        assert!(m.layout_snapshot().activities.is_empty());
+    }
+    #[test]
     fn ui_v2_compact_activities_use_bounded_side_slots_on_every_edge() {
         for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
             for attached in [false, true] {
@@ -1914,6 +1993,7 @@ mod tests {
                 }
 
                 m.expanded = true;
+                m.retarget();
                 assert!(m.layout_snapshot().activities.is_empty());
             }
         }

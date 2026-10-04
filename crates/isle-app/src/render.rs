@@ -2126,46 +2126,53 @@ impl Renderer {
         Ok(())
     }
     unsafe fn draw_activity_slots(&mut self, model: &Model) -> Result<()> {
-        let layout = model.layout_snapshot();
-        for (slot, activity) in layout
-            .activities
-            .iter()
-            .zip(model.ui_state.activities.iter().take(2))
-        {
-            let r = slot.rect;
-            self.fill(r, slot.radius, color(0., 0., 0., slot.opacity));
-            self.ink(color(1., 1., 1., 0.12 * slot.opacity));
+        for slot in &model.visual_state.activity_slots {
+            let Some(activity) = slot.activity.as_ref() else {
+                continue;
+            };
+            let r = slot.rect.rect();
+            let opacity = slot.opacity.value.clamp(0., 1.);
+            if opacity <= 0.01 || r.w < 2. || r.h < 2. {
+                continue;
+            }
+            let radius = slot.radius.min(r.w.min(r.h) * 0.5);
+            self.fill(r, radius, color(0., 0., 0., opacity));
+            self.ink(color(1., 1., 1., 0.12 * opacity));
             self.ctx.DrawRoundedRectangle(
                 &D2D1_ROUNDED_RECT {
                     rect: rect(r),
-                    radiusX: slot.radius,
-                    radiusY: slot.radius,
+                    radiusX: radius,
+                    radiusY: radius,
                 },
                 &self.brush,
                 0.8,
                 None,
             );
-            let (icon, label) = compact_activity_content(activity);
-            self.icons.draw(
-                icon,
-                r.x + 7.,
-                r.y + 8.,
-                12.,
-                1.8,
-                color(0.78, 0.86, 1., 0.94),
-            )?;
-            self.text_with_ellipsis(
-                &label,
-                Rect {
-                    x: r.x + 24.,
-                    y: r.y + 6.,
-                    w: (r.w - 29.).max(20.),
-                    h: r.h - 12.,
-                },
-                9,
-                DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                color(0.94, 0.96, 1., 0.96),
-            )?;
+            if r.w >= 28. && r.h >= 20. {
+                let (icon, label) = compact_activity_content(activity);
+                self.icons.draw(
+                    icon,
+                    r.x + 7.,
+                    r.y + 8.,
+                    12.,
+                    1.8,
+                    color(0.78, 0.86, 1., opacity * 0.94),
+                )?;
+                if r.w >= 48. {
+                    self.text_with_ellipsis(
+                        &label,
+                        Rect {
+                            x: r.x + 24.,
+                            y: r.y + 6.,
+                            w: (r.w - 29.).max(20.),
+                            h: r.h - 12.,
+                        },
+                        9,
+                        DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                        color(0.94, 0.96, 1., opacity * 0.96),
+                    )?;
+                }
+            }
         }
         Ok(())
     }
