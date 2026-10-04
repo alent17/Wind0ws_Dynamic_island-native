@@ -2194,6 +2194,15 @@ impl App {
                 self.model.media.as_ref().is_some_and(|media| media.seek),
                 self.model.media.as_ref().map(|media| media.timeline.position(self.model.now, media.playing)).unwrap_or(0),
                 self.model.media.as_ref().map(|media| media.timeline.duration_ms).unwrap_or(0)));
+            text.push_str(&format!(
+                ",\"artworkHeight\":{}",
+                self.model
+                    .media
+                    .as_ref()
+                    .and_then(|media| media.cover.as_ref())
+                    .map(|cover| cover.height)
+                    .unwrap_or(0)
+            ));
             let surface_origin = self.model.origin();
             text.push_str(&format!(",\"albumRect\":[{},{},{},{}],\"surfaceRect\":[{},{},{},{}],\"expanded\":{},\"hovered\":{},\"inspectionLocked\":{},\"motionTimeScale\":{}",
                 album.x,album.y,album.w,album.h,surface_origin.x,surface_origin.y,self.model.width.value,self.model.height.value,
@@ -2371,18 +2380,27 @@ fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
 }
 fn test_artwork(generation: u32, side: u32) -> std::sync::Arc<isle_core::Cover> {
+    test_artwork_dimensions(generation, side, side)
+}
+
+fn test_artwork_dimensions(
+    generation: u32,
+    width: u32,
+    height: u32,
+) -> std::sync::Arc<isle_core::Cover> {
     let palette = match generation % 4 {
         0 => ([220, 80, 30], [40, 90, 235]),
         1 => ([32, 220, 96], [12, 116, 235]),
         2 => ([220, 40, 192], [248, 188, 24]),
         _ => ([24, 188, 236], [184, 48, 228]),
     };
-    let side = side.clamp(1, 512);
-    let cells = (side / 4).max(1) as usize;
-    let pixels = (0..side as usize * side as usize)
+    let width = width.clamp(1, 512);
+    let height = height.clamp(1, 512);
+    let cells = (width.min(height) / 4).max(1) as usize;
+    let pixels = (0..width as usize * height as usize)
         .flat_map(|index| {
-            let x = index % side as usize;
-            let y = index / side as usize;
+            let x = index % width as usize;
+            let y = index / width as usize;
             let [b, g, r] = if (x / cells + y / cells + generation as usize) & 1 == 0 {
                 palette.0
             } else {
@@ -2392,8 +2410,8 @@ fn test_artwork(generation: u32, side: u32) -> std::sync::Arc<isle_core::Cover> 
         })
         .collect();
     std::sync::Arc::new(isle_core::Cover {
-        width: side,
-        height: side,
+        width,
+        height,
         pixels,
     })
 }
@@ -2655,13 +2673,19 @@ unsafe fn run() -> Result<()> {
                     | "--test-artwork-upgrade"
                     | "--test-long-text"
                     | "--test-missing-artwork"
+                    | "--test-cover-landscape"
+                    | "--test-cover-portrait"
             )
         })
     {
-        let artwork_side = if args.iter().any(|a| a == "--test-artwork-upgrade") {
-            128
+        let artwork_dimensions = if args.iter().any(|a| a == "--test-cover-landscape") {
+            (512, 320)
+        } else if args.iter().any(|a| a == "--test-cover-portrait") {
+            (320, 512)
+        } else if args.iter().any(|a| a == "--test-artwork-upgrade") {
+            (128, 128)
         } else {
-            64
+            (64, 64)
         };
         model.playing = !args.iter().any(|a| a == "--paused");
         let long_text = args.iter().any(|a| a == "--test-long-text");
@@ -2689,7 +2713,7 @@ unsafe fn run() -> Result<()> {
                 position_known: true,
             },
             cover: (!args.iter().any(|a| a == "--test-missing-artwork"))
-                .then(|| test_artwork(0, artwork_side)),
+                .then(|| test_artwork_dimensions(0, artwork_dimensions.0, artwork_dimensions.1)),
             ..Default::default()
         });
         model.retarget();
