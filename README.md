@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.48**（Cargo / Windows 文件版本 `0.48.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.49**（Cargo / Windows 文件版本 `0.49.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -97,6 +97,8 @@ cargo test --workspace
 0.47 将 96×96 封面模糊缓存以 8% 透明度绘制在玻璃表面之下，由黑到透明渐变自然遮住上半区；缓存只在封面源变化时重建。DISPLAY2 的纯黑像素、透明尾部和开合动画回归通过。
 
 0.48 扩展折射采样到完整横向边缘，并在左右 18% 的透明下沿增强位移，呈现圆角 Lens；纯黑上半区仍由像素采样门禁保护。
+
+0.49 在透明尾部的折射采样中加入最高 0.28px 的 RGB 子像素位移，随 DPI 等比缩放；采样条仍从 82% 透明渐变区域开始，纯黑核心不产生色散或光晕。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

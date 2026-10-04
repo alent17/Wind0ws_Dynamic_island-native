@@ -137,6 +137,7 @@ const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
 const DYNAMIC_GLASS_BLUR_OPACITY: f32 = 0.08;
 const DYNAMIC_GLASS_CORNER_LENS_REACH: f32 = 0.18;
 const DYNAMIC_GLASS_CORNER_LENS_GAIN: f32 = 1.5;
+const DYNAMIC_GLASS_DISPERSION_MAX_PX: f32 = 0.28;
 const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
 const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.82;
 const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
@@ -144,6 +145,15 @@ const _: () = assert!(DYNAMIC_GLASS_REFRACTION_START > DYNAMIC_GLASS_FADE_START)
 
 fn corner_lens_strength(column_progress: f32) -> f32 {
     (1. - column_progress.min(1. - column_progress) / DYNAMIC_GLASS_CORNER_LENS_REACH).clamp(0., 1.)
+}
+
+fn dispersion_offset(channel: usize, clear_alpha: f32, scale: f32) -> f32 {
+    let shift = DYNAMIC_GLASS_DISPERSION_MAX_PX * clear_alpha.clamp(0., 1.) * scale.max(0.);
+    match channel {
+        0 => shift,
+        2 => -shift,
+        _ => 0.,
+    }
 }
 
 fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
@@ -269,11 +279,8 @@ unsafe fn capture_refracted_strip(
                 let source_y = (row_progress * source_height_px.saturating_sub(1) as f32
                     + (phase * 0.72).cos() * amplitude_y * corner_lens)
                     .clamp(0., source_height_px.saturating_sub(1) as f32);
-                let x0 = source_x.floor() as usize;
                 let y0 = source_y.floor() as usize;
-                let x1 = (x0 + 1).min(width_px as usize - 1);
                 let y1 = (y0 + 1).min(source_height_px as usize - 1);
-                let tx = source_x - x0 as f32;
                 let ty = source_y - y0 as f32;
                 let dst = (row * width_px as usize + column) * 4;
                 let logical_sample_y = strip.y + source_y / scale;
@@ -288,11 +295,18 @@ unsafe fn capture_refracted_strip(
                 let vertical_fade = (std::f32::consts::PI * row_progress).sin().powi(2);
                 let refractive_alpha = vertical_fade * horizontal_fade * 0.18;
                 for channel in 0..3 {
+                    let channel_x = (source_x + dispersion_offset(channel, clear_alpha, scale))
+                        .clamp(0., width_px.saturating_sub(1) as f32);
+                    let channel_x0 = channel_x.floor() as usize;
+                    let channel_x1 = (channel_x0 + 1).min(width_px as usize - 1);
+                    let channel_tx = channel_x - channel_x0 as f32;
                     let at = |sx: usize, sy: usize| {
                         source[(sy * width_px as usize + sx) * 4 + channel] as f32
                     };
-                    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
-                    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+                    let top =
+                        at(channel_x0, y0) + (at(channel_x1, y0) - at(channel_x0, y0)) * channel_tx;
+                    let bottom =
+                        at(channel_x0, y1) + (at(channel_x1, y1) - at(channel_x0, y1)) * channel_tx;
                     let unpremultiplied = ((top + (bottom - top) * ty) / clear_alpha).min(255.);
                     refracted[dst + channel] = (unpremultiplied * refractive_alpha).round() as u8;
                 }
@@ -2168,11 +2182,11 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        corner_lens_strength, cover_spectrum_palette, dynamic_glass_blur_opacity,
-        format_media_time, glass_opacity_at, glass_rim_opacity_at, normalized_artwork_crop,
-        rebase_crossfade_weights, should_build_glass_blur, should_render_dynamic_glass,
-        DYNAMIC_GLASS_BLUR_OPACITY, DYNAMIC_GLASS_CORNER_LENS_GAIN,
-        DYNAMIC_GLASS_CORNER_LENS_REACH, DYNAMIC_GLASS_FADE_START,
+        corner_lens_strength, cover_spectrum_palette, dispersion_offset,
+        dynamic_glass_blur_opacity, format_media_time, glass_opacity_at, glass_rim_opacity_at,
+        normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
+        should_render_dynamic_glass, DYNAMIC_GLASS_BLUR_OPACITY, DYNAMIC_GLASS_CORNER_LENS_GAIN,
+        DYNAMIC_GLASS_CORNER_LENS_REACH, DYNAMIC_GLASS_DISPERSION_MAX_PX, DYNAMIC_GLASS_FADE_START,
         DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_REFRACTION_START,
         DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
     };
@@ -2343,6 +2357,18 @@ mod tests {
         assert_eq!(corner_lens_strength(0.18), 0.);
         assert_eq!(corner_lens_strength(0.5), 0.);
         assert_eq!(corner_lens_strength(1.), 1.);
+    }
+
+    #[test]
+    fn glass_dispersion_is_subpixel_balanced_and_vanishes_without_transparency() {
+        assert_eq!(DYNAMIC_GLASS_DISPERSION_MAX_PX, 0.28);
+        assert_eq!(dispersion_offset(0, 1., 1.), 0.28);
+        assert_eq!(dispersion_offset(1, 1., 1.), 0.);
+        assert_eq!(dispersion_offset(2, 1., 1.), -0.28);
+        assert_eq!(dispersion_offset(0, 0.5, 1.), 0.14);
+        assert_eq!(dispersion_offset(2, 1., 2.), -0.56);
+        assert_eq!(dispersion_offset(0, 0., 2.), 0.);
+        assert_eq!(dispersion_offset(2, 2., 1.), -0.28);
     }
 
     #[test]
