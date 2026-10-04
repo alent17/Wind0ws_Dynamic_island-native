@@ -31,7 +31,7 @@ pub struct Renderer {
     ruler_dragging: bool,
     icons: Icons,
     cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
-    previous_cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap, [[f32; 3]; 2])>,
+    previous_cover: Vec<PreviousArtwork>,
     glass_cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
     artwork_fade: isle_ui::spring::Spring,
     last_draw_now: Option<f64>,
@@ -62,6 +62,53 @@ pub struct Renderer {
     pub render_cpu_ms: f64,
     pub artwork_upload_ms: f64,
     pub blur_build_ms: f64,
+}
+
+struct PreviousArtwork {
+    cover: std::sync::Arc<isle_core::Cover>,
+    bitmap: ID2D1Bitmap,
+    palette: [[f32; 3]; 2],
+    start_opacity: f32,
+}
+
+const MAX_CROSSFADE_LAYERS: usize = 4;
+
+fn rebase_crossfade_weights(
+    previous: &[f32],
+    progress: f32,
+    has_current: bool,
+) -> Vec<(usize, f32)> {
+    let progress = progress.clamp(0., 1.);
+    let mut weights: Vec<_> = previous
+        .iter()
+        .enumerate()
+        .map(|(index, weight)| (index, (weight.max(0.) * (1. - progress))))
+        .filter(|(_, weight)| *weight > 0.001)
+        .collect();
+    if has_current && progress > 0.001 {
+        weights.push((previous.len(), progress));
+    } else if has_current && weights.is_empty() {
+        weights.push((previous.len(), 1.));
+    }
+    if weights.len() > MAX_CROSSFADE_LAYERS {
+        let mut priority: Vec<_> = weights
+            .iter()
+            .enumerate()
+            .map(|(slot, (_, weight))| (slot, *weight))
+            .collect();
+        priority.sort_by(|left, right| right.1.total_cmp(&left.1));
+        priority.truncate(MAX_CROSSFADE_LAYERS);
+        let mut retained: Vec<_> = priority.into_iter().map(|(slot, _)| slot).collect();
+        retained.sort_unstable();
+        weights = retained.into_iter().map(|slot| weights[slot]).collect();
+    }
+    let total: f32 = weights.iter().map(|(_, weight)| *weight).sum();
+    if total > 0. {
+        for (_, weight) in &mut weights {
+            *weight /= total;
+        }
+    }
+    weights
 }
 fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -598,6 +645,12 @@ impl Renderer {
     pub fn cover_alive(&self) -> bool {
         self.cover.is_some()
     }
+    pub fn artwork_transition_state(&self) -> (f32, usize) {
+        (
+            self.artwork_fade.value.clamp(0., 1.),
+            self.previous_cover.len(),
+        )
+    }
     pub unsafe fn new(hwnd: HWND, scale: f32) -> Result<Self> {
         let mut device = None;
         D3D11CreateDevice(
@@ -709,7 +762,7 @@ impl Renderer {
             glass_rim_brush,
             formats: HashMap::new(),
             cover: None,
-            previous_cover: None,
+            previous_cover: Vec::new(),
             glass_cover: None,
             artwork_fade: isle_ui::spring::Spring::new(1.),
             last_draw_now: None,
@@ -802,12 +855,12 @@ impl Renderer {
         }
 
         let fade = self.artwork_fade.value.clamp(0., 1.);
-        if let Some((cover, bitmap, _)) = &self.previous_cover {
-            let source = artwork_source(cover);
+        for artwork in &self.previous_cover {
+            let source = artwork_source(&artwork.cover);
             self.ctx.DrawBitmap(
-                bitmap,
+                &artwork.bitmap,
                 Some(&rect(r)),
-                1. - fade,
+                artwork.start_opacity * (1. - fade),
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                 Some(&source),
             );
@@ -817,7 +870,7 @@ impl Renderer {
             self.ctx.DrawBitmap(
                 bitmap,
                 Some(&rect(r)),
-                if self.previous_cover.is_some() {
+                if !self.previous_cover.is_empty() {
                     fade
                 } else {
                     1.
@@ -1003,7 +1056,7 @@ impl Renderer {
             .dt(dt, isle_ui::motion::MotionProfile::Content),
         );
         if !self.artwork_fade.active() {
-            self.previous_cover = None;
+            self.previous_cover.clear();
         }
         if self.digits_page != (m.generation, m.expanded) {
             self.digits.clear();
@@ -1049,8 +1102,35 @@ impl Renderer {
                 .is_none_or(|(old, _, _)| !std::sync::Arc::ptr_eq(old, cover))
             {
                 let upload_started = Instant::now();
-                self.previous_cover = self.cover.take();
-                let had_previous = self.previous_cover.is_some();
+                let fade = self.artwork_fade.value.clamp(0., 1.);
+                let mut source_artwork = std::mem::take(&mut self.previous_cover);
+                let previous_weights: Vec<_> = source_artwork
+                    .iter()
+                    .map(|artwork| artwork.start_opacity)
+                    .collect();
+                let old_current = self.cover.take();
+                let weights =
+                    rebase_crossfade_weights(&previous_weights, fade, old_current.is_some());
+                if let Some((cover, bitmap, palette)) = old_current {
+                    source_artwork.push(PreviousArtwork {
+                        cover,
+                        bitmap,
+                        palette,
+                        start_opacity: 1.,
+                    });
+                }
+                self.previous_cover = weights
+                    .into_iter()
+                    .filter_map(|(index, opacity)| {
+                        source_artwork.get(index).map(|artwork| PreviousArtwork {
+                            cover: artwork.cover.clone(),
+                            bitmap: artwork.bitmap.clone(),
+                            palette: artwork.palette,
+                            start_opacity: opacity,
+                        })
+                    })
+                    .collect();
+                let had_previous = !self.previous_cover.is_empty();
                 self.artwork_fade =
                     isle_ui::spring::Spring::new(if had_previous { 0. } else { 1. });
                 self.artwork_fade.set(1., m.reduced || !had_previous);
@@ -1102,7 +1182,7 @@ impl Renderer {
                 self.blur_build_ms = blur_started.elapsed().as_secs_f64() * 1000.;
             }
         } else {
-            self.previous_cover = self.cover.take();
+            self.previous_cover.clear();
             self.cover = None;
             self.disc_brush = None;
             self.glass_cover = None;
@@ -1958,8 +2038,9 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 mod tests {
     use super::{
         cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
-        should_build_glass_blur, DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
-        DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
+        rebase_crossfade_weights, should_build_glass_blur, DYNAMIC_GLASS_FADE_START,
+        DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_REFRACTION_WIDTH,
+        DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
     };
 
     #[test]
@@ -2000,6 +2081,44 @@ mod tests {
                 assert_eq!(glass_rim_opacity_at(position), 0.0);
             }
         }
+    }
+
+    #[test]
+    fn interrupted_shared_album_crossfade_preserves_visible_weights_and_is_bounded() {
+        let rebased = rebase_crossfade_weights(&[0.4, 0.6], 0.5, true);
+        assert_eq!(
+            rebased.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        for ((_, actual), expected) in rebased.iter().zip([0.2, 0.3, 0.5]) {
+            assert!((*actual - expected).abs() < 0.0001);
+        }
+
+        let mut previous = vec![1.];
+        let mut progress = 0.5;
+        for _ in 0..8 {
+            let rebased = rebase_crossfade_weights(&previous, progress, true);
+            let total: f32 = rebased.iter().map(|(_, weight)| *weight).sum();
+            assert!((total - 1.).abs() < 0.0001);
+            assert!(rebased.len() <= MAX_CROSSFADE_LAYERS);
+            assert!(rebased
+                .iter()
+                .all(|(_, weight)| (0. ..=1.).contains(weight)));
+            assert!(rebased.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            previous = rebased.iter().map(|(_, weight)| *weight).collect();
+            progress = 0.5;
+        }
+
+        let before_interrupt = previous
+            .iter()
+            .map(|weight| weight * (1. - progress))
+            .chain(std::iter::once(progress))
+            .sum::<f32>();
+        let after_interrupt = rebase_crossfade_weights(&previous, progress, true)
+            .iter()
+            .map(|(_, weight)| *weight)
+            .sum::<f32>();
+        assert!((before_interrupt - after_interrupt).abs() < 0.0001);
     }
 
     #[test]

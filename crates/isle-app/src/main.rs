@@ -19,6 +19,7 @@ mod weather_settings;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 // Explicit test-fixture instances only; production settings never enable faults.
 const SETTINGS_CONTROL_FAULT: u32 = 0x8056;
+const TEST_ARTWORK_CHANGE: u32 = 0x803D;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
 use std::{
@@ -91,6 +92,7 @@ enum Event {
     Preferences,
     Access(u32, usize, u32, u16),
     Diagnostic,
+    TestArtworkChange,
     SettingsControlFault(u32),
     Close,
 }
@@ -124,6 +126,7 @@ impl Event {
             Self::Preferences => "event.preferences_changed",
             Self::Access(..) => "event.accessibility",
             Self::Diagnostic => "event.diagnostic",
+            Self::TestArtworkChange => "event.test_artwork_change",
             Self::SettingsControlFault(..) => "event.settings_control_fault",
             Self::Close => "event.close",
         }
@@ -238,6 +241,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }),
         0x803c => {
             enqueue(Event::Diagnostic);
+            LRESULT(0)
+        }
+        TEST_ARTWORK_CHANGE => {
+            enqueue(Event::TestArtworkChange);
             LRESULT(0)
         }
         SETTINGS_CONTROL_FAULT => {
@@ -412,6 +419,7 @@ struct App {
     log: Option<String>,
     scripted: bool,
     test_fixture: bool,
+    test_artwork_generation: u32,
     last_script: u64,
     frames_ms: Vec<f64>,
     intervals_ms: Vec<f64>,
@@ -1769,6 +1777,19 @@ impl App {
                 self.report();
                 return Ok(true);
             }
+            Event::TestArtworkChange => {
+                if self.test_fixture && self.ui_v2 {
+                    self.test_artwork_generation = self.test_artwork_generation.wrapping_add(1);
+                    if let Some(media) = &mut self.model.media {
+                        media.title =
+                            format!("Shared Album test track {}", self.test_artwork_generation);
+                        media.cover = Some(test_artwork(self.test_artwork_generation));
+                        self.model.title_started = self.start.elapsed().as_secs_f64();
+                        self.model.retarget();
+                        changed = !self.suspended;
+                    }
+                }
+            }
             Event::SettingsControlFault(kind) => {
                 if self.test_fixture && self.ui_v2 && self.log.is_some() {
                     if let Some(settings) = &self.settings {
@@ -2176,6 +2197,19 @@ impl App {
                     .map(|supported| supported.to_string())
                     .unwrap_or_else(|| "null".into())
             ));
+            if let Some(renderer) = &self.renderer {
+                let (fade, layers) = renderer.artwork_transition_state();
+                text.push_str(&format!(
+                    ",\"artworkFadeProgress\":{},\"previousArtworkLayers\":{}",
+                    fade, layers
+                ));
+            }
+            if self.test_fixture {
+                text.push_str(&format!(
+                    ",\"testArtworkGeneration\":{}",
+                    self.test_artwork_generation
+                ));
+            }
             text.push_str(&format!(",\"playerDialogAlive\":{},\"playerListReady\":{},\"playerListRows\":{},\"playerSelectionAutomatic\":{},\"playerAllowedCount\":{},\"playerOrderCount\":{}",self.player_dialog.is_some(),self.player_dialog.as_ref().is_some_and(|d|d.ready()),self.player_dialog.as_ref().map(|d|d.row_count()).unwrap_or(0),self.configuration.selection.allowed.is_none(),self.configuration.selection.allowed.as_ref().map(|ids|ids.len()).unwrap_or(0),self.configuration.selection.order.len()));
             text.push_str(&format!(
                 ",\"clockZoneIndex\":{},\"clockZoneSupported\":{}",
@@ -2291,6 +2325,31 @@ impl App {
 }
 fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
+}
+fn test_artwork(generation: u32) -> std::sync::Arc<isle_core::Cover> {
+    let palette = match generation % 4 {
+        0 => ([220, 80, 30], [40, 90, 235]),
+        1 => ([32, 220, 96], [12, 116, 235]),
+        2 => ([220, 40, 192], [248, 188, 24]),
+        _ => ([24, 188, 236], [184, 48, 228]),
+    };
+    let pixels = (0..64 * 64)
+        .flat_map(|index| {
+            let x = index % 64;
+            let y = index / 64;
+            let [b, g, r] = if (x / 16 + y / 16 + generation as usize) & 1 == 0 {
+                palette.0
+            } else {
+                palette.1
+            };
+            [b, g, r, 255]
+        })
+        .collect();
+    std::sync::Arc::new(isle_core::Cover {
+        width: 64,
+        height: 64,
+        pixels,
+    })
 }
 fn rgb_color(value: &str) -> [f32; 3] {
     if value.len() != 7 || !value.starts_with('#') {
@@ -2540,17 +2599,6 @@ unsafe fn run() -> Result<()> {
         model.playing = false;
     }
     if test_fixture && args.iter().any(|a| a == "--test-cover") {
-        let pixels = (0..64 * 64)
-            .flat_map(|i| {
-                let x = i % 64;
-                let y = i / 64;
-                if x < 32 {
-                    [220, (80 + y * 2) as u8, 30, 255]
-                } else {
-                    [40, 90, 235, 255]
-                }
-            })
-            .collect();
         model.playing = !args.iter().any(|a| a == "--paused");
         model.media = Some(isle_core::MediaSnapshot {
             title: "封面与弹簧测试".into(),
@@ -2566,11 +2614,7 @@ unsafe fn run() -> Result<()> {
                 received_at: 0.,
                 position_known: true,
             },
-            cover: Some(std::sync::Arc::new(isle_core::Cover {
-                width: 64,
-                height: 64,
-                pixels,
-            })),
+            cover: Some(test_artwork(0)),
             ..Default::default()
         });
     }
@@ -2658,6 +2702,7 @@ unsafe fn run() -> Result<()> {
         log: value(&args, "--log"),
         scripted: args.iter().any(|a| a == "--scripted"),
         test_fixture,
+        test_artwork_generation: 0,
         last_script: 0,
         frames_ms: vec![],
         intervals_ms: vec![],
