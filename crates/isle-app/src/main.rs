@@ -20,6 +20,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 // Explicit test-fixture instances only; production settings never enable faults.
 const SETTINGS_CONTROL_FAULT: u32 = 0x8056;
 const TEST_ARTWORK_CHANGE: u32 = 0x803D;
+const TEST_ARTWORK_UPGRADE: u32 = 0x803E;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
 use std::{
@@ -93,6 +94,7 @@ enum Event {
     Access(u32, usize, u32, u16),
     Diagnostic,
     TestArtworkChange,
+    TestArtworkUpgrade,
     SettingsControlFault(u32),
     Close,
 }
@@ -127,6 +129,7 @@ impl Event {
             Self::Access(..) => "event.accessibility",
             Self::Diagnostic => "event.diagnostic",
             Self::TestArtworkChange => "event.test_artwork_change",
+            Self::TestArtworkUpgrade => "event.test_artwork_upgrade",
             Self::SettingsControlFault(..) => "event.settings_control_fault",
             Self::Close => "event.close",
         }
@@ -245,6 +248,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         TEST_ARTWORK_CHANGE => {
             enqueue(Event::TestArtworkChange);
+            LRESULT(0)
+        }
+        TEST_ARTWORK_UPGRADE => {
+            enqueue(Event::TestArtworkUpgrade);
             LRESULT(0)
         }
         SETTINGS_CONTROL_FAULT => {
@@ -1783,9 +1790,18 @@ impl App {
                     if let Some(media) = &mut self.model.media {
                         media.title =
                             format!("Shared Album test track {}", self.test_artwork_generation);
-                        media.cover = Some(test_artwork(self.test_artwork_generation));
+                        let side = media.cover.as_ref().map_or(64, |cover| cover.width);
+                        media.cover = Some(test_artwork(self.test_artwork_generation, side));
                         self.model.title_started = self.start.elapsed().as_secs_f64();
                         self.model.retarget();
+                        changed = !self.suspended;
+                    }
+                }
+            }
+            Event::TestArtworkUpgrade => {
+                if self.test_fixture && self.ui_v2 {
+                    if let Some(media) = &mut self.model.media {
+                        media.cover = Some(test_artwork(self.test_artwork_generation, 512));
                         changed = !self.suspended;
                     }
                 }
@@ -2326,18 +2342,20 @@ impl App {
 fn value(args: &[String], key: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == key).map(|w| w[1].clone())
 }
-fn test_artwork(generation: u32) -> std::sync::Arc<isle_core::Cover> {
+fn test_artwork(generation: u32, side: u32) -> std::sync::Arc<isle_core::Cover> {
     let palette = match generation % 4 {
         0 => ([220, 80, 30], [40, 90, 235]),
         1 => ([32, 220, 96], [12, 116, 235]),
         2 => ([220, 40, 192], [248, 188, 24]),
         _ => ([24, 188, 236], [184, 48, 228]),
     };
-    let pixels = (0..64 * 64)
+    let side = side.clamp(1, 512);
+    let cells = (side / 4).max(1) as usize;
+    let pixels = (0..side as usize * side as usize)
         .flat_map(|index| {
-            let x = index % 64;
-            let y = index / 64;
-            let [b, g, r] = if (x / 16 + y / 16 + generation as usize) & 1 == 0 {
+            let x = index % side as usize;
+            let y = index / side as usize;
+            let [b, g, r] = if (x / cells + y / cells + generation as usize) & 1 == 0 {
                 palette.0
             } else {
                 palette.1
@@ -2346,8 +2364,8 @@ fn test_artwork(generation: u32) -> std::sync::Arc<isle_core::Cover> {
         })
         .collect();
     std::sync::Arc::new(isle_core::Cover {
-        width: 64,
-        height: 64,
+        width: side,
+        height: side,
         pixels,
     })
 }
@@ -2598,7 +2616,16 @@ unsafe fn run() -> Result<()> {
     if model.media.is_some() {
         model.playing = false;
     }
-    if test_fixture && args.iter().any(|a| a == "--test-cover") {
+    if test_fixture
+        && args
+            .iter()
+            .any(|a| a == "--test-cover" || a == "--test-artwork-upgrade")
+    {
+        let artwork_side = if args.iter().any(|a| a == "--test-artwork-upgrade") {
+            128
+        } else {
+            64
+        };
         model.playing = !args.iter().any(|a| a == "--paused");
         model.media = Some(isle_core::MediaSnapshot {
             title: "封面与弹簧测试".into(),
@@ -2614,7 +2641,7 @@ unsafe fn run() -> Result<()> {
                 received_at: 0.,
                 position_known: true,
             },
-            cover: Some(test_artwork(0)),
+            cover: Some(test_artwork(0, artwork_side)),
             ..Default::default()
         });
     }

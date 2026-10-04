@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.38**（Cargo / Windows 文件版本 `0.38.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.39**（Cargo / Windows 文件版本 `0.39.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -77,6 +77,8 @@ cargo test --workspace
 0.37 动态玻璃按 UI 参考保持上方纯黑、仅底部约四分之一渐隐透明；真实桌面像素折射与轮廓高光均限制在透明渐变区，横向边缘和上下边缘柔和收敛，透明外不添加折射像素。捕获失败时回退到纯透明渐变。副屏验收检查纯黑区无高光、彩色桌面透出、96/192 DPI、MiSans 和采样诊断。
 
 0.38 Shared Album 切歌使用同一封面矩形交叉淡入淡出；切歌再次打断过渡时保留当前画面的封面权重并限制最多四层，避免快速切歌丢失过渡内容。DISPLAY2 96/192 DPI 验收通过，封面矩形无可见几何跳变。
+
+0.39 展开播放器先显示 128px 封面；后台 512px 封面就绪后，在同一 Shared Album 矩形内淡入升级，不等待高清图才展开。DISPLAY2 96/192 DPI 验收确认封面矩形稳定，上传和绘制耗时低于 50ms。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 
