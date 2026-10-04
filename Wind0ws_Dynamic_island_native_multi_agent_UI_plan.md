@@ -869,7 +869,7 @@ UI 第一阶段只有同时满足以下条件才完成：
 - [x] Tests 通过
 - [x] Release Build 通过
 - [x] Lead Review 通过
-- [x] 合并 `main`（本次验收提交位于本地 `main`，现直接推送 `origin/main`）
+- [x] 合并并推送 `main`（`origin/main` 已包含本次验收提交）
 
 验收证据：工作区 fmt/check/clippy/test/release build 全通过；160 个测试通过、1 个显式 opt-in 网络测试忽略。DISPLAY2 的玻璃对比度、透明度、开合动画、内容边界、艺术封面裁切、交互宽限和 attached/floating 放置回归通过。144/192 DPI 使用合成 DPI；此设备的物理屏幕为 96 DPI。截图与 JSON 诊断保存在仓库 `artifacts/`（Git 忽略）。
 
