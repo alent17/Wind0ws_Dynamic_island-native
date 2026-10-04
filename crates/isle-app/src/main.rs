@@ -2389,10 +2389,12 @@ fn test_artwork_dimensions(
     width: u32,
     height: u32,
 ) -> std::sync::Arc<isle_core::Cover> {
-    let palette = match generation % 4 {
+    let palette = match generation % 6 {
         0 => ([220, 80, 30], [40, 90, 235]),
         1 => ([32, 220, 96], [12, 116, 235]),
         2 => ([220, 40, 192], [248, 188, 24]),
+        4 => ([255, 255, 255], [224, 224, 224]),
+        5 => ([8, 8, 8], [32, 32, 32]),
         _ => ([24, 188, 236], [184, 48, 228]),
     };
     let width = width.clamp(1, 512);
@@ -2676,6 +2678,8 @@ unsafe fn run() -> Result<()> {
                     | "--test-missing-artwork"
                     | "--test-cover-landscape"
                     | "--test-cover-portrait"
+                    | "--test-cover-bright"
+                    | "--test-cover-dark"
             )
         })
     {
@@ -2690,6 +2694,13 @@ unsafe fn run() -> Result<()> {
         };
         model.playing = !args.iter().any(|a| a == "--paused");
         let long_text = args.iter().any(|a| a == "--test-long-text");
+        let artwork_generation = if args.iter().any(|a| a == "--test-cover-bright") {
+            4
+        } else if args.iter().any(|a| a == "--test-cover-dark") {
+            5
+        } else {
+            0
+        };
         model.media = Some(isle_core::MediaSnapshot {
             session: u64::from(long_text),
             title: if long_text {
@@ -2713,8 +2724,13 @@ unsafe fn run() -> Result<()> {
                 received_at: 0.,
                 position_known: true,
             },
-            cover: (!args.iter().any(|a| a == "--test-missing-artwork"))
-                .then(|| test_artwork_dimensions(0, artwork_dimensions.0, artwork_dimensions.1)),
+            cover: (!args.iter().any(|a| a == "--test-missing-artwork")).then(|| {
+                test_artwork_dimensions(
+                    artwork_generation,
+                    artwork_dimensions.0,
+                    artwork_dimensions.1,
+                )
+            }),
             ..Default::default()
         });
         model.retarget();
