@@ -58,7 +58,7 @@ def wait_for(hwnd, report, predicate, timeout=2):
     raise AssertionError(('fixture state timed out', state))
 
 
-for dpi in (96, 192):
+for dpi in (96, 144, 192):
     report = folder / f'dpi-{dpi}.json'
     try:
         report.unlink()

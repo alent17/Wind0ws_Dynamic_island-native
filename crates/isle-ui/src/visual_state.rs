@@ -63,6 +63,7 @@ pub struct VisualState {
     pub content_opacity: Spring,
     pub controls_opacity: Spring,
     pub activity_slots: [AnimatedActivitySlot; 2],
+    content_targets: [Option<ElementLayout>; 3],
     initialized: bool,
 }
 
@@ -77,6 +78,7 @@ impl Default for VisualState {
             content_opacity: Spring::new(0.),
             controls_opacity: Spring::new(0.),
             activity_slots: std::array::from_fn(|_| AnimatedActivitySlot::default()),
+            content_targets: [None; 3],
             initialized: false,
         }
     }
@@ -96,20 +98,22 @@ impl VisualState {
         if let Some(element) = layout.album {
             self.album.set_layout(element, policy, first);
         }
-        if let Some(element) = layout.title {
-            self.title.set_layout(element, policy, first);
-        } else {
-            self.title.opacity.set(0., first || policy.reduced);
-        }
-        if let Some(element) = layout.artist {
-            self.artist.set_layout(element, policy, first);
-        } else {
-            self.artist.opacity.set(0., first || policy.reduced);
-        }
-        if let Some(element) = layout.progress {
-            self.progress.set_layout(element, policy, first);
-        } else {
-            self.progress.opacity.set(0., first || policy.reduced);
+        for (index, (visual, target)) in [
+            (&mut self.title, layout.title),
+            (&mut self.artist, layout.artist),
+            (&mut self.progress, layout.progress),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            retarget_content(
+                visual,
+                &mut self.content_targets[index],
+                target,
+                index == 2,
+                policy,
+                first,
+            );
         }
         self.content_opacity
             .set(if expanded { 1. } else { 0. }, first || policy.reduced);
@@ -184,6 +188,49 @@ impl VisualState {
     }
 }
 
+/// Seed dormant content beside its destination, never at the host origin.
+/// Hidden targets use the same springs so an interrupted exit reverses without
+/// discarding either the current rectangle or its velocity.
+fn retarget_content(
+    visual: &mut VisualElement,
+    remembered: &mut Option<ElementLayout>,
+    target: Option<ElementLayout>,
+    timeline: bool,
+    policy: MotionPolicy,
+    first: bool,
+) {
+    let hidden_rect = |rect: Rect| {
+        if timeline {
+            Rect {
+                x: rect.x + rect.w * 0.5,
+                w: 0.,
+                ..rect
+            }
+        } else {
+            Rect {
+                y: rect.y + 5.,
+                ..rect
+            }
+        }
+    };
+    if let Some(target) = target {
+        if remembered.is_none() && !first && !policy.reduced {
+            visual.rect.set(hidden_rect(target.rect), true);
+            visual.opacity.set(0., true);
+            visual.radius.set(target.radius, true);
+        }
+        *remembered = Some(target);
+        visual.set_layout(target, policy, first);
+    } else {
+        if let Some(previous) = remembered {
+            visual
+                .rect
+                .set(hidden_rect(previous.rect), first || policy.reduced);
+        }
+        visual.opacity.set(0., first || policy.reduced);
+    }
+}
+
 impl VisualElement {
     fn set_layout(&mut self, layout: ElementLayout, policy: MotionPolicy, first: bool) {
         self.set(
@@ -195,5 +242,107 @@ impl VisualElement {
                 ..policy
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_enters_locally_and_reverses_without_resetting_velocity() {
+        for timeline in [false, true] {
+            let mut visual = VisualElement::new(Rect::default(), 0., MotionProfile::Content);
+            let mut remembered = None;
+            let target = ElementLayout {
+                rect: Rect {
+                    x: 120.,
+                    y: 70.,
+                    w: 200.,
+                    h: 20.,
+                },
+                radius: 2.,
+                opacity: 1.,
+            };
+            let policy = MotionPolicy::default();
+            retarget_content(&mut visual, &mut remembered, None, timeline, policy, true);
+            retarget_content(
+                &mut visual,
+                &mut remembered,
+                Some(target),
+                timeline,
+                policy,
+                false,
+            );
+            assert_eq!(visual.opacity.value, 0.);
+            assert_eq!(
+                visual.rect.rect().y,
+                target.rect.y + if timeline { 0. } else { 5. }
+            );
+            assert_eq!(
+                visual.rect.rect().w,
+                if timeline { 0. } else { target.rect.w }
+            );
+            visual.advance(0.05, policy);
+            let before = visual.rect.rect();
+            let velocity = visual.rect.y.velocity;
+            let width_velocity = visual.rect.w.velocity;
+            retarget_content(&mut visual, &mut remembered, None, timeline, policy, false);
+            assert_eq!(visual.rect.rect(), before);
+            assert_eq!(visual.rect.y.velocity, velocity);
+            assert_eq!(visual.rect.w.velocity, width_velocity);
+            visual.advance(0.02, policy);
+            let before = visual.rect.rect();
+            let opacity = visual.opacity.value;
+            retarget_content(
+                &mut visual,
+                &mut remembered,
+                Some(target),
+                timeline,
+                policy,
+                false,
+            );
+            assert_eq!(visual.rect.rect(), before);
+            assert_eq!(visual.opacity.value, opacity);
+            for _ in 0..240 {
+                visual.advance(1. / 120., policy);
+            }
+            assert_eq!(visual.rect.rect(), target.rect);
+            assert!(!visual.active());
+        }
+    }
+
+    #[test]
+    fn reduced_motion_settles_content_and_hidden_geometry_immediately() {
+        let mut visual = VisualElement::new(Rect::default(), 0., MotionProfile::Content);
+        let mut remembered = None;
+        let target = ElementLayout {
+            rect: Rect {
+                x: 100.,
+                y: 80.,
+                w: 180.,
+                h: 20.,
+            },
+            radius: 2.,
+            opacity: 1.,
+        };
+        let policy = MotionPolicy {
+            reduced: true,
+            ..MotionPolicy::default()
+        };
+        retarget_content(
+            &mut visual,
+            &mut remembered,
+            Some(target),
+            true,
+            policy,
+            false,
+        );
+        assert_eq!(visual.rect.rect(), target.rect);
+        assert!(!visual.active());
+        retarget_content(&mut visual, &mut remembered, None, true, policy, false);
+        assert_eq!(visual.rect.rect().w, 0.);
+        assert_eq!(visual.opacity.value, 0.);
+        assert!(!visual.active());
     }
 }

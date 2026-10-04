@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.58**（Cargo / Windows 文件版本 `0.58.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.59**（Cargo / Windows 文件版本 `0.59.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -107,6 +107,8 @@ cargo test --workspace
 0.57 将 UI 2.0 设为默认单窗口界面，并把展开音乐播放器改为参考图的横向排布：封面与元数据并列、完整进度行、居中的传输控制。DISPLAY2 96/192 DPI 的开合截图验证布局不越出玻璃表面。收藏爱心及其 Provider 能力门控仍待下一步完成。
 
 0.58 按参考图收紧 Music UI：430×164 DIP（工具栏 430×202），72 DIP 封面、16/13 DIP 标题与歌手、4 DIP 进度条和对称传输控制。Compact 默认 156×36 DIP，Hover 176×40；已有尺寸设置保留。四边 attached 布局与最大肩部边界测试通过；DISPLAY2 96/144/192 DPI 的长文本、无媒体、缺失封面及横竖封面裁切回归通过。物理显示器仍为 96 DPI，高 DPI 为合成测试。
+
+0.59 标题和歌手在目标附近以 5 DIP 位移显现，进度从中点展开并沿原路径缩回；首次展开不再从宿主零坐标进入。所有内容沿已有 Spring 连续变化，中途反向保留当前位置、速度与透明度；Reduced Motion 立即稳定。完整构建门禁、五档合成 DPI×四边、30 次开合、快速反向、Seek 与 idle 停帧通过；DISPLAY2 96/144/192 DPI 的内容截图及 leave grace、drag、inspection lock 回归通过。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

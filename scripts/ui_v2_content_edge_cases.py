@@ -63,10 +63,19 @@ def visible(rect):
 for dpi in (96, 144, 192):
     dpi_cases = []
     for name, args in (
+        ('reference-music', ['--test-cover']),
         ('long-text', ['--test-cover', '--test-long-text']),
         ('no-media', []),
         ('missing-artwork', ['--test-missing-artwork']),
     ):
+        config.write_text(json.dumps({
+            'enableAnimations': True, 'reduceAnimations': True,
+            **({key: False for key in (
+                'showTimerTool', 'showVolumeTool', 'showWeatherTool',
+                'showClockTool', 'showFloatingTool', 'showSettingsTool',
+                'showHideTool',
+            )} if name == 'reference-music' else {}),
+        }), encoding='utf-8')
         report = folder / f'{name}-{dpi}.json'
         report.unlink(missing_ok=True)
         proc = subprocess.Popen([
@@ -91,9 +100,12 @@ for dpi in (96, 144, 192):
             assert inside(state['surfaceRect'], state['artistRect']), state
             visible_controls = [rect for rect in state['controlRects'] if visible(rect)]
             assert all(inside(state['surfaceRect'], rect) for rect in visible_controls), state
-            if name == 'long-text':
+            if name in ('reference-music', 'long-text'):
                 assert state['mediaSeekCapable'] and state['artworkSide'] > 0, state
                 assert len(visible_controls) >= 4, state
+                if name == 'reference-music':
+                    assert state['surfaceRect'][2:] == [430, 164], state
+                    assert state['albumRect'][2:] == [72, 72], state
             elif name == 'no-media':
                 assert not state['mediaSeekCapable'] and state['artworkSide'] == 0, state
                 assert len(visible_controls) == 0, state
@@ -120,8 +132,9 @@ for dpi in (96, 144, 192):
             elif proc.poll() is None:
                 raise AssertionError(f'owned content fixture {proc.pid} has no closable HWND')
         assert proc.returncode == 0, proc.returncode
-    baseline = dpi_cases[0]['snapshot']['surfaceRect']
-    assert all(case['snapshot']['surfaceRect'] == baseline for case in dpi_cases), dpi_cases
+    toolbar_cases = [case for case in dpi_cases if case['state'] != 'reference-music']
+    baseline = toolbar_cases[0]['snapshot']['surfaceRect']
+    assert all(case['snapshot']['surfaceRect'] == baseline for case in toolbar_cases), dpi_cases
 
 (folder / 'results.json').write_text(json.dumps({
     'binarySha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
