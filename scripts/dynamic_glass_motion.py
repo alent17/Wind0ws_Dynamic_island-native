@@ -64,6 +64,9 @@ for dpi in (96, 192):
         state = snapshot(hwnd, report)
         if state['expanded'] or state['surfaceRect'][3] > 40:
             raise AssertionError(('fixture should begin compact', state))
+        if state.get('blurBuildCount') != 1:
+            raise AssertionError(('fixture should build one cached cover blur', state))
+        blur_build_count = state['blurBuildCount']
 
         for direction, key, expanded in (('expand', 0x0D, True), ('collapse', 0x1B, False)):
             u.PostMessageW(hwnd, 0x0100, key, 0)
@@ -71,6 +74,8 @@ for dpi in (96, 192):
             samples = []
             while time.monotonic() < deadline:
                 state = snapshot(hwnd, report)
+                if state.get('blurBuildCount') != blur_build_count:
+                    raise AssertionError((direction, dpi, 'blur rebuilt during animation', blur_build_count, state))
                 _, _, _, height = state['surfaceRect']
                 if state['continuous'] and height > 60:
                     screenshot = folder / f'{direction}-{dpi}-{len(samples):02d}.png'

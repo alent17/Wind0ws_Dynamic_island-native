@@ -63,6 +63,7 @@ pub struct Renderer {
     pub render_cpu_ms: f64,
     pub artwork_upload_ms: f64,
     pub blur_build_ms: f64,
+    pub blur_build_count: u32,
 }
 
 struct PreviousArtwork {
@@ -133,6 +134,7 @@ const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 4] = [
 ];
 const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 10.;
 const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
+const DYNAMIC_GLASS_BLUR_OPACITY: f32 = 0.08;
 const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
 const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.82;
 const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
@@ -335,6 +337,14 @@ fn artwork_source(cover: &isle_core::Cover) -> D2D_RECT_F {
 
 fn should_build_glass_blur(ui_v2: bool, artwork_visible: bool) -> bool {
     ui_v2 && artwork_visible
+}
+
+fn dynamic_glass_blur_opacity(active: bool, artwork_fade: f32) -> f32 {
+    if active {
+        DYNAMIC_GLASS_BLUR_OPACITY * artwork_fade.clamp(0., 1.)
+    } else {
+        0.
+    }
 }
 
 fn should_render_dynamic_glass(ui_v2: bool, width: f32, height: f32, opaque_preview: bool) -> bool {
@@ -789,6 +799,7 @@ impl Renderer {
             render_cpu_ms: 0.,
             artwork_upload_ms: 0.,
             blur_build_ms: 0.,
+            blur_build_count: 0,
         })
     }
     unsafe fn ink(&self, c: D2D1_COLOR_F) {
@@ -1242,6 +1253,7 @@ impl Renderer {
                 )?;
                 self.glass_cover = Some((cover.clone(), bitmap));
                 self.blur_build_ms = blur_started.elapsed().as_secs_f64() * 1000.;
+                self.blur_build_count = self.blur_build_count.saturating_add(1);
             }
         } else {
             self.previous_cover.clear();
@@ -1267,6 +1279,44 @@ impl Renderer {
             self.ctx.FillGeometry(&shape, &self.brush, None);
         } else if dynamic_glass_active {
             let origin = m.origin();
+            let blur_opacity =
+                dynamic_glass_blur_opacity(self.glass_cover.is_some(), self.artwork_fade.value);
+            if blur_opacity > 0. {
+                if let Some((_, bitmap)) = &self.glass_cover {
+                    let mut layer = D2D1_LAYER_PARAMETERS {
+                        contentBounds: rect(Rect {
+                            x: origin.x,
+                            y: origin.y,
+                            w: m.width.value,
+                            h: m.height.value,
+                        }),
+                        geometricMask: std::mem::ManuallyDrop::new(Some(shape.cast()?)),
+                        maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        maskTransform: Matrix3x2 {
+                            M11: 1.,
+                            M22: 1.,
+                            ..Default::default()
+                        },
+                        opacity: 1.,
+                        ..Default::default()
+                    };
+                    self.ctx.PushLayer(&layer, None);
+                    std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
+                    self.ctx.DrawBitmap(
+                        bitmap,
+                        Some(&rect(Rect {
+                            x: origin.x,
+                            y: origin.y,
+                            w: m.width.value,
+                            h: m.height.value,
+                        })),
+                        blur_opacity,
+                        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                        None,
+                    );
+                    self.ctx.PopLayer();
+                }
+            }
             self.glass_brush.SetStartPoint(point(origin.x, origin.y));
             self.glass_brush
                 .SetEndPoint(point(origin.x, origin.y + m.height.value));
@@ -2112,9 +2162,10 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
-        normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
-        should_render_dynamic_glass, DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
+        cover_spectrum_palette, dynamic_glass_blur_opacity, format_media_time, glass_opacity_at,
+        glass_rim_opacity_at, normalized_artwork_crop, rebase_crossfade_weights,
+        should_build_glass_blur, should_render_dynamic_glass, DYNAMIC_GLASS_BLUR_OPACITY,
+        DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
         DYNAMIC_GLASS_REFRACTION_START, DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
         MAX_CROSSFADE_LAYERS,
     };
@@ -2257,6 +2308,22 @@ mod tests {
         assert!(!should_build_glass_blur(false, true));
         assert!(!should_build_glass_blur(true, false));
         assert!(should_build_glass_blur(true, true));
+    }
+
+    #[test]
+    fn cached_glass_blur_is_subtle_and_follows_the_artwork_crossfade() {
+        assert_eq!(DYNAMIC_GLASS_BLUR_OPACITY, 0.08);
+        assert_eq!(dynamic_glass_blur_opacity(false, 1.), 0.);
+        assert_eq!(dynamic_glass_blur_opacity(true, 0.), 0.);
+        assert_eq!(dynamic_glass_blur_opacity(true, 0.5), 0.04);
+        assert_eq!(
+            dynamic_glass_blur_opacity(true, 1.),
+            DYNAMIC_GLASS_BLUR_OPACITY
+        );
+        assert_eq!(
+            dynamic_glass_blur_opacity(true, 2.),
+            DYNAMIC_GLASS_BLUR_OPACITY
+        );
     }
 
     #[test]

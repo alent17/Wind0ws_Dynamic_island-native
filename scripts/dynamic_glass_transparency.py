@@ -41,7 +41,7 @@ try:
         settings.write_text('{"enableAnimations":true,"reduceAnimations":true}', encoding='utf-8')
         report.unlink(missing_ok=True)
         proc = subprocess.Popen([
-            str(exe), '--ui-v2', '--test-fixture', '--page', 'music', '--paused',
+            str(exe), '--ui-v2', '--test-fixture', '--test-cover', '--page', 'music', '--paused',
             '--reduced-motion', '--benchmark', '--test-dpi', str(dpi),
             '--settings-path', str(settings), '--log', str(report),
         ])
@@ -63,7 +63,8 @@ try:
                         pass
                 time.sleep(.01)
             if (state is None or state.get('refractionCaptureReady') is not True
-                    or state.get('fontFamily') != 'MiSans'):
+                    or state.get('fontFamily') != 'MiSans'
+                    or state.get('blurBuildCount') != 1):
                 raise AssertionError((dpi, state))
             time.sleep(.2)
             screenshot = OUT / f'dynamic-glass-{dpi}dpi.png'

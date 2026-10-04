@@ -2222,10 +2222,11 @@ impl App {
                     .map(|revision| revision.to_string())
                     .unwrap_or_else(|| "null".into())
             ));
-            text.push_str(&format!(",\"uiV2\":{},\"renderCpuP95Ms\":{},\"regionCpuP95Ms\":{},\"artworkUploadMs\":{},\"blurBuildMs\":{}",
+            text.push_str(&format!(",\"uiV2\":{},\"renderCpuP95Ms\":{},\"regionCpuP95Ms\":{},\"artworkUploadMs\":{},\"blurBuildMs\":{},\"blurBuildCount\":{}",
                 self.ui_v2, p95_of(&self.render_cpu_ms), p95_of(&self.region_ms),
                 self.renderer.as_ref().map(|renderer| renderer.artwork_upload_ms).unwrap_or(0.),
-                self.renderer.as_ref().map(|renderer| renderer.blur_build_ms).unwrap_or(0.)));
+                self.renderer.as_ref().map(|renderer| renderer.blur_build_ms).unwrap_or(0.),
+                self.renderer.as_ref().map(|renderer| renderer.blur_build_count).unwrap_or(0)));
             text.push_str(&format!(
                 ",\"refractionCaptureReady\":{}",
                 self.renderer

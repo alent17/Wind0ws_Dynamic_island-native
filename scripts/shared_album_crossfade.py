@@ -79,25 +79,29 @@ try:
                 lambda state: state.get("expanded") is True and surface_settled(state),
             )
             assert initial["artworkSide"] == 64, initial
+            assert initial["blurBuildCount"] == 1, initial
 
             u.PostMessageW(hwnd, 0x803D, 0, 0)
             started = wait_for(
                 hwnd, report,
                 lambda state: state.get("testArtworkGeneration") == 1
-                and state.get("previousArtworkLayers") == 1,
+                and state.get("previousArtworkLayers") == 1
+                and state.get("blurBuildCount") == 2,
             )
             assert same_rect(started["albumRect"], initial["albumRect"]), ("first track changed album geometry", initial["albumRect"], started["albumRect"])
             assert 0 <= started["artworkFadeProgress"] < 0.25, started
             time.sleep(0.09)
             mid = snapshot(hwnd, report)
             assert 0.05 < mid["artworkFadeProgress"] < 1, mid
+            assert mid["blurBuildCount"] == 2, mid
             save_test_screenshot(folder / f"{dpi}-mid-crossfade.png", bounds)
 
             u.PostMessageW(hwnd, 0x803D, 0, 0)
             interrupted = wait_for(
                 hwnd, report,
                 lambda state: state.get("testArtworkGeneration") == 2
-                and state.get("previousArtworkLayers", 0) >= 2,
+                and state.get("previousArtworkLayers", 0) >= 2
+                and state.get("blurBuildCount") == 3,
             )
             assert same_rect(interrupted["albumRect"], started["albumRect"]), ("track change moved album geometry", started["albumRect"], interrupted["albumRect"])
             assert interrupted["previousArtworkLayers"] <= 4, interrupted
