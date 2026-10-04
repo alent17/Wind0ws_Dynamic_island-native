@@ -1,6 +1,6 @@
 //! Bounded discovery of a Chromium DevTools endpoint on IPv4 loopback.
 
-use isle_core::player_extension::PlaybackMode;
+use isle_core::player_extension::{PlaybackMode, VerifiedAction};
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
@@ -39,6 +39,8 @@ pub enum CdpError {
     UnsafeWebSocketEndpoint,
     NoInitializedPage,
     AmbiguousPage,
+    UnsupportedCurrentMode,
+    VerificationFailed,
     InvalidCommand,
     TimedOut,
     Protocol,
@@ -54,6 +56,8 @@ impl std::fmt::Display for CdpError {
             Self::UnsafeWebSocketEndpoint => formatter.write_str("CDP 返回了非本机 WebSocket 地址"),
             Self::NoInitializedPage => formatter.write_str("未找到已初始化的网易云播放页面"),
             Self::AmbiguousPage => formatter.write_str("发现多个已初始化的网易云播放页面"),
+            Self::UnsupportedCurrentMode => formatter.write_str("当前网易云播放模式不支持切换"),
+            Self::VerificationFailed => formatter.write_str("网易云播放模式读回校验失败"),
             Self::InvalidCommand => formatter.write_str("CDP 命令无效或超出长度限制"),
             Self::TimedOut => formatter.write_str("本机 CDP 命令超时"),
             Self::Protocol => formatter.write_str("本机 CDP 返回了错误响应"),
@@ -157,8 +161,52 @@ impl LocalCdpClient {
     /// NetEase Cloud Music page. Unknown provider modes remain `None`.
     /// The expression is fixed and only reads the initialized store.
     pub fn cloud_music_playback_mode(self) -> Result<Option<PlaybackMode>, CdpError> {
+        let (_, mode) = self.initialized_page()?;
+        Ok(cloud_music_mode(&mode))
+    }
+
+    /// Changes a known ordinary mode and verifies the provider state again.
+    /// AI/FM and unrecognized current modes are deliberately left untouched.
+    pub fn set_cloud_music_playback_mode(
+        self,
+        requested: PlaybackMode,
+    ) -> Result<VerifiedAction<PlaybackMode>, CdpError> {
+        let (mut connection, current) = self.initialized_page()?;
+        if cloud_music_mode(&current).is_none() {
+            return Err(CdpError::UnsupportedCurrentMode);
+        }
+        let response = connection.request(
+            "Runtime.evaluate",
+            &serde_json::json!({
+                "expression": cloud_music_set_expression(requested),
+                "returnByValue": true,
+                "awaitPromise": true
+            }),
+        )?;
+        if response.get("exceptionDetails").is_some() {
+            return Err(CdpError::Protocol);
+        }
+        let value = response
+            .pointer("/result/value")
+            .ok_or(CdpError::InvalidResponse)?;
+        let observed_raw = required_string(value, "actual")?;
+        let observed = cloud_music_mode(observed_raw).ok_or(CdpError::UnsupportedCurrentMode)?;
+        if value.get("verified").and_then(serde_json::Value::as_bool) != Some(true)
+            || value.get("requested").and_then(serde_json::Value::as_str)
+                != Some(cloud_music_provider_mode(requested))
+            || observed != requested
+        {
+            return Err(CdpError::VerificationFailed);
+        }
+        Ok(VerifiedAction {
+            requested,
+            observed,
+        })
+    }
+
+    fn initialized_page(self) -> Result<(CdpConnection, String), CdpError> {
         let targets = self.page_targets()?;
-        let mut initialized_modes = Vec::new();
+        let mut initialized_pages = Vec::new();
         for target in targets {
             let Ok(mut connection) = self.connect_page(&target.websocket_url) else {
                 continue;
@@ -166,7 +214,7 @@ impl LocalCdpClient {
             let Ok(response) = connection.request(
                 "Runtime.evaluate",
                 &serde_json::json!({
-                    "expression": CLOUD_MUSIC_MODE_EXPRESSION,
+                "expression": cloud_music_read_expression(),
                     "returnByValue": true,
                     "awaitPromise": true
                 }),
@@ -181,18 +229,18 @@ impl LocalCdpClient {
                 .and_then(serde_json::Value::as_str)
                 .filter(|mode| !mode.is_empty() && mode.len() <= 64)
             {
-                initialized_modes.push(mode.to_owned());
+                initialized_pages.push((connection, mode.to_owned()));
             }
         }
 
-        let [mode] = initialized_modes.as_slice() else {
-            return Err(if initialized_modes.is_empty() {
+        if initialized_pages.len() != 1 {
+            return Err(if initialized_pages.is_empty() {
                 CdpError::NoInitializedPage
             } else {
                 CdpError::AmbiguousPage
             });
-        };
-        Ok(cloud_music_mode(mode))
+        }
+        initialized_pages.pop().ok_or(CdpError::NoInitializedPage)
     }
 
     fn page_targets(self) -> Result<Vec<PageTarget>, CdpError> {
@@ -285,12 +333,33 @@ fn cloud_music_mode(mode: &str) -> Option<PlaybackMode> {
     }
 }
 
+fn cloud_music_read_expression() -> String {
+    CLOUD_MUSIC_MODE_EXPRESSION.replace("__CAPTURE_TOOL__", CLOUD_MUSIC_CAPTURE_TOOL)
+}
+
+fn cloud_music_provider_mode(mode: PlaybackMode) -> &'static str {
+    match mode {
+        PlaybackMode::Sequential => "playOrder",
+        PlaybackMode::RepeatList => "playCycle",
+        PlaybackMode::RepeatOne => "playOneCycle",
+        PlaybackMode::Shuffle => "playRandom",
+    }
+}
+
+fn cloud_music_set_expression(mode: PlaybackMode) -> String {
+    let requested = serde_json::to_string(cloud_music_provider_mode(mode))
+        .expect("serializing a static string cannot fail");
+    CLOUD_MUSIC_SET_MODE_EXPRESSION
+        .replace("__CAPTURE_TOOL__", CLOUD_MUSIC_CAPTURE_TOOL)
+        .replace("__REQUESTED_MODE__", &requested)
+}
+
 #[derive(Debug)]
 struct PageTarget {
     websocket_url: String,
 }
 
-const CLOUD_MUSIC_MODE_EXPRESSION: &str = r#"(() => {
+const CLOUD_MUSIC_CAPTURE_TOOL: &str = r#"function captureTool() {
   const queue = globalThis.webpackJsonp;
   if (!Array.isArray(queue) || queue.push === Array.prototype.push) return {};
   const main = queue.find(chunk => chunk && chunk[1] && chunk[1][8] &&
@@ -306,8 +375,7 @@ const CLOUD_MUSIC_MODE_EXPRESSION: &str = r#"(() => {
     if (!req || !req.c || !req.c[8] || !req.c[previousEntry]) return {};
     const tool = req.c[8].exports.a;
     if (!tool || !tool.inited || !tool.app || !tool.app._store || typeof tool.getStore !== 'function') return {};
-    const playing = tool.getStore().playing;
-    return playing && typeof playing.playingMode === 'string' ? { mode: playing.playingMode } : {};
+    return tool;
   } catch (_) {
     return {};
   } finally {
@@ -315,6 +383,29 @@ const CLOUD_MUSIC_MODE_EXPRESSION: &str = r#"(() => {
     const index = queue.indexOf(chunk);
     if (index >= 0) queue.splice(index, 1);
   }
+}"#;
+
+const CLOUD_MUSIC_MODE_EXPRESSION: &str = r#"(() => {
+  const tool = (__CAPTURE_TOOL__)();
+  const playing = tool.getStore().playing;
+  return playing && typeof playing.playingMode === 'string' ? { mode: playing.playingMode } : {};
+})()"#;
+
+const CLOUD_MUSIC_SET_MODE_EXPRESSION: &str = r#"(async () => {
+  const tool = (__CAPTURE_TOOL__)();
+  const modes = ['playOrder', 'playCycle', 'playOneCycle', 'playRandom'];
+  const requested = __REQUESTED_MODE__;
+  const previous = tool.getStore().playing.playingMode;
+  if (!modes.includes(previous) || !modes.includes(requested)) {
+    throw new Error('Only known ordinary playback modes can be switched.');
+  }
+  if (previous !== requested) {
+    await tool.getDispatch()({ type: 'playing/switchPlayingMode', payload: {
+      playingMode: requested, triggerScene: 'miniPlayer', HeartBeatFlage: false
+    } });
+  }
+  const actual = tool.getStore().playing.playingMode;
+  return { requested, actual, verified: actual === requested };
 })()"#;
 
 pub struct CdpConnection {
@@ -577,6 +668,22 @@ mod tests {
         assert_eq!(cloud_music_mode("playAi"), None);
         assert_eq!(cloud_music_mode("playFm"), None);
         assert_eq!(cloud_music_mode("futureMode"), None);
+        assert_eq!(
+            cloud_music_provider_mode(PlaybackMode::Sequential),
+            "playOrder"
+        );
+        assert_eq!(
+            cloud_music_provider_mode(PlaybackMode::RepeatList),
+            "playCycle"
+        );
+        assert_eq!(
+            cloud_music_provider_mode(PlaybackMode::RepeatOne),
+            "playOneCycle"
+        );
+        assert_eq!(
+            cloud_music_provider_mode(PlaybackMode::Shuffle),
+            "playRandom"
+        );
     }
 
     #[test]
@@ -625,6 +732,67 @@ mod tests {
             .unwrap();
         server.join().unwrap();
         assert_eq!(mode, Some(PlaybackMode::RepeatList));
+    }
+
+    #[test]
+    fn switches_only_allowlisted_mode_and_requires_verified_readback() {
+        let listener = TcpListener::bind(SocketAddrV4::new(LOOPBACK, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut http, _) = listener.accept().unwrap();
+            let request = read_request_headers(&mut http);
+            assert!(request.starts_with("GET /json/list HTTP/1.1\r\n"));
+            let body = format!(
+                "[{{\"type\":\"page\",\"url\":\"orpheus://orpheus/pub/app.html\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1:{port}/devtools/page/mock-page\"}}]"
+            );
+            write!(
+                http,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            drop(http);
+
+            let (stream, _) = listener.accept().unwrap();
+            let mut websocket = tungstenite::accept(stream).unwrap();
+            for (id, result) in [
+                (
+                    1,
+                    r#"{"result":{"type":"object","value":{"mode":"playCycle"}}}"#,
+                ),
+                (
+                    2,
+                    r#"{"result":{"type":"object","value":{"requested":"playOneCycle","actual":"playOneCycle","verified":true}}}"#,
+                ),
+            ] {
+                let request: serde_json::Value = match websocket.read().unwrap() {
+                    Message::Text(message) => serde_json::from_str(message.as_str()).unwrap(),
+                    message => panic!("expected CDP text request, received {message:?}"),
+                };
+                assert_eq!(request["id"], id);
+                assert_eq!(request["method"], "Runtime.evaluate");
+                let expression = request["params"]["expression"].as_str().unwrap();
+                assert!(expression.contains("playing.playingMode"));
+                if id == 2 {
+                    assert!(expression.contains("playing/switchPlayingMode"));
+                    assert!(expression.contains("playOneCycle"));
+                    assert!(expression.contains("verified: actual === requested"));
+                }
+                websocket
+                    .send(Message::text(format!(
+                        "{{\"id\":{id},\"result\":{result}}}"
+                    )))
+                    .unwrap();
+            }
+        });
+
+        let action = LocalCdpClient::new(port)
+            .unwrap()
+            .set_cloud_music_playback_mode(PlaybackMode::RepeatOne)
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(action.requested, PlaybackMode::RepeatOne);
+        assert_eq!(action.observed, PlaybackMode::RepeatOne);
     }
 
     #[test]

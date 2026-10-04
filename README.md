@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.34**（Cargo / Windows 文件版本 `0.34.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.35**（Cargo / Windows 文件版本 `0.35.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -69,6 +69,8 @@ cargo test --workspace
 0.33 将 GSMTC 命令执行接到可隔离验证的控制器接口。网易云 Next/Previous 的测试用控制器确认只触发对应系统媒体操作，并在能力缺失时不发送命令；真实播放会话的手动切歌验收仍待完成。
 
 0.34 增加网易云 CEF 页面识别与 CDP 只读播放模式读取；仅连接配置端口上的本机页面端点，准确映射顺序/列表循环/单曲循环/随机，AI、FM 与未知模式保持未识别。Loopback mock 集成测试通过；真实网易云运行时验收仍待有活动调试会话时完成。
+
+0.35 增加网易云播放模式切换白名单与读回验证，只允许顺序、列表循环、单曲循环和随机；当前模式为 AI/FM/未知时拒绝派发。Loopback mock 确认 dispatch payload 与目标模式读回匹配；实际客户端写入验收仍待有活动调试会话时完成。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 
