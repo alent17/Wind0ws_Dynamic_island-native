@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.60**（Cargo / Windows 文件版本 `0.60.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.61**（Cargo / Windows 文件版本 `0.61.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -40,9 +40,9 @@ cargo test --workspace
 
 ## 迁移与验收状态
 
-当前按多 Agent UI 优先方案推进，依次完成静态布局、动画与 Glass，由 Lead 统一评审和验证。GitHub 仅维护本 README 作为项目说明和状态入口；路线图、参考图片、项目状态、QA 文档及性能记录集中保存在仓库内的 `local-only/` 并由 Git 忽略。代码、构建脚本和许可证继续纳入版本控制。
+当前按 UI 优先方案完成静态布局、动画与 Glass，并完成第一阶段 Review 与验收。路线图清单保存在仓库根目录；QA 截图与诊断数据集中保存在被 Git 忽略的 `artifacts/`。
 
-当前优先完成 Compact ↔ Expanded Music 的视觉比例、连续动画和克制的黑色 Glass，不扩展新的媒体适配、Widget 或 Playing Next。真实混合 DPI 与跨屏验收仍待完成。单窗口 UI 2.0 是默认界面；需要回退诊断时可用 `--legacy-ui`。
+第一阶段 Compact ↔ Expanded Music 已完成。DISPLAY2 实屏为 96 DPI；144/192 DPI 使用合成 DPI 覆盖，未验证物理混合 DPI。Live Activities 已在 0.52–0.56 实现；Playing Next 仍等待真实 Queue Provider，属于后续阶段。单窗口 UI 2.0 是默认界面；需要回退诊断时可用 `--legacy-ui`。
 
 0.22 为原生 ComboBox 和弹出选项列表提供 Selection / SelectionItem UIA 树；副屏实测列出全部六个时区选项，完成切换、还原和必选约束验证。
 
@@ -111,6 +111,8 @@ cargo test --workspace
 0.59 标题和歌手在目标附近以 5 DIP 位移显现，进度从中点展开并沿原路径缩回；首次展开不再从宿主零坐标进入。所有内容沿已有 Spring 连续变化，中途反向保留当前位置、速度与透明度；Reduced Motion 立即稳定。完整构建门禁、五档合成 DPI×四边、30 次开合、快速反向、Seek 与 idle 停帧通过；DISPLAY2 96/144/192 DPI 的内容截图及 leave grace、drag、inspection lock 回归通过。
 
 0.60 收紧底部动态玻璃：主要控件后方保持深黑，封面只以连续渐变轻微着色，桌面折射限制在内沿 2.5 DIP，并降低色散。封面与表面使用同一 Spring 节奏，首次 UI 初始化将容器、封面和已保存的 Compact 尺寸对齐。新增四边、attached/floating 开合期间封面 containment 测试。Rust 全工作区格式、check、clippy、test 和 release build 通过；DISPLAY2 96/144/192 DPI 的纯黑核心、透明尾部、明暗桌面及封面极值、开合截图、长文本/无封面/无媒体和横竖封面裁切回归通过。物理显示器为 96 DPI，高 DPI 使用合成测试。
+
+0.61 完成 UI 第一阶段验收与 Review。Windows 上 `cargo fmt --all -- --check`、`cargo check --workspace --locked`、`cargo clippy --workspace --all-targets --locked -- -D warnings`、`cargo test --workspace --locked`（160 passed，1 个显式 opt-in 网络测试 ignored）及 `cargo build --release --bin isle-native --locked` 全部通过。DISPLAY2 上 bright/dark artwork × white/black desktop 的 12 组 96/144/192 DPI 对比、透明尾部与黑色核心、玻璃展开/收起逐帧、长标题/无媒体/无封面、横竖封面裁切、四边布局、attached/floating、30 次开合和快速反向回归通过。144/192 DPI 为合成 DPI；当前连接的物理显示器均为 96 DPI，未完成物理混合 DPI 验收。诊断采样最高 render CPU P95 为 2.72 ms、draw/present P95 为 8.78 ms；静止两秒帧数不增长。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 
