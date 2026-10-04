@@ -310,24 +310,23 @@ fn rect(r: Rect) -> D2D_RECT_F {
         bottom: r.y + r.h,
     }
 }
-fn artwork_source(cover: &isle_core::Cover) -> D2D_RECT_F {
+fn normalized_artwork_crop(cover: &isle_core::Cover) -> [f32; 4] {
     let (width, height) = (cover.width as f32, cover.height as f32);
     if width > height {
-        let inset = (width - height) * 0.5;
-        D2D_RECT_F {
-            left: inset,
-            top: 0.,
-            right: width - inset,
-            bottom: height,
-        }
+        let inset = (width - height) * 0.5 / width.max(1.);
+        [inset, 0., 1. - inset, 1.]
     } else {
-        let inset = (height - width) * 0.5;
-        D2D_RECT_F {
-            left: 0.,
-            top: inset,
-            right: width,
-            bottom: height - inset,
-        }
+        let inset = (height - width) * 0.5 / height.max(1.);
+        [0., inset, 1., 1. - inset]
+    }
+}
+fn artwork_source(cover: &isle_core::Cover) -> D2D_RECT_F {
+    let [left, top, right, bottom] = normalized_artwork_crop(cover);
+    D2D_RECT_F {
+        left: left * cover.width as f32,
+        top: top * cover.height as f32,
+        right: right * cover.width as f32,
+        bottom: bottom * cover.height as f32,
     }
 }
 
@@ -2038,9 +2037,9 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 mod tests {
     use super::{
         cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
-        rebase_crossfade_weights, should_build_glass_blur, DYNAMIC_GLASS_FADE_START,
-        DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_REFRACTION_WIDTH,
-        DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
+        normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
+        DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
+        DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
     };
 
     #[test]
@@ -2119,6 +2118,47 @@ mod tests {
             .map(|(_, weight)| *weight)
             .sum::<f32>();
         assert!((before_interrupt - after_interrupt).abs() < 0.0001);
+    }
+
+    #[test]
+    fn artwork_crop_uvs_match_across_thumbnail_and_display_tiers() {
+        let thumbnail_landscape = isle_core::Cover {
+            width: 128,
+            height: 72,
+            pixels: Vec::new(),
+        };
+        let display_landscape = isle_core::Cover {
+            width: 512,
+            height: 288,
+            pixels: Vec::new(),
+        };
+        let thumbnail_portrait = isle_core::Cover {
+            width: 72,
+            height: 128,
+            pixels: Vec::new(),
+        };
+        let display_portrait = isle_core::Cover {
+            width: 288,
+            height: 512,
+            pixels: Vec::new(),
+        };
+
+        assert_eq!(
+            normalized_artwork_crop(&thumbnail_landscape),
+            normalized_artwork_crop(&display_landscape)
+        );
+        assert_eq!(
+            normalized_artwork_crop(&thumbnail_portrait),
+            normalized_artwork_crop(&display_portrait)
+        );
+        assert_eq!(
+            normalized_artwork_crop(&isle_core::Cover {
+                width: 128,
+                height: 128,
+                pixels: Vec::new(),
+            }),
+            [0., 0., 1., 1.]
+        );
     }
 
     #[test]
