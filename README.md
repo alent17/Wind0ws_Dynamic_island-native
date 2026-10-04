@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.36**（Cargo / Windows 文件版本 `0.36.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.37**（Cargo / Windows 文件版本 `0.37.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -72,7 +72,9 @@ cargo test --workspace
 
 0.35 增加网易云播放模式切换白名单与读回验证，只允许顺序、列表循环、单曲循环和随机；当前模式为 AI/FM/未知时拒绝派发。Loopback mock 确认 dispatch payload 与目标模式读回匹配；实际客户端写入验收仍待有活动调试会话时完成。
 
-0.36 在 UI 2.0 展开播放器的透明层下启用 Windows DWM Desktop Acrylic，并将轮廓内缘高光扩为渐变玻璃带；不支持系统材质时保留透明渐变。副屏在 96 DPI 与合成 200% DPI 完成视觉检查；真实采样位移式边缘折射仍需继续打磨。
+0.36 接入本地私有 MiSans Regular、Medium、Bold 字体，并完成 UI 2.0 动态玻璃轮廓实验。首次 DWM 系统材质方案误将桌面采样盖成灰底，已在 0.37 移除并替换为实际桌面像素折射。
+
+0.37 动态玻璃按 UI 参考保持上方纯黑、仅底部约四分之一渐隐透明；真实桌面像素折射与轮廓高光均限制在透明渐变区，横向边缘和上下边缘柔和收敛，透明外不添加折射像素。捕获失败时回退到纯透明渐变。副屏验收检查纯黑区无高光、彩色桌面透出、96/192 DPI、MiSans 和采样诊断。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

@@ -2169,10 +2169,10 @@ impl App {
                 self.renderer.as_ref().map(|renderer| renderer.artwork_upload_ms).unwrap_or(0.),
                 self.renderer.as_ref().map(|renderer| renderer.blur_build_ms).unwrap_or(0.)));
             text.push_str(&format!(
-                ",\"systemBackdropSupported\":{}",
+                ",\"refractionCaptureReady\":{}",
                 self.renderer
                     .as_ref()
-                    .and_then(|renderer| renderer.system_backdrop_supported)
+                    .map(|renderer| renderer.refraction_capture_ready)
                     .map(|supported| supported.to_string())
                     .unwrap_or_else(|| "null".into())
             ));

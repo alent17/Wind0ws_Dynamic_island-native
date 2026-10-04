@@ -3,7 +3,7 @@ use isle_ui::{geometry::*, model::*};
 #[path = "panels.rs"]
 mod panels;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use windows::{
     core::*,
     Foundation::Numerics::Matrix3x2,
@@ -15,12 +15,10 @@ use windows::{
             Direct3D11::*,
             DirectComposition::*,
             DirectWrite::*,
-            Dwm::{
-                DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW,
-                DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_HOSTBACKDROPBRUSH,
-            },
             Dxgi::{Common::*, *},
+            Gdi::*,
         },
+        UI::WindowsAndMessaging::GetWindowRect,
     },
 };
 pub struct Renderer {
@@ -45,7 +43,9 @@ pub struct Renderer {
     pub font_family: &'static str,
     swap: IDXGISwapChain1,
     hwnd: HWND,
-    backdrop_requested: Option<bool>,
+    scale: f32,
+    refraction_bitmap: Option<(u32, u32, ID2D1Bitmap)>,
+    last_refraction_capture: Option<Instant>,
     _composition: IDCompositionDevice,
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
@@ -57,7 +57,7 @@ pub struct Renderer {
     pub frames: u64,
     pub title_overflow: bool,
     pub opaque_preview: bool,
-    pub system_backdrop_supported: Option<bool>,
+    pub refraction_capture_ready: bool,
     /// CPU time for draw submission through EndDraw, excluding swap-chain Present.
     pub render_cpu_ms: f64,
     pub artwork_upload_ms: f64,
@@ -67,24 +67,26 @@ fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
 }
 
-const DYNAMIC_GLASS_OPACITY: [(f32, f32); 6] = [
+const DYNAMIC_GLASS_OPACITY: [(f32, f32); 7] = [
     (0.0, 1.0),
-    (0.46, 1.0),
-    (0.50, 1.0),
-    (0.66, 0.62),
-    (0.82, 0.20),
+    (0.69, 1.0),
+    (0.74, 1.0),
+    (0.82, 0.62),
+    (0.91, 0.22),
+    (0.98, 0.04),
     (1.0, 0.0),
 ];
 
-const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 5] = [
-    (0.0, 0.30),
-    (0.18, 0.19),
-    (0.52, 0.07),
-    (0.82, 0.10),
-    (1.0, 0.22),
+const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 4] = [
+    (0.0, 0.0),
+    (DYNAMIC_GLASS_FADE_START, 0.0),
+    (0.82, 0.025),
+    (1.0, 0.07),
 ];
-const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 18.;
-const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 2.;
+const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 10.;
+const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
+const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
+const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 
 fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
     profile
@@ -94,6 +96,160 @@ fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_ST
             color: color(rgb[0], rgb[1], rgb[2], *opacity),
         })
         .collect()
+}
+
+fn glass_opacity_at(position: f32) -> f32 {
+    let Some(pair) = DYNAMIC_GLASS_OPACITY
+        .windows(2)
+        .find(|pair| position <= pair[1].0)
+    else {
+        return DYNAMIC_GLASS_OPACITY.last().map_or(0., |stop| stop.1);
+    };
+    let progress = (position - pair[0].0) / (pair[1].0 - pair[0].0);
+    pair[0].1 + (pair[1].1 - pair[0].1) * progress
+}
+
+#[cfg(test)]
+fn glass_rim_opacity_at(position: f32) -> f32 {
+    let Some(pair) = DYNAMIC_GLASS_RIM_OPACITY
+        .windows(2)
+        .find(|pair| position <= pair[1].0)
+    else {
+        return DYNAMIC_GLASS_RIM_OPACITY.last().map_or(0., |stop| stop.1);
+    };
+    let progress = (position - pair[0].0) / (pair[1].0 - pair[0].0);
+    pair[0].1 + (pair[1].1 - pair[0].1) * progress
+}
+
+struct RefractionStrip {
+    x: f32,
+    y: f32,
+    width: f32,
+    source_height: f32,
+    output_height: f32,
+    island_top: f32,
+    island_height: f32,
+}
+
+unsafe fn capture_refracted_strip(
+    hwnd: HWND,
+    scale: f32,
+    strip: RefractionStrip,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let width_px = (strip.width * scale).round().max(1.) as i32;
+    let source_height_px = (strip.source_height * scale).round().max(1.) as i32;
+    let output_height_px = (strip.output_height * scale).round().max(1.) as i32;
+    let mut window = RECT::default();
+    GetWindowRect(hwnd, &mut window).ok()?;
+    let screen_x = window.left + (strip.x * scale).round() as i32;
+    let screen_y = window.top + (strip.y * scale).round() as i32;
+
+    let screen_dc = GetDC(HWND(0));
+    if screen_dc.0 == 0 {
+        return None;
+    }
+    let memory_dc = CreateCompatibleDC(screen_dc);
+    if memory_dc.0 == 0 {
+        let _ = ReleaseDC(HWND(0), screen_dc);
+        return None;
+    }
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width_px,
+            biHeight: -source_height_px,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            biSizeImage: width_px.saturating_mul(source_height_px).saturating_mul(4) as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+    let bitmap = CreateDIBSection(screen_dc, &info, DIB_RGB_COLORS, &mut bits, HANDLE(0), 0);
+    let Ok(bitmap) = bitmap else {
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(HWND(0), screen_dc);
+        return None;
+    };
+    let old = SelectObject(memory_dc, bitmap);
+    let captured = !bits.is_null()
+        && BitBlt(
+            memory_dc,
+            0,
+            0,
+            width_px,
+            source_height_px,
+            screen_dc,
+            screen_x,
+            screen_y,
+            SRCCOPY | CAPTUREBLT,
+        )
+        .is_ok();
+    let pixels = if captured {
+        let source_count = (width_px as usize)
+            .checked_mul(source_height_px as usize)?
+            .checked_mul(4)?;
+        let source = std::slice::from_raw_parts(bits.cast::<u8>(), source_count);
+        let output_count = (width_px as usize)
+            .checked_mul(output_height_px as usize)?
+            .checked_mul(4)?;
+        let mut refracted = vec![0; output_count];
+        let amplitude_x = (scale * 3.2).max(1.);
+        let amplitude_y = (scale * 2.0).max(1.);
+        for row in 0..output_height_px as usize {
+            for column in 0..width_px as usize {
+                let phase = column as f32 / (scale * 54.).max(1.)
+                    + row as f32 / (output_height_px as f32).max(1.) * 0.9;
+                let source_x = (column as f32 + phase.sin() * amplitude_x)
+                    .clamp(0., width_px.saturating_sub(1) as f32);
+                let row_progress = row as f32 / (output_height_px as f32 - 1.).max(1.);
+                let column_progress = column as f32 / (width_px as f32 - 1.).max(1.);
+                let source_y = (row_progress * source_height_px.saturating_sub(1) as f32
+                    + (phase * 0.72).cos() * amplitude_y)
+                    .clamp(0., source_height_px.saturating_sub(1) as f32);
+                let x0 = source_x.floor() as usize;
+                let y0 = source_y.floor() as usize;
+                let x1 = (x0 + 1).min(width_px as usize - 1);
+                let y1 = (y0 + 1).min(source_height_px as usize - 1);
+                let tx = source_x - x0 as f32;
+                let ty = source_y - y0 as f32;
+                let dst = (row * width_px as usize + column) * 4;
+                let logical_sample_y = strip.y + source_y / scale;
+                let clear_alpha = (1.
+                    - glass_opacity_at(
+                        (logical_sample_y - strip.island_top) / strip.island_height,
+                    ))
+                .max(0.18);
+                let horizontal_edge =
+                    (column_progress.min(1. - column_progress) / 0.045).clamp(0., 1.);
+                let horizontal_fade = 0.5 - 0.5 * (std::f32::consts::PI * horizontal_edge).cos();
+                let vertical_fade = (std::f32::consts::PI * row_progress).sin().powi(2);
+                let refractive_alpha = vertical_fade * horizontal_fade * 0.18;
+                for channel in 0..3 {
+                    let at = |sx: usize, sy: usize| {
+                        source[(sy * width_px as usize + sx) * 4 + channel] as f32
+                    };
+                    let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * tx;
+                    let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * tx;
+                    let unpremultiplied = ((top + (bottom - top) * ty) / clear_alpha).min(255.);
+                    refracted[dst + channel] = (unpremultiplied * refractive_alpha).round() as u8;
+                }
+                refracted[dst + 3] = (refractive_alpha * 255.).round() as u8;
+            }
+        }
+        Some(refracted)
+    } else {
+        None
+    };
+    if old.0 != 0 {
+        let _ = SelectObject(memory_dc, old);
+    }
+    let _ = DeleteObject(bitmap);
+    let _ = DeleteDC(memory_dc);
+    let _ = ReleaseDC(HWND(0), screen_dc);
+    pixels.map(|pixels| (width_px as u32, output_height_px as u32, pixels))
 }
 
 fn point(x: f32, y: f32) -> D2D_POINT_2F {
@@ -542,7 +698,9 @@ impl Renderer {
             write,
             swap,
             hwnd,
-            backdrop_requested: None,
+            scale,
+            refraction_bitmap: None,
+            last_refraction_capture: None,
             _composition: composition,
             _target: target,
             _visual: visual,
@@ -567,7 +725,7 @@ impl Renderer {
             frames: 0,
             title_overflow: false,
             opaque_preview: false,
-            system_backdrop_supported: None,
+            refraction_capture_ready: false,
             render_cpu_ms: 0.,
             artwork_upload_ms: 0.,
             blur_build_ms: 0.,
@@ -776,31 +934,61 @@ impl Renderer {
         pressed: Option<Hit>,
         dragging: bool,
     ) -> Result<()> {
-        let wants_backdrop = m.ui_v2 && m.expanded && !self.opaque_preview;
-        if self.backdrop_requested != Some(wants_backdrop) {
-            // Windows 11 22H2+ draws Desktop Acrylic under transparent
-            // DirectComposition pixels. Older Windows versions reject this
-            // attribute; the renderer then keeps its transparent fallback.
-            let backdrop = if wants_backdrop {
-                DWMSBT_TRANSIENTWINDOW.0
+        let refraction_active =
+            m.ui_v2 && m.expanded && m.edge == Edge::Top && !self.opaque_preview;
+        if refraction_active
+            && self
+                .last_refraction_capture
+                .is_none_or(|captured| captured.elapsed() >= DYNAMIC_GLASS_SAMPLE_INTERVAL)
+        {
+            let origin = m.origin();
+            let inset = m.radius.value.max(20.);
+            let strip_width = (m.width.value - inset * 2.).max(1.);
+            if let Some((width, height, pixels)) = capture_refracted_strip(
+                self.hwnd,
+                self.scale,
+                RefractionStrip {
+                    x: origin.x + inset,
+                    y: origin.y + m.height.value * 0.82,
+                    width: strip_width,
+                    source_height: (m.height.value * 0.14).max(DYNAMIC_GLASS_REFRACTION_WIDTH),
+                    output_height: DYNAMIC_GLASS_REFRACTION_WIDTH,
+                    island_top: origin.y,
+                    island_height: m.height.value.max(1.),
+                },
+            ) {
+                let bitmap = match &self.refraction_bitmap {
+                    Some((old_width, old_height, bitmap))
+                        if *old_width == width && *old_height == height =>
+                    {
+                        bitmap.clone()
+                    }
+                    _ => {
+                        let bitmap = self.ctx.CreateBitmap(
+                            D2D_SIZE_U { width, height },
+                            Some(pixels.as_ptr().cast()),
+                            width * 4,
+                            &D2D1_BITMAP_PROPERTIES {
+                                pixelFormat: D2D1_PIXEL_FORMAT {
+                                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                                },
+                                dpiX: 96. * self.scale,
+                                dpiY: 96. * self.scale,
+                            },
+                        )?;
+                        self.refraction_bitmap = Some((width, height, bitmap.clone()));
+                        bitmap
+                    }
+                };
+                bitmap.CopyFromMemory(None, pixels.as_ptr().cast(), width * 4)?;
+                self.refraction_capture_ready = true;
             } else {
-                DWMSBT_NONE.0
-            };
-            let host_backdrop = BOOL(wants_backdrop as i32);
-            let host_result = DwmSetWindowAttribute(
-                self.hwnd,
-                DWMWA_USE_HOSTBACKDROPBRUSH,
-                (&host_backdrop as *const BOOL).cast(),
-                std::mem::size_of_val(&host_backdrop) as u32,
-            );
-            let backdrop_result = DwmSetWindowAttribute(
-                self.hwnd,
-                DWMWA_SYSTEMBACKDROP_TYPE,
-                (&backdrop as *const i32).cast(),
-                std::mem::size_of_val(&backdrop) as u32,
-            );
-            self.system_backdrop_supported = Some(host_result.is_ok() && backdrop_result.is_ok());
-            self.backdrop_requested = Some(wants_backdrop);
+                self.refraction_capture_ready = false;
+            }
+            self.last_refraction_capture = Some(Instant::now());
+        } else if !refraction_active {
+            self.refraction_capture_ready = false;
         }
         let render_started = Instant::now();
         let dt = self
@@ -974,6 +1162,24 @@ impl Renderer {
         std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
         if m.ui_v2 && m.expanded && !self.opaque_preview {
             let origin = m.origin();
+            if self.refraction_capture_ready {
+                if let Some((width, height, bitmap)) = &self.refraction_bitmap {
+                    let inset = m.radius.value.max(20.);
+                    let destination = rect(Rect {
+                        x: origin.x + inset,
+                        y: origin.y + m.height.value * DYNAMIC_GLASS_FADE_START,
+                        w: *width as f32 / self.scale,
+                        h: *height as f32 / self.scale,
+                    });
+                    self.ctx.DrawBitmap(
+                        bitmap,
+                        Some(&destination),
+                        0.92,
+                        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+                        None,
+                    );
+                }
+            }
             let end_y = origin.y + m.height.value.max(1.);
             self.glass_rim_brush
                 .SetStartPoint(point(origin.x, origin.y));
@@ -1751,31 +1957,23 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cover_spectrum_palette, format_media_time, should_build_glass_blur,
-        DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_OPACITY, DYNAMIC_GLASS_REFRACTION_WIDTH,
-        DYNAMIC_GLASS_RIM_OPACITY,
+        cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
+        should_build_glass_blur, DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
+        DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
     };
 
-    fn sample_opacity(profile: &[(f32, f32)], position: f32) -> f32 {
-        let Some(pair) = profile.windows(2).find(|pair| position <= pair[1].0) else {
-            return profile.last().map_or(0., |stop| stop.1);
-        };
-        let (start, end) = (pair[0], pair[1]);
-        let progress = (position - start.0) / (end.0 - start.0);
-        start.1 + (end.1 - start.1) * progress
-    }
-
     #[test]
-    fn dynamic_glass_stays_black_above_and_fades_to_a_clear_lower_edge() {
-        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.), 1.);
-        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.5), 1.);
-        assert!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.66) <= 0.62);
-        assert!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 0.82) <= 0.20);
-        assert_eq!(sample_opacity(&DYNAMIC_GLASS_OPACITY, 1.), 0.);
+    fn dynamic_glass_stays_black_until_the_bottom_quarter_then_fades_clear() {
+        assert_eq!(glass_opacity_at(0.), 1.);
+        assert_eq!(glass_opacity_at(0.69), 1.);
+        assert_eq!(glass_opacity_at(DYNAMIC_GLASS_FADE_START), 1.);
+        assert!(glass_opacity_at(0.82) <= 0.62);
+        assert!(glass_opacity_at(0.91) <= 0.22);
+        assert_eq!(glass_opacity_at(1.), 0.);
 
         let mut previous = 1.;
         for step in 1..=100 {
-            let current = sample_opacity(&DYNAMIC_GLASS_OPACITY, step as f32 / 100.);
+            let current = glass_opacity_at(step as f32 / 100.);
             assert!(
                 current <= previous,
                 "opacity rose at step {step}: {previous} -> {current}"
@@ -1786,17 +1984,22 @@ mod tests {
 
     #[test]
     fn dynamic_glass_has_a_clipped_inner_refraction_band_and_fading_highlight() {
-        assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 18.0);
-        assert_eq!(DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, 2.0);
-        assert!(DYNAMIC_GLASS_RIM_OPACITY.first().unwrap().1 > 0.0);
+        assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 10.0);
+        assert_eq!(DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, 0.75);
+        assert_eq!(glass_rim_opacity_at(0.0), 0.0);
+        assert_eq!(glass_rim_opacity_at(DYNAMIC_GLASS_FADE_START), 0.0);
+        assert!(glass_rim_opacity_at(0.82) > 0.0);
         assert!(DYNAMIC_GLASS_RIM_OPACITY.last().unwrap().1 > 0.0);
-        let mut previous = DYNAMIC_GLASS_RIM_OPACITY[0].1;
         for pair in DYNAMIC_GLASS_RIM_OPACITY.windows(2) {
             assert!(pair[1].1 >= 0.0 && pair[1].1 <= 1.0);
             assert!(pair[0].0 < pair[1].0);
-            previous = pair[1].1;
         }
-        assert_eq!(previous, DYNAMIC_GLASS_RIM_OPACITY.last().unwrap().1);
+        for step in 0..=100 {
+            let position = step as f32 / 100.;
+            if position <= DYNAMIC_GLASS_FADE_START {
+                assert_eq!(glass_rim_opacity_at(position), 0.0);
+            }
+        }
     }
 
     #[test]
