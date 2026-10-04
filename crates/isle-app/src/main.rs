@@ -2168,6 +2168,14 @@ impl App {
                 self.ui_v2, p95_of(&self.render_cpu_ms), p95_of(&self.region_ms),
                 self.renderer.as_ref().map(|renderer| renderer.artwork_upload_ms).unwrap_or(0.),
                 self.renderer.as_ref().map(|renderer| renderer.blur_build_ms).unwrap_or(0.)));
+            text.push_str(&format!(
+                ",\"systemBackdropSupported\":{}",
+                self.renderer
+                    .as_ref()
+                    .and_then(|renderer| renderer.system_backdrop_supported)
+                    .map(|supported| supported.to_string())
+                    .unwrap_or_else(|| "null".into())
+            ));
             text.push_str(&format!(",\"playerDialogAlive\":{},\"playerListReady\":{},\"playerListRows\":{},\"playerSelectionAutomatic\":{},\"playerAllowedCount\":{},\"playerOrderCount\":{}",self.player_dialog.is_some(),self.player_dialog.as_ref().is_some_and(|d|d.ready()),self.player_dialog.as_ref().map(|d|d.row_count()).unwrap_or(0),self.configuration.selection.allowed.is_none(),self.configuration.selection.allowed.as_ref().map(|ids|ids.len()).unwrap_or(0),self.configuration.selection.order.len()));
             text.push_str(&format!(
                 ",\"clockZoneIndex\":{},\"clockZoneSupported\":{}",

@@ -4,7 +4,7 @@ fn main() {
     // Optionally copy user-provided font assets beside the executable. No font
     // installation, registry writes or dependency on the repository at runtime.
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let source = manifest.join("../../public/fonts");
+    let source = manifest.join("../../local-only/assets/fonts");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     embed_windows_identity(&manifest, &out);
     let destination = out.ancestors().nth(3).unwrap().join("fonts");

@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.35**（Cargo / Windows 文件版本 `0.35.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.36**（Cargo / Windows 文件版本 `0.36.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -72,6 +72,8 @@ cargo test --workspace
 
 0.35 增加网易云播放模式切换白名单与读回验证，只允许顺序、列表循环、单曲循环和随机；当前模式为 AI/FM/未知时拒绝派发。Loopback mock 确认 dispatch payload 与目标模式读回匹配；实际客户端写入验收仍待有活动调试会话时完成。
 
+0.36 在 UI 2.0 展开播放器的透明层下启用 Windows DWM Desktop Acrylic，并将轮廓内缘高光扩为渐变玻璃带；不支持系统材质时保留透明渐变。副屏在 96 DPI 与合成 200% DPI 完成视觉检查；真实采样位移式边缘折射仍需继续打磨。
+
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 
 0.20 Settings 为原生按钮、复选框、文本框、滑块和组合框接入对应 UIA 控件类型与 Invoke、Toggle、Value、RangeValue、ExpandCollapse 模式。隔离配置下在 `\\.\DISPLAY2` 实测导航、复选框切换并还原、滑块设值并还原、组合框展开/收起、文本框设值并还原；主窗口与设置窗口都通过副屏检查，进程正常退出。ComboBox 项选择、键盘矩阵、Settings 专项视觉及真实混合 DPI 仍待验收。
@@ -92,7 +94,7 @@ Windows CI 执行 fmt、check、Clippy、工作区测试及 Release 构建。CI 
 
 ## MiSans 字体
 
-出于字体许可条款，本仓库不再携带 MiSans 字体文件。若你已从[小米官方字体页面](https://hyperos.mi.com/font/zh/download/)取得相应使用许可，可将 `MiSans-Regular.ttf`、`MiSans-Medium.ttf`、`MiSans-Bold.ttf` 放入仓库根目录的 `public/fonts/`。构建会将找到的字重复制到可执行文件旁的 `fonts/`；缺少字体时程序回退到 Segoe UI。
+MiSans 字体文件保存在被 Git 忽略的 `local-only/assets/fonts/` 中。若你已取得相应使用许可，可将 `MiSans-Regular.ttf`、`MiSans-Medium.ttf`、`MiSans-Bold.ttf` 放入该目录。构建会将找到的字重复制到可执行文件旁的 `fonts/`，并通过进程私有字体集合加载；缺少字体时程序回退到 Segoe UI。
 
 ## 许可证
 

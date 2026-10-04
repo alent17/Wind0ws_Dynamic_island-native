@@ -15,6 +15,10 @@ use windows::{
             Direct3D11::*,
             DirectComposition::*,
             DirectWrite::*,
+            Dwm::{
+                DwmSetWindowAttribute, DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW,
+                DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_HOSTBACKDROPBRUSH,
+            },
             Dxgi::{Common::*, *},
         },
     },
@@ -40,6 +44,8 @@ pub struct Renderer {
     fonts: Option<IDWriteFontCollection>,
     pub font_family: &'static str,
     swap: IDXGISwapChain1,
+    hwnd: HWND,
+    backdrop_requested: Option<bool>,
     _composition: IDCompositionDevice,
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
@@ -51,6 +57,7 @@ pub struct Renderer {
     pub frames: u64,
     pub title_overflow: bool,
     pub opaque_preview: bool,
+    pub system_backdrop_supported: Option<bool>,
     /// CPU time for draw submission through EndDraw, excluding swap-chain Present.
     pub render_cpu_ms: f64,
     pub artwork_upload_ms: f64,
@@ -76,6 +83,8 @@ const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 5] = [
     (0.82, 0.10),
     (1.0, 0.22),
 ];
+const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 18.;
+const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 2.;
 
 fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
     profile
@@ -532,6 +541,8 @@ impl Renderer {
             factory,
             write,
             swap,
+            hwnd,
+            backdrop_requested: None,
             _composition: composition,
             _target: target,
             _visual: visual,
@@ -556,6 +567,7 @@ impl Renderer {
             frames: 0,
             title_overflow: false,
             opaque_preview: false,
+            system_backdrop_supported: None,
             render_cpu_ms: 0.,
             artwork_upload_ms: 0.,
             blur_build_ms: 0.,
@@ -764,6 +776,32 @@ impl Renderer {
         pressed: Option<Hit>,
         dragging: bool,
     ) -> Result<()> {
+        let wants_backdrop = m.ui_v2 && m.expanded && !self.opaque_preview;
+        if self.backdrop_requested != Some(wants_backdrop) {
+            // Windows 11 22H2+ draws Desktop Acrylic under transparent
+            // DirectComposition pixels. Older Windows versions reject this
+            // attribute; the renderer then keeps its transparent fallback.
+            let backdrop = if wants_backdrop {
+                DWMSBT_TRANSIENTWINDOW.0
+            } else {
+                DWMSBT_NONE.0
+            };
+            let host_backdrop = BOOL(wants_backdrop as i32);
+            let host_result = DwmSetWindowAttribute(
+                self.hwnd,
+                DWMWA_USE_HOSTBACKDROPBRUSH,
+                (&host_backdrop as *const BOOL).cast(),
+                std::mem::size_of_val(&host_backdrop) as u32,
+            );
+            let backdrop_result = DwmSetWindowAttribute(
+                self.hwnd,
+                DWMWA_SYSTEMBACKDROP_TYPE,
+                (&backdrop as *const i32).cast(),
+                std::mem::size_of_val(&backdrop) as u32,
+            );
+            self.system_backdrop_supported = Some(host_result.is_ok() && backdrop_result.is_ok());
+            self.backdrop_requested = Some(wants_backdrop);
+        }
         let render_started = Instant::now();
         let dt = self
             .last_draw_now
@@ -940,8 +978,20 @@ impl Renderer {
             self.glass_rim_brush
                 .SetStartPoint(point(origin.x, origin.y));
             self.glass_rim_brush.SetEndPoint(point(origin.x, end_y));
-            self.ctx
-                .DrawGeometry(&shape, &self.glass_rim_brush, 1.25, None);
+            // The wide translucent band is clipped to the island outline, so
+            // it occupies roughly 9 px inward and reads as a refractive edge.
+            self.ctx.DrawGeometry(
+                &shape,
+                &self.glass_rim_brush,
+                DYNAMIC_GLASS_REFRACTION_WIDTH,
+                None,
+            );
+            self.ctx.DrawGeometry(
+                &shape,
+                &self.glass_rim_brush,
+                DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
+                None,
+            );
         } else if m.expanded {
             self.ink(color(1., 1., 1., 0.1));
             self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
@@ -1701,7 +1751,9 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cover_spectrum_palette, format_media_time, should_build_glass_blur, DYNAMIC_GLASS_OPACITY,
+        cover_spectrum_palette, format_media_time, should_build_glass_blur,
+        DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_OPACITY, DYNAMIC_GLASS_REFRACTION_WIDTH,
+        DYNAMIC_GLASS_RIM_OPACITY,
     };
 
     fn sample_opacity(profile: &[(f32, f32)], position: f32) -> f32 {
@@ -1730,6 +1782,21 @@ mod tests {
             );
             previous = current;
         }
+    }
+
+    #[test]
+    fn dynamic_glass_has_a_clipped_inner_refraction_band_and_fading_highlight() {
+        assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 18.0);
+        assert_eq!(DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, 2.0);
+        assert!(DYNAMIC_GLASS_RIM_OPACITY.first().unwrap().1 > 0.0);
+        assert!(DYNAMIC_GLASS_RIM_OPACITY.last().unwrap().1 > 0.0);
+        let mut previous = DYNAMIC_GLASS_RIM_OPACITY[0].1;
+        for pair in DYNAMIC_GLASS_RIM_OPACITY.windows(2) {
+            assert!(pair[1].1 >= 0.0 && pair[1].1 <= 1.0);
+            assert!(pair[0].0 < pair[1].0);
+            previous = pair[1].1;
+        }
+        assert_eq!(previous, DYNAMIC_GLASS_RIM_OPACITY.last().unwrap().1);
     }
 
     #[test]
