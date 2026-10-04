@@ -7,6 +7,8 @@ use crate::{
     visual_state::VisualState,
 };
 pub const HOST: f32 = 480.;
+const TIMER_ACTIVITY_ID: &str = "isle.timer";
+const TIMER_COMPLETION_TTL: f64 = 3.;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Page {
     Music,
@@ -97,6 +99,7 @@ pub struct Model {
     pub timer_minutes: u16,
     pub timer_active: bool,
     pub timer_finished: bool,
+    pub timer_completed_at: Option<f64>,
     pub now: f64,
     pub track: usize,
     pub title_started: f64,
@@ -153,6 +156,7 @@ impl Default for Model {
             timer_minutes: 20,
             timer_active: false,
             timer_finished: false,
+            timer_completed_at: None,
             now: 0.,
             track: 0,
             title_started: 0.,
@@ -209,12 +213,80 @@ impl Model {
     pub fn set_activities(&mut self, activities: Vec<crate::state::LiveActivity>) {
         self.ui_state.activities = activities
             .into_iter()
-            .filter(|activity| activity.valid())
+            .filter(|activity| activity.valid() && activity.id != TIMER_ACTIVITY_ID)
             .take(2)
             .collect();
+        self.sync_timer_activity();
         if self.ui_v2 {
             self.retarget();
         }
+    }
+    fn sync_timer_activity(&mut self) {
+        self.ui_state
+            .activities
+            .retain(|activity| activity.id != TIMER_ACTIVITY_ID);
+        if let Some(activity) = self.timer_activity() {
+            self.ui_state.activities.push(activity);
+            self.ui_state
+                .activities
+                .sort_by_key(|activity| std::cmp::Reverse(activity.priority));
+            self.ui_state.activities.truncate(2);
+        }
+    }
+    fn timer_activity(&self) -> Option<crate::state::LiveActivity> {
+        use crate::state::{ActivityKind, LiveActivity};
+
+        if !self.timer_active && !self.timer_finished {
+            return None;
+        }
+        let expires_at = if self.timer_finished {
+            let deadline = self.timer_completed_at? + TIMER_COMPLETION_TTL;
+            if self.now >= deadline {
+                return None;
+            }
+            Some(deadline)
+        } else {
+            None
+        };
+        let total_seconds = self.timer_left.max(0.).ceil() as u64;
+        let remaining = if total_seconds >= 3600 {
+            format!(
+                "{}:{:02}:{:02}",
+                total_seconds / 3600,
+                (total_seconds / 60) % 60,
+                total_seconds % 60
+            )
+        } else {
+            format!("{}:{:02}", total_seconds / 60, total_seconds % 60)
+        };
+        let status = if self.timer_finished {
+            "计时完成"
+        } else if self.timer_deadline.is_some() {
+            "进行中"
+        } else {
+            "已暂停"
+        };
+        let progress = if self.timer_finished {
+            1.
+        } else if self.timer_duration > 0. {
+            (1. - self.timer_left / self.timer_duration).clamp(0., 1.) as f32
+        } else {
+            0.
+        };
+        Some(LiveActivity {
+            id: TIMER_ACTIVITY_ID.into(),
+            kind: ActivityKind::Timer,
+            title: "倒计时".into(),
+            value: if self.timer_finished {
+                status.into()
+            } else {
+                format!("{remaining} · {status}")
+            },
+            progress: Some(progress),
+            priority: 100,
+            expires_at,
+            completed: self.timer_finished,
+        })
     }
     pub fn progress_tick(&self) -> bool {
         self.expanded
@@ -465,9 +537,11 @@ impl Model {
                 self.timer_deadline = None;
                 self.timer_active = false;
                 self.timer_finished = true;
+                self.timer_completed_at = Some(now);
                 self.switch(Page::Timer);
             }
         }
+        self.sync_timer_activity();
     }
     pub fn moving(&self) -> bool {
         self.width.active()
@@ -1129,6 +1203,7 @@ impl Model {
                     }
                     self.timer_active = true;
                     self.timer_finished = false;
+                    self.timer_completed_at = None;
                     self.timer_deadline = Some(self.now + self.timer_left);
                 }
             }
@@ -1136,10 +1211,12 @@ impl Model {
                 self.timer_deadline = None;
                 self.timer_active = false;
                 self.timer_finished = false;
+                self.timer_completed_at = None;
                 self.timer_left = f64::from(self.timer_minutes) * 60.;
             }
             Hit::Dismiss => {
                 self.timer_finished = false;
+                self.timer_completed_at = None;
                 self.switch(Page::Music);
             }
             Hit::Devices => {
@@ -1162,6 +1239,7 @@ impl Model {
             | Hit::WeatherSettings
             | Hit::Seek => {}
         }
+        self.sync_timer_activity();
     }
 }
 #[derive(Default)]
@@ -1533,6 +1611,88 @@ mod tests {
         m.activate(Hit::Dismiss);
         assert_eq!(m.page(), Page::Music);
         assert!(!m.timer_finished);
+    }
+    #[test]
+    fn timer_activity_tracks_running_paused_resumed_and_reset_states() {
+        let mut m = Model {
+            reduced: true,
+            ..Model::default()
+        };
+        m.set_timer_minutes(1.);
+        m.activate(Hit::Timer);
+        m.step(0., 20.);
+        let activity = m.ui_state.activities.first().unwrap();
+        assert_eq!(activity.id, TIMER_ACTIVITY_ID);
+        assert_eq!(activity.kind, crate::state::ActivityKind::Timer);
+        assert_eq!(activity.value, "0:40 · 进行中");
+        assert!((activity.progress.unwrap() - (1. / 3.)).abs() < 0.001);
+        assert!(!activity.completed);
+        assert_eq!(activity.expires_at, None);
+
+        m.activate(Hit::Timer);
+        let activity = m.ui_state.activities.first().unwrap();
+        assert_eq!(activity.value, "0:40 · 已暂停");
+        assert_eq!(activity.progress, Some(1. / 3.));
+        assert_eq!(activity.expires_at, None);
+
+        m.activate(Hit::Timer);
+        m.step(0., 30.);
+        assert_eq!(m.ui_state.activities[0].value, "0:30 · 进行中");
+
+        m.activate(Hit::Reset);
+        assert!(m.ui_state.activities.is_empty());
+    }
+    #[test]
+    fn completed_timer_activity_expires_once_without_reappearing() {
+        let mut m = Model {
+            timer_left: 2.,
+            timer_duration: 10.,
+            timer_active: true,
+            timer_deadline: Some(2.),
+            ..Model::default()
+        };
+        m.step(0., 2.);
+        let activity = m.ui_state.activities.first().unwrap();
+        assert_eq!(activity.value, "计时完成");
+        assert!(activity.completed);
+        assert_eq!(activity.progress, Some(1.));
+        assert_eq!(activity.expires_at, Some(5.));
+
+        m.step(0., 5.);
+        assert!(m.ui_state.activities.is_empty());
+        assert!(m.timer_finished);
+        m.step(0., 6.);
+        assert!(m.ui_state.activities.is_empty());
+    }
+    #[test]
+    fn timer_activity_uses_one_of_two_slots_by_priority() {
+        let mut m = Model::default();
+        m.activate(Hit::Timer);
+        m.set_activities(vec![
+            crate::state::LiveActivity {
+                id: "important".into(),
+                kind: crate::state::ActivityKind::Media,
+                title: "Priority".into(),
+                value: "High".into(),
+                progress: None,
+                priority: 120,
+                expires_at: None,
+                completed: false,
+            },
+            crate::state::LiveActivity {
+                id: "normal".into(),
+                kind: crate::state::ActivityKind::Volume,
+                title: "Volume".into(),
+                value: "50%".into(),
+                progress: Some(0.5),
+                priority: 50,
+                expires_at: None,
+                completed: false,
+            },
+        ]);
+        assert_eq!(m.ui_state.activities.len(), 2);
+        assert_eq!(m.ui_state.activities[0].id, "important");
+        assert_eq!(m.ui_state.activities[1].id, TIMER_ACTIVITY_ID);
     }
     #[test]
     fn timer_ruler_bounds_pause_resume_and_reset_survive_page_switches() {

@@ -205,18 +205,34 @@ try:
                           lambda data: data.get('timerRunning') and 1495 <= data.get('timerLeft', 0) <= 1500,
                           'custom 25-minute countdown did not start within the expected 1495–1500 second range')
     started = state
+    started_activity = started.get('timerActivity')
+    if (not started_activity
+            or started_activity.get('id') != 'isle.timer'
+            or started_activity.get('value') != '25:00 · 进行中'
+            or started_activity.get('completed')
+            or started_activity.get('expiresAt') is not None
+            or not 0.0 <= started_activity.get('progress', -1.0) < 0.01):
+        raise AssertionError(f'running timer activity did not match countdown state: {started_activity}')
     wait_until(lambda: not bool(u.IsWindowVisible(edit)), 'active countdown did not hide the custom-time Edit')
 
     post(timer, 0x0100, 0x20, 0)
     paused = wait_snapshot(host, proc.pid,
                            lambda data: not data.get('timerRunning') and 1495 <= data.get('timerLeft', 0) <= 1500,
                            'countdown did not pause near its selected 25-minute duration')
+    paused_activity = paused.get('timerActivity')
+    if (not paused_activity
+            or paused_activity.get('value') != '25:00 · 已暂停'
+            or paused_activity.get('completed')
+            or paused_activity.get('expiresAt') is not None):
+        raise AssertionError(f'paused timer activity did not preserve its state: {paused_activity}')
 
     post(timer, 0x0100, 0x52, 0)  # R => reset
     wait_until(lambda: bool(u.IsWindowVisible(edit)), 'reset did not restore the custom-time Edit')
     reset = snapshot(host, proc.pid)
     if reset.get('timerRunning') or abs(reset.get('timerLeft', 0) - 1500) > .001:
         raise AssertionError(f'countdown reset did not restore exactly 1500 seconds: {reset}')
+    if reset.get('timerActivity') is not None:
+        raise AssertionError(f'reset timer activity should have been removed: {reset.get("timerActivity")}')
     if text(edit) != '25':
         raise AssertionError(f'timer edit lost selected custom value after reset: {text(edit)!r}')
 
@@ -235,6 +251,8 @@ try:
         'customEditTextAfterSet': text(edit),
         'crossProcessWmSetTextResult': set_text_result,
         'customDurationStarted': {'timerRunning': started.get('timerRunning'), 'timerLeft': started.get('timerLeft')},
+        'runningActivity': started_activity,
+        'pausedActivity': paused_activity,
         'paused': {'timerRunning': paused.get('timerRunning'), 'timerLeft': paused.get('timerLeft')},
         'reset': {'timerRunning': reset.get('timerRunning'), 'timerLeft': reset.get('timerLeft')},
         'demoServiceFieldsAbsent': True,

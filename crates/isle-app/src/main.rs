@@ -2174,6 +2174,25 @@ impl App {
             let text=format!("{{\"prototype\":true,\"renderer\":\"Direct2D/DirectComposition\",\"elapsedSeconds\":{},\"frames\":{},\"drawAndPresentP95Ms\":{},\"livePages\":{},\"pageGenerations\":{},\"regionPoints\":{},\"scale\":{},\"timerIntervalMs\":{},\"fontFamily\":\"{}\",\"highResolutionTimer\":{},\"presentCallIntervalMeanMs\":{},\"presentCallIntervalP95Ms\":{},\"intervalSamples\":{},\"suspended\":{},\"rendererAlive\":{},\"timerRunning\":{},\"timerLeft\":{},\"pendingCompletion\":{}}}",self.start.elapsed().as_secs_f64(),self.total_frames,p95,usize::from(self.model.current.is_some()),self.model.generation,self.region.len(),self.scale,self.interval,self.font_family,self.frame_timer.high_resolution,interval_mean,interval_p95,intervals.len(),self.suspended,self.renderer.is_some(),self.model.timer_deadline.is_some(),self.model.timer_left,self.pending_completion);
             let mut text = text;
             text.pop();
+            let timer_activity = self
+                .model
+                .ui_state
+                .activities
+                .iter()
+                .find(|activity| activity.id == "isle.timer")
+                .map(|activity| {
+                    serde_json::json!({
+                        "id": activity.id,
+                        "title": activity.title,
+                        "value": activity.value,
+                        "progress": activity.progress,
+                        "priority": activity.priority,
+                        "expiresAt": activity.expires_at,
+                        "completed": activity.completed,
+                    })
+                })
+                .unwrap_or(serde_json::Value::Null);
+            text.push_str(&format!(",\"timerActivity\":{timer_activity}"));
             let p95_of = |values: &[f64]| {
                 let mut sorted = values.to_vec();
                 sorted.sort_by(f64::total_cmp);

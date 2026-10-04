@@ -33,7 +33,7 @@ def snapshot(hwnd, path):
     u.PostMessageW(hwnd,0x803c,0,0)
     for _ in range(100):
         if path.exists() and path.stat().st_mtime_ns!=previous:
-            try:return json.loads(path.read_text())
+            try:return json.loads(path.read_text(encoding='utf-8'))
             except json.JSONDecodeError:pass
         time.sleep(.03)
     raise AssertionError('diagnostic snapshot timeout')
@@ -91,6 +91,10 @@ try:
     completed=snapshot(hwnd,report)
     assert completed['frames']==frames and completed['pendingCompletion'],completed
     assert not completed['timerRunning'] and completed['livePages']==0,completed
+    finished_activity=completed.get('timerActivity')
+    assert finished_activity and finished_activity['id']=='isle.timer',completed
+    assert finished_activity['completed'] and finished_activity['progress']==1.0,completed
+    assert finished_activity['expiresAt'] is not None,completed
     u.ShowWindow(hwnd,4);time.sleep(.3)
     restored=snapshot(hwnd,report)
     assert restored['rendererAlive'] and restored['livePages']==1 and not restored['pendingCompletion'],restored
@@ -100,6 +104,15 @@ try:
     u.ShowWindow(hwnd,9);time.sleep(.3)
     final=snapshot(hwnd,report)
     assert not final['suspended'] and final['rendererAlive'],final
+    expiry_elapsed=finished_activity['expiresAt']
+    deadline=time.monotonic()+max(0.,expiry_elapsed-final['elapsedSeconds'])+1.0
+    expired=final
+    while time.monotonic()<deadline:
+        expired=snapshot(hwnd,report)
+        if expired['elapsedSeconds']>=expiry_elapsed and expired['timerActivity'] is None:
+            break
+        time.sleep(.05)
+    assert expired['elapsedSeconds']>=expiry_elapsed and expired['timerActivity'] is None,expired
 finally:close(proc,hwnd)
-(OUT/'display-lifecycle-results.json').write_text(json.dumps({'layouts':results,'dpiTransitions':transitions,'hidden':hidden,'completed':completed,'restored':restored,'minimized':minimized,'final':final},indent=2))
+(OUT/'display-lifecycle-results.json').write_text(json.dumps({'layouts':results,'dpiTransitions':transitions,'hidden':hidden,'completed':completed,'restored':restored,'minimized':minimized,'final':final,'expired':expired},indent=2))
 print('32 synthetic DPI/layout cases and hide/countdown/minimize/restore checks passed')

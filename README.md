@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.51**（Cargo / Windows 文件版本 `0.51.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.52**（Cargo / Windows 文件版本 `0.52.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -121,6 +121,8 @@ cargo test --workspace
 Windows CI 执行 fmt、check、Clippy、工作区测试及 Release 构建。CI 结果以 GitHub Actions 实际运行记录为准，构建通过不代表 UI 实机验收通过。
 
 0.12 修复首轮远端 CI 的 Clippy 阻塞：blur 缩略图采样改用 `checked_div`，保持空样本为透明像素，继续将全部 Clippy 警告作为错误。当前播放器布局保持不变。
+
+0.52 将真实倒计时状态接入同一活动队列：运行、暂停、恢复、重置均同步剩余时间和进度；完成状态只保留 3 秒并自然过期，不会被逐帧重新创建。活动按优先级争用两个展示槽，计时器不会伪造媒体数据。
 
 ## MiSans 字体
 
