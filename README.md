@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.54**（Cargo / Windows 文件版本 `0.54.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.55**（Cargo / Windows 文件版本 `0.55.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -127,6 +127,8 @@ Windows CI 执行 fmt、check、Clippy、工作区测试及 Release 构建。CI 
 0.53 将系统确认的音量与静音状态接入同一活动队列；只有相对于已识别端点的真实变化才发布，显示真实百分比/静音状态并在 2.5 秒后清除。独立到期定时器在静止界面也会准确清理提示。
 
 0.54 在同一个灵动岛 HWND 和渲染路径中为最高优先级的两个 Activity 增加紧凑侧槽；槽位跟随四边布局并限制在宿主范围，展开时隐藏。DISPLAY2 通过 0/1/2/3 项数量、可见像素、窗口输入命中、32 组 DPI/生命周期和 Dynamic Glass 黑区/透明尾部回归。
+
+0.55 将有界 `ActivityManager` 接入 UI 模型与到期唤醒：队列最多 32 项，优先级更新即时争用两个展示槽，同一 ID 原位更新，隐藏队列项目也按 TTL 清理，到期后立即补位；内建计时器与音量活动统一参与仲裁。
 
 ## MiSans 字体
 

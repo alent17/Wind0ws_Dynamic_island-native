@@ -116,6 +116,7 @@ pub struct Model {
     /// existing automation and deployments keep their established surface.
     pub ui_v2: bool,
     pub ui_state: UiState,
+    pub activity_manager: isle_core::activity::ActivityManager,
     pub visual_state: VisualState,
     pub motion_time_scale: f32,
 }
@@ -172,6 +173,7 @@ impl Default for Model {
             tool_mask: [true; 7],
             ui_v2: false,
             ui_state: UiState::default(),
+            activity_manager: isle_core::activity::ActivityManager::default(),
             visual_state: VisualState::default(),
             motion_time_scale: 1.,
         }
@@ -215,19 +217,38 @@ impl Model {
         self.ui_state.interaction.inspection_lock = locked;
     }
     pub fn set_activities(&mut self, activities: Vec<crate::state::LiveActivity>) {
-        self.ui_state.activities = activities
-            .into_iter()
-            .filter(|activity| {
-                activity.valid()
-                    && activity.id != TIMER_ACTIVITY_ID
-                    && activity.id != VOLUME_ACTIVITY_ID
-            })
-            .take(2)
-            .collect();
-        self.sync_local_activities();
-        if self.ui_v2 {
-            self.retarget();
+        self.activity_manager.clear();
+        for activity in activities.into_iter().filter(|activity| {
+            activity.id != TIMER_ACTIVITY_ID && activity.id != VOLUME_ACTIVITY_ID
+        }) {
+            self.activity_manager.update(activity);
         }
+        self.sync_local_activities();
+    }
+    pub fn update_activity(&mut self, activity: crate::state::LiveActivity) -> bool {
+        let changed = activity.id != TIMER_ACTIVITY_ID
+            && activity.id != VOLUME_ACTIVITY_ID
+            && self.activity_manager.update(activity);
+        if changed {
+            self.sync_activity_slots();
+        }
+        changed
+    }
+    pub fn dismiss_activity(&mut self, id: &str) -> bool {
+        if id == TIMER_ACTIVITY_ID || id == VOLUME_ACTIVITY_ID {
+            return false;
+        }
+        let dismissed = self.activity_manager.dismiss(id);
+        if dismissed {
+            self.sync_activity_slots();
+        }
+        dismissed
+    }
+    pub fn next_activity_expiry(&self) -> Option<f64> {
+        self.activity_manager.next_expiry()
+    }
+    pub fn queued_activity_count(&self) -> usize {
+        self.activity_manager.queued()
     }
     pub fn set_audio_snapshot(&mut self, audio: isle_core::AudioSnapshot) {
         let changed = self.audio.as_ref().is_some_and(|previous| {
@@ -241,19 +262,26 @@ impl Model {
         self.sync_local_activities();
     }
     fn sync_local_activities(&mut self) {
-        self.ui_state.activities.retain(|activity| {
-            activity.id != TIMER_ACTIVITY_ID && activity.id != VOLUME_ACTIVITY_ID
-        });
         if let Some(activity) = self.timer_activity() {
-            self.ui_state.activities.push(activity);
+            self.activity_manager.update(activity);
+        } else {
+            self.activity_manager.dismiss(TIMER_ACTIVITY_ID);
         }
         if let Some(activity) = self.volume_activity() {
-            self.ui_state.activities.push(activity);
+            self.activity_manager.update(activity);
+        } else {
+            self.activity_manager.dismiss(VOLUME_ACTIVITY_ID);
         }
-        self.ui_state
-            .activities
-            .sort_by_key(|activity| std::cmp::Reverse(activity.priority));
-        self.ui_state.activities.truncate(2);
+        self.activity_manager.expire(self.now.max(0.));
+        self.sync_activity_slots();
+    }
+    fn sync_activity_slots(&mut self) {
+        let activities = self.activity_manager.slots();
+        let changed = self.ui_state.activities != activities;
+        self.ui_state.activities = activities;
+        if changed && self.ui_v2 {
+            self.retarget();
+        }
     }
     fn timer_activity(&self) -> Option<crate::state::LiveActivity> {
         use crate::state::{ActivityKind, LiveActivity};
@@ -810,11 +838,7 @@ impl Model {
             }
         }
         layout.activities = if self.ui_v2 && !self.expanded {
-            crate::layout::activity_slots(
-                layout.surface,
-                self.edge,
-                self.ui_state.activities.len().min(2),
-            )
+            crate::layout::activity_slots(layout.surface, self.edge, self.ui_state.activities.len())
         } else {
             Vec::new()
         };
@@ -1751,6 +1775,94 @@ mod tests {
         assert_eq!(m.ui_state.activities.len(), 2);
         assert_eq!(m.ui_state.activities[0].id, "important");
         assert_eq!(m.ui_state.activities[1].id, TIMER_ACTIVITY_ID);
+    }
+    #[test]
+    fn activity_manager_arbitrates_more_than_two_items_and_priority_updates() {
+        let mut m = Model::default();
+        let activity = |id: &str, priority| crate::state::LiveActivity {
+            id: id.into(),
+            kind: crate::state::ActivityKind::Media,
+            title: id.into(),
+            value: id.into(),
+            progress: None,
+            priority,
+            expires_at: None,
+            completed: false,
+        };
+
+        m.set_activities(vec![
+            activity("low", 10),
+            activity("medium", 50),
+            activity("high", 100),
+        ]);
+        assert_eq!(
+            m.ui_state
+                .activities
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["high", "medium"]
+        );
+        assert_eq!(m.queued_activity_count(), 1);
+
+        assert!(m.update_activity(activity("low", 120)));
+        assert_eq!(m.ui_state.activities[0].id, "low");
+        assert_eq!(m.ui_state.activities[1].id, "high");
+        assert_eq!(m.queued_activity_count(), 1);
+        assert!(!m.update_activity(activity("low", 120)));
+    }
+    #[test]
+    fn activity_manager_expires_hidden_queue_items_and_promotes_next_slot() {
+        let mut m = Model::default();
+        let activity = |id: &str, priority, expires_at| crate::state::LiveActivity {
+            id: id.into(),
+            kind: crate::state::ActivityKind::Media,
+            title: id.into(),
+            value: id.into(),
+            progress: None,
+            priority,
+            expires_at,
+            completed: false,
+        };
+        m.set_activities(vec![
+            activity("first", 100, Some(10.)),
+            activity("second", 90, None),
+            activity("queued-expiring", 20, Some(1.)),
+        ]);
+        assert_eq!(m.queued_activity_count(), 1);
+        assert_eq!(m.next_activity_expiry(), Some(1.));
+
+        m.step(0., 1.);
+        assert_eq!(m.queued_activity_count(), 0);
+        assert_eq!(m.next_activity_expiry(), Some(10.));
+        assert_eq!(m.ui_state.activities[0].id, "first");
+        assert_eq!(m.ui_state.activities[1].id, "second");
+
+        assert!(m.dismiss_activity("first"));
+        assert_eq!(m.ui_state.activities.len(), 1);
+        assert_eq!(m.ui_state.activities[0].id, "second");
+        assert!(!m.dismiss_activity("missing"));
+    }
+    #[test]
+    fn activity_manager_respects_bounded_capacity_and_reserved_local_sources() {
+        let mut m = Model::default();
+        let activities = (0..40)
+            .map(|index| crate::state::LiveActivity {
+                id: format!("queue.{index}"),
+                kind: crate::state::ActivityKind::Media,
+                title: "Queue item".into(),
+                value: index.to_string(),
+                progress: None,
+                priority: 10,
+                expires_at: None,
+                completed: false,
+            })
+            .collect();
+        m.set_activities(activities);
+        assert_eq!(m.ui_state.activities.len(), 2);
+        assert_eq!(m.queued_activity_count(), 30);
+        assert!(!m.dismiss_activity(TIMER_ACTIVITY_ID));
+        assert!(!m.dismiss_activity(VOLUME_ACTIVITY_ID));
     }
     #[test]
     fn ui_v2_compact_activities_use_bounded_side_slots_on_every_edge() {

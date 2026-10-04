@@ -33,12 +33,15 @@ impl LiveActivity {
                 .is_none_or(|time| time.is_finite() && time >= 0.0)
     }
 }
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ActivityManager {
     entries: VecDeque<LiveActivity>,
 }
 impl ActivityManager {
     pub const CAPACITY: usize = 32;
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
     /// Same identity updates in place. Lower priority overflow is discarded.
     pub fn update(&mut self, activity: LiveActivity) -> bool {
         if !activity.valid() {

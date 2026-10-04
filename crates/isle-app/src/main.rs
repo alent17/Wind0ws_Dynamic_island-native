@@ -919,14 +919,7 @@ impl App {
             );
         }
         if !self.suspended && !self.model.continuous() {
-            if let Some(deadline) = self
-                .model
-                .ui_state
-                .activities
-                .iter()
-                .filter_map(|activity| activity.expires_at)
-                .min_by(f64::total_cmp)
-            {
+            if let Some(deadline) = self.model.next_activity_expiry() {
                 let delay = ((deadline - self.model.now).max(0.001) * 1000.)
                     .ceil()
                     .clamp(1., u32::MAX as f64) as u32;
@@ -1958,11 +1951,10 @@ impl App {
                 changed = self.model.continuous()
                     || self.model.progress_tick()
                     || self.model.timer_deadline.is_some()
-                    || self.model.ui_state.activities.iter().any(|activity| {
-                        activity
-                            .expires_at
-                            .is_some_and(|deadline| deadline <= elapsed)
-                    })
+                    || self
+                        .model
+                        .next_activity_expiry()
+                        .is_some_and(|deadline| deadline <= elapsed)
                     || self.scripted
                     || (self.model.expanded
                         && matches!(self.model.page(), Page::Clock | Page::Weather));
@@ -2328,6 +2320,12 @@ impl App {
                 ",\"activityRects\":{},\"activityIds\":{}",
                 serde_json::to_string(&activity_rects).unwrap_or_else(|_| "[]".into()),
                 serde_json::to_string(&activity_ids).unwrap_or_else(|_| "[]".into())
+            ));
+            text.push_str(&format!(
+                ",\"activityQueued\":{},\"activityNextExpiry\":{}",
+                self.model.queued_activity_count(),
+                serde_json::to_string(&self.model.next_activity_expiry())
+                    .unwrap_or_else(|_| "null".into())
             ));
             let p95_of = |values: &[f64]| {
                 let mut sorted = values.to_vec();
@@ -2891,43 +2889,63 @@ unsafe fn run() -> Result<()> {
         model.retarget();
     }
     if test_fixture {
-        let activity_count = value(&args, "--test-activities")
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(0)
-            .min(3);
-        let fixtures = [
-            isle_core::activity::LiveActivity {
-                id: "fixture.timer".into(),
-                kind: isle_core::activity::ActivityKind::Timer,
-                title: "倒计时".into(),
-                value: "1:24 · 进行中".into(),
-                progress: Some(0.3),
-                priority: 120,
-                expires_at: None,
-                completed: false,
-            },
-            isle_core::activity::LiveActivity {
-                id: "fixture.volume".into(),
-                kind: isle_core::activity::ActivityKind::Volume,
-                title: "音量".into(),
-                value: "42% · 未静音".into(),
-                progress: Some(0.42),
-                priority: 90,
-                expires_at: None,
-                completed: false,
-            },
-            isle_core::activity::LiveActivity {
-                id: "fixture.media".into(),
+        if args.iter().any(|arg| arg == "--test-activity-queue") {
+            let activity = |id: &str, priority, expires_at| isle_core::activity::LiveActivity {
+                id: id.into(),
                 kind: isle_core::activity::ActivityKind::Media,
-                title: "音乐".into(),
-                value: "播放中".into(),
+                title: id.into(),
+                value: id.into(),
                 progress: None,
-                priority: 60,
-                expires_at: None,
+                priority,
+                expires_at,
                 completed: false,
-            },
-        ];
-        model.set_activities(fixtures.into_iter().take(activity_count).collect());
+            };
+            model.set_activities(vec![
+                activity("queue.primary", 120, Some(6.)),
+                activity("queue.secondary", 100, None),
+                activity("queue.expiring", 80, Some(3.)),
+                activity("queue.fallback", 60, None),
+            ]);
+        }
+        if !args.iter().any(|arg| arg == "--test-activity-queue") {
+            let activity_count = value(&args, "--test-activities")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(0)
+                .min(3);
+            let fixtures = [
+                isle_core::activity::LiveActivity {
+                    id: "fixture.timer".into(),
+                    kind: isle_core::activity::ActivityKind::Timer,
+                    title: "倒计时".into(),
+                    value: "1:24 · 进行中".into(),
+                    progress: Some(0.3),
+                    priority: 120,
+                    expires_at: None,
+                    completed: false,
+                },
+                isle_core::activity::LiveActivity {
+                    id: "fixture.volume".into(),
+                    kind: isle_core::activity::ActivityKind::Volume,
+                    title: "音量".into(),
+                    value: "42% · 未静音".into(),
+                    progress: Some(0.42),
+                    priority: 90,
+                    expires_at: None,
+                    completed: false,
+                },
+                isle_core::activity::LiveActivity {
+                    id: "fixture.media".into(),
+                    kind: isle_core::activity::ActivityKind::Media,
+                    title: "音乐".into(),
+                    value: "播放中".into(),
+                    progress: None,
+                    priority: 60,
+                    expires_at: None,
+                    completed: false,
+                },
+            ];
+            model.set_activities(fixtures.into_iter().take(activity_count).collect());
+        }
     }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;
