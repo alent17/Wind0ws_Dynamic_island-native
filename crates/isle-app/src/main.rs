@@ -2203,6 +2203,7 @@ impl App {
                 self.hover_leave_at.is_some(),
                 self.down.is_some()
             ));
+            text.push_str(&format!(",\"pointerDragged\":{}", self.dragged));
             text.push_str(&format!(",\"runtimeRevision\":{},\"persistedRevision\":{},\"configurationDirty\":{},\"configurationSaveError\":{}",
                 self.configuration.runtime_revision(),self.configuration.persisted_revision(),self.configuration.dirty(),self.configuration.last_error().is_some()));
             text.push_str(&format!(
