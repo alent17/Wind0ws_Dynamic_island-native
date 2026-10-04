@@ -8,6 +8,7 @@ mod floating_player;
 mod frame_timer;
 mod icons;
 mod media;
+mod netease;
 mod players;
 mod render;
 mod settings;
@@ -73,6 +74,7 @@ enum Event {
     Players(usize, isize),
     PlayersUpdated,
     ConfigSaved,
+    NetEase,
     ConfigTick,
     ActivityExpired,
     HoverExpired,
@@ -110,6 +112,7 @@ impl Event {
             Self::Players(..) => "event.players_command",
             Self::PlayersUpdated => "event.players_updated",
             Self::ConfigSaved => "event.configuration_saved",
+            Self::NetEase => "event.netease_updated",
             Self::ConfigTick => "event.configuration_tick",
             Self::ActivityExpired => "event.activity_expired",
             Self::HoverExpired => "event.hover_expired",
@@ -219,6 +222,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         configuration::UPDATED => {
             enqueue(Event::ConfigSaved);
+            LRESULT(0)
+        }
+        netease::UPDATED => {
+            enqueue(Event::NetEase);
             LRESULT(0)
         }
         weather::UPDATED => {
@@ -416,6 +423,7 @@ struct App {
     spectrum: Option<spectrum::SpectrumService>,
     live_spectrum: bool,
     media: Option<media::MediaService>,
+    netease: Option<netease::Service>,
     media_error: Option<String>,
     window: HWND,
     always_on_top: bool,
@@ -1065,6 +1073,7 @@ impl App {
         match edit {
             configuration::Edit::WindowPlacement(_) => {}
             configuration::Edit::RemoteDebuggingPort(_) => {}
+            configuration::Edit::Widgets(widgets) => self.model.widget_shelf = widgets.clone(),
             configuration::Edit::City(city) => {
                 self.model.weather = isle_core::weather::View {
                     city: Some(city.clone()),
@@ -1200,6 +1209,36 @@ impl App {
                 return;
             }
         }
+        if hit == Hit::Netease {
+            self.model.activate(hit);
+            self.model.netease_busy = self
+                .netease
+                .as_ref()
+                .is_some_and(|service| service.read(self.configuration.remote_debugging_port));
+            self.model.netease_status = if self.model.netease_busy {
+                "正在读取本机播放模式…".into()
+            } else {
+                "无法启动网易云连接请求".into()
+            };
+            return;
+        }
+        if hit == Hit::CyclePlaybackMode {
+            let accepted = self.netease.as_ref().is_some_and(|service| {
+                let port = self.configuration.remote_debugging_port;
+                if let Some(mode) = self.model.netease_mode {
+                    service.set(port, netease::next_mode(mode))
+                } else {
+                    service.read(port)
+                }
+            });
+            self.model.netease_busy = accepted;
+            self.model.netease_status = if accepted {
+                "正在验证网易云读回结果…".into()
+            } else {
+                "无法启动网易云连接请求".into()
+            };
+            return;
+        }
         if let (Some(service), Some(audio)) = (&self.audio, &self.model.audio) {
             match hit {
                 Hit::Mute => {
@@ -1239,6 +1278,14 @@ impl App {
             }
         }
         match hit {
+            Hit::WidgetToggle(_) => {
+                self.model.activate(hit);
+                let widgets = self.model.widget_shelf.clone();
+                let _ = self.queue_settings(
+                    configuration::Edit::Widgets(widgets),
+                    Duration::from_millis(150),
+                );
+            }
             Hit::Tool(2) => {
                 if let Some(player) = &self.floating_player {
                     SetForegroundWindow(player.hwnd);
@@ -1280,6 +1327,7 @@ impl App {
                     | Event::Players(_, _)
                     | Event::PlayersUpdated
                     | Event::ConfigSaved
+                    | Event::NetEase
                     | Event::ConfigTick
                     | Event::ActivityExpired
                     | Event::HoverExpired
@@ -1306,6 +1354,29 @@ impl App {
         let previous_volume = self.model.volume;
         let audio_update = matches!(event, Event::Audio);
         match event {
+            Event::NetEase => {
+                if let Some(outcome) = self.netease.as_ref().and_then(netease::Service::take) {
+                    self.model.netease_busy = false;
+                    match outcome {
+                        netease::Outcome::Mode(Some(mode)) => {
+                            self.model.netease_mode = Some(mode);
+                            self.model.netease_status = "已读取本机播放模式".into();
+                        }
+                        netease::Outcome::Mode(None) => {
+                            self.model.netease_mode = None;
+                            self.model.netease_status = "当前网易云模式不受支持".into();
+                        }
+                        netease::Outcome::Updated(mode) => {
+                            self.model.netease_mode = Some(mode);
+                            self.model.netease_status = "模式已切换并通过读回验证".into();
+                        }
+                        netease::Outcome::Failed(error) => {
+                            self.model.netease_status = error;
+                        }
+                    }
+                }
+                changed = !self.suspended;
+            }
             Event::TimerWindow(action, sender)
                 if self
                     .timer_window
@@ -1658,6 +1729,13 @@ impl App {
                                 if let Some(settings) = &self.settings {
                                     settings.saving(false);
                                     settings.message("远程调试端口已保存");
+                                }
+                            }
+                            configuration::Edit::Widgets(widgets) => {
+                                self.model.widget_shelf = widgets;
+                                if let Some(settings) = &self.settings {
+                                    settings.saving(false);
+                                    settings.message("小组件设置已保存");
                                 }
                             }
                             configuration::Edit::City(city) => {
@@ -2817,6 +2895,7 @@ unsafe fn run() -> Result<()> {
         track: usize::from(args.iter().any(|a| a == "--long-title")),
         ..Model::default()
     };
+    model.widget_shelf = configuration.widgets.clone();
     model.set_ui_v2(!args.iter().any(|arg| arg == "--legacy-ui"));
     model.motion_time_scale = value(&args, "--motion-scale")
         .and_then(|value| value.parse::<f32>().ok())
@@ -2828,6 +2907,8 @@ unsafe fn run() -> Result<()> {
             "timer" => Page::Timer,
             "clock" => Page::Clock,
             "weather" => Page::Weather,
+            "shelf" => Page::Shelf,
+            "netease" => Page::NetEase,
             _ => Page::Music,
         });
     }
@@ -3035,6 +3116,7 @@ unsafe fn run() -> Result<()> {
         } else {
             None
         },
+        netease: netease::Service::new(window).ok(),
         media_error: None,
         window,
         accessible,

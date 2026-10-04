@@ -17,6 +17,7 @@ pub enum ExpandedView {
     Volume,
     Clock,
     Weather,
+    NetEase,
     Shelf,
     PlayingNext,
 }
@@ -29,6 +30,8 @@ impl From<Page> for ExpandedView {
             Page::Volume => Self::Volume,
             Page::Clock => Self::Clock,
             Page::Weather => Self::Weather,
+            Page::NetEase => Self::NetEase,
+            Page::Shelf => Self::Shelf,
         }
     }
 }

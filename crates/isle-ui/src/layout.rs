@@ -36,6 +36,8 @@ pub struct LayoutSnapshot {
     pub controls: Vec<ControlLayout>,
     pub favorite: Option<ElementLayout>,
     pub favorite_state: Option<bool>,
+    pub shelf_button: Option<ElementLayout>,
+    pub netease_button: Option<ElementLayout>,
     pub toolbar: Vec<ElementLayout>,
     pub activities: Vec<ElementLayout>,
     pub hit_regions: Vec<HitRegion>,
@@ -119,6 +121,8 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         };
         let (width, height) = match input.page {
             Page::Weather => (396., 300.),
+            Page::Shelf => (396., 350.),
+            Page::NetEase => (396., 228.),
             Page::Music => (
                 430.,
                 if input.tool_ids.iter().any(|visible| *visible) {
@@ -287,6 +291,16 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         });
         snapshot.controls = controls;
         snapshot.toolbar = toolbar_layout(surface, input.tool_ids);
+        snapshot.shelf_button = Some(ElementLayout {
+            rect: Rect {
+                x: surface.x + surface.w - 74.,
+                y: surface.y + 6.,
+                w: 30.,
+                h: 30.,
+            },
+            radius: 12.,
+            opacity: 1.,
+        });
         // Keep a live album target even while collapsing into the compact state.
         let _ = body_h;
     } else {

@@ -18,6 +18,8 @@ pub enum Page {
     Volume,
     Clock,
     Weather,
+    Shelf,
+    NetEase,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Hit {
@@ -40,6 +42,10 @@ pub enum Hit {
     Mute,
     WeatherSettings,
     Seek,
+    Shelf,
+    WidgetToggle(usize),
+    Netease,
+    CyclePlaybackMode,
 }
 
 const fn player_control_hit(index: usize) -> Hit {
@@ -116,6 +122,10 @@ pub struct Model {
     /// existing automation and deployments keep their established surface.
     pub ui_v2: bool,
     pub ui_state: UiState,
+    pub widget_shelf: Vec<isle_core::widgets::WidgetConfig>,
+    pub netease_mode: Option<isle_core::player_extension::PlaybackMode>,
+    pub netease_status: String,
+    pub netease_busy: bool,
     pub activity_manager: isle_core::activity::ActivityManager,
     pub visual_state: VisualState,
     pub motion_time_scale: f32,
@@ -173,6 +183,10 @@ impl Default for Model {
             tool_mask: [true; 7],
             ui_v2: false,
             ui_state: UiState::default(),
+            widget_shelf: isle_core::widgets::defaults(),
+            netease_mode: None,
+            netease_status: String::new(),
+            netease_busy: false,
             activity_manager: isle_core::activity::ActivityManager::default(),
             visual_state: VisualState::default(),
             motion_time_scale: 1.,
@@ -724,7 +738,7 @@ impl Model {
         let capabilities = media
             .map(isle_core::MediaSnapshot::capabilities)
             .unwrap_or_default();
-        layout::compute(LayoutInput {
+        let mut layout = layout::compute(LayoutInput {
             edge: self.edge,
             attached: self.attached,
             mode: if expanded {
@@ -749,7 +763,23 @@ impl Model {
             favorite_state: capabilities
                 .favorite
                 .then(|| media.and_then(|m| m.favorite_state).unwrap_or(false)),
-        })
+        });
+        if media.is_some_and(|media| {
+            isle_core::player::PlayerKind::from_session_identity(&media.source)
+                .uses_netease_extension()
+        }) {
+            layout.netease_button = Some(crate::layout::ElementLayout {
+                rect: Rect {
+                    x: layout.surface.x + layout.surface.w - 110.,
+                    y: layout.surface.y + 6.,
+                    w: 28.,
+                    h: 28.,
+                },
+                radius: 12.,
+                opacity: 1.,
+            });
+        }
+        layout
     }
     /// Snapshot expressed in host-local DIP coordinates at the current Spring
     /// position, suitable for drawing, hit testing, and UI automation.
@@ -778,6 +808,8 @@ impl Model {
             &mut layout.artist,
             &mut layout.progress,
             &mut layout.favorite,
+            &mut layout.shelf_button,
+            &mut layout.netease_button,
         ]
         .into_iter()
         .flatten()
@@ -1102,6 +1134,9 @@ impl Model {
             }) {
                 v.push((Hit::Tool(i), r));
             }
+            if let Some(button) = self.layout_snapshot().netease_button {
+                v.push((Hit::Netease, button.rect));
+            }
         }
         if self.page() != Page::Music {
             v.push((
@@ -1113,6 +1148,11 @@ impl Model {
                     h: 28.,
                 },
             ));
+        }
+        if self.page() == Page::Music {
+            if let Some(button) = self.layout_snapshot().shelf_button {
+                v.push((Hit::Shelf, button.rect));
+            }
         }
         let p = self.detail_content();
         match self.page() {
@@ -1219,6 +1259,34 @@ impl Model {
                     h: 40.,
                 },
             )),
+            Page::Shelf => {
+                let p = self.detail_content();
+                for index in 0..isle_core::widgets::BUILT_INS.len() {
+                    let row = index / 2;
+                    let column = index % 2;
+                    v.push((
+                        Hit::WidgetToggle(index),
+                        Rect {
+                            x: p.x + column as f32 * (p.w / 2.),
+                            y: p.y + 82. + row as f32 * 40.,
+                            w: p.w / 2. - 5.,
+                            h: 34.,
+                        },
+                    ));
+                }
+            }
+            Page::NetEase => {
+                let p = self.detail_content();
+                v.push((
+                    Hit::CyclePlaybackMode,
+                    Rect {
+                        x: p.x,
+                        y: p.y + 34.,
+                        w: p.w,
+                        h: 42.,
+                    },
+                ));
+            }
             _ => {}
         }
         v
@@ -1300,6 +1368,25 @@ impl Model {
             }
             Hit::Blank => self.toggle(),
             Hit::Back => self.back(),
+            Hit::Shelf => self.navigate(Page::Shelf),
+            Hit::Netease => self.navigate(Page::NetEase),
+            Hit::CyclePlaybackMode => {}
+            Hit::WidgetToggle(index) => {
+                if let Some(definition) = isle_core::widgets::BUILT_INS.get(index) {
+                    if let Some(widget) =
+                        self.widget_shelf.iter_mut().find(|w| w.id == definition.id)
+                    {
+                        widget.enabled = !widget.enabled;
+                    } else {
+                        self.widget_shelf.push(isle_core::widgets::WidgetConfig {
+                            id: definition.id.into(),
+                            order: self.widget_shelf.len().min(u16::MAX as usize) as u16,
+                            enabled: true,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
             Hit::Play => self.playing = !self.playing,
             Hit::Previous | Hit::Next => self.change_track(),
             Hit::Tool(i) => match i {
@@ -1400,6 +1487,68 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn widget_shelf_is_keyboard_and_pointer_reachable_and_preserves_future_entries() {
+        let mut m = Model {
+            reduced: true,
+            widget_shelf: vec![
+                isle_core::widgets::WidgetConfig {
+                    id: "music".into(),
+                    order: 0,
+                    ..Default::default()
+                },
+                isle_core::widgets::WidgetConfig {
+                    id: "future-widget".into(),
+                    order: 9,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        m.switch(Page::Music);
+        assert!(m.controls().iter().any(|(hit, _)| *hit == Hit::Shelf));
+        m.activate(Hit::Shelf);
+        assert_eq!(m.page(), Page::Shelf);
+        assert!(m
+            .controls()
+            .iter()
+            .any(|(hit, _)| matches!(hit, Hit::WidgetToggle(0))));
+        m.activate(Hit::WidgetToggle(1));
+        assert!(m
+            .widget_shelf
+            .iter()
+            .any(|widget| widget.id == "volume" && widget.enabled));
+        assert!(m
+            .widget_shelf
+            .iter()
+            .any(|widget| widget.id == "future-widget"));
+        let (mode, placements) = isle_core::widgets::layout(&m.widget_shelf);
+        assert_eq!(mode, isle_core::widgets::ShelfMode::Dual);
+        assert_eq!(placements.len(), 2);
+        m.move_focus(false, false);
+        assert!(matches!(
+            m.focus,
+            Some(Hit::Tool(_)) | Some(Hit::Back) | Some(Hit::WidgetToggle(_))
+        ));
+    }
+
+    #[test]
+    fn netease_controls_are_exposed_only_for_an_exact_netease_session_identity() {
+        let mut m = Model {
+            reduced: true,
+            ui_v2: true,
+            media: Some(isle_core::MediaSnapshot {
+                source: "CloudMusic.exe".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        m.switch(Page::Music);
+        assert!(m.controls().iter().any(|(hit, _)| *hit == Hit::Netease));
+        m.media.as_mut().unwrap().source = "netease-game.exe".into();
+        assert!(!m.controls().iter().any(|(hit, _)| *hit == Hit::Netease));
+    }
+
     #[test]
     fn page_exit_keeps_one_instance_and_disables_outgoing_controls() {
         let mut m = Model::default();
@@ -1648,6 +1797,8 @@ mod tests {
             ..Model::default()
         };
         m.switch(Page::Music);
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Shelf));
         m.move_focus(false, false);
         assert_eq!(m.focus, Some(Hit::Previous));
         m.tool_count = 7;

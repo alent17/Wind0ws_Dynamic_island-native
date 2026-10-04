@@ -75,6 +75,20 @@ pub fn label(hit: Hit, playing: bool) -> &'static str {
         Hit::DeviceNext => "下一页设备",
         Hit::Mute => "切换静音",
         Hit::WeatherSettings => "设置天气城市",
+        Hit::Shelf => "打开小组件",
+        Hit::Netease => "打开网易云播放模式",
+        Hit::CyclePlaybackMode => "切换网易云播放模式",
+        Hit::WidgetToggle(index) => [
+            "音乐小组件",
+            "音量小组件",
+            "倒计时小组件",
+            "时钟小组件",
+            "天气小组件",
+            "系统状态小组件",
+        ]
+        .get(index)
+        .copied()
+        .unwrap_or("切换小组件"),
     }
 }
 pub fn root(shared: &Shared) -> IAccessible {

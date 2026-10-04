@@ -14,6 +14,8 @@ try:
     for name,options in [
         ('music-150pct',['--page','music','--test-dpi','144','--attached']),
         ('weather-small-work-area',['--page','weather','--test-dpi','192','--test-work-area','320x240','--edge','right','--attached']),
+        ('widget-shelf-150pct',['--page','shelf','--test-dpi','144']),
+        ('netease-mode-panel-150pct',['--page','netease','--test-dpi','144']),
     ]:
         proc=subprocess.Popen([str(ROOT/'target/release/isle-native.exe'),'--paused','--reduced-motion']+options)
         hwnd=wait_window(proc)

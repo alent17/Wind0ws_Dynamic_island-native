@@ -139,6 +139,7 @@ impl Store {
             Edit::Controls(controls) => document.set_controls(controls),
             Edit::Players(selection) => document.set_selection(selection)?,
             Edit::Appearance(appearance) => document.set_appearance(appearance)?,
+            Edit::Widgets(widgets) => document.set_widgets(widgets)?,
             Edit::WindowPlacement(placement) => {
                 document.set_window_placement(placement.as_ref())?
             }
@@ -211,6 +212,7 @@ pub enum Edit {
     Controls(Controls),
     Players(isle_core::Selection),
     Appearance(Appearance),
+    Widgets(Vec<isle_core::widgets::WidgetConfig>),
     WindowPlacement(Option<SettingsWindowPlacement>),
     RemoteDebuggingPort(u16),
 }
@@ -350,6 +352,9 @@ impl Service {
             SettingsPatch::Appearance(_) => {
                 Edit::Appearance(self.state.runtime().appearance.clone())
             }
+            SettingsPatch::Modules(module) if module.widgets.is_some() => {
+                Edit::Widgets(self.state.runtime().widgets.clone())
+            }
             SettingsPatch::Controls(_) | SettingsPatch::Modules(_) => {
                 Edit::Controls(self.state.runtime().controls.clone())
             }
@@ -397,6 +402,10 @@ impl Service {
                     spectrum_mode: Some(a.spectrum_mode.clone()),
                 })
             }
+            Edit::Widgets(widgets) => SettingsPatch::Modules(isle_core::settings::ModulesPatch {
+                widgets: Some(widgets.clone()),
+                ..Default::default()
+            }),
             Edit::WindowPlacement(placement) => SettingsPatch::WindowPlacement(placement.clone()),
             Edit::RemoteDebuggingPort(port) => SettingsPatch::RemoteDebuggingPort(*port),
         }
@@ -592,6 +601,46 @@ mod tests {
         appearance.compact_length = length;
         Edit::Appearance(appearance)
     }
+    #[test]
+    fn widget_edits_persist_and_keep_unknown_nested_settings() {
+        let fixture = Fixture::new();
+        let path = fixture.path("settings.json");
+        let mut service = Service::new(HWND(0), path.clone(), None).unwrap();
+        let widgets = vec![
+            isle_core::widgets::WidgetConfig {
+                id: "music".into(),
+                order: 0,
+                ..Default::default()
+            },
+            isle_core::widgets::WidgetConfig {
+                id: "volume".into(),
+                order: 1,
+                ..Default::default()
+            },
+            isle_core::widgets::WidgetConfig {
+                id: "future-widget".into(),
+                order: 8,
+                extra: [("future".into(), serde_json::json!({"nested": [1, null, 3]}))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        ];
+        service
+            .apply_edit(Edit::Widgets(widgets.clone()), Duration::ZERO)
+            .unwrap();
+        assert_eq!(service.widgets, widgets);
+        service.flush_timeout(Duration::from_secs(2)).unwrap();
+        let restarted = Service::new(HWND(0), path.clone(), None).unwrap();
+        assert_eq!(restarted.widgets, widgets);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            saved["widgetShelf"][2]["future"]["nested"],
+            serde_json::json!([1, null, 3])
+        );
+    }
+
     #[test]
     fn service_flush_preserves_latest_edit_behind_an_in_flight_write() {
         let fixture = Fixture::new();

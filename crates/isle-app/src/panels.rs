@@ -20,6 +20,247 @@ const CAPTION: D2D1_COLOR_F = D2D1_COLOR_F {
 };
 
 impl Renderer {
+    pub(super) unsafe fn netease_panel(&mut self, m: &Model, hover: Option<Hit>) -> Result<()> {
+        let p = m.detail_content();
+        let mode = m
+            .netease_mode
+            .map(crate::netease::mode_label)
+            .unwrap_or("尚未读取");
+        self.label(
+            "网易云播放模式",
+            Rect {
+                x: p.x,
+                y: p.y + 2.,
+                w: p.w,
+                h: 20.,
+            },
+            11,
+            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            ICE,
+        )?;
+        self.label(
+            mode,
+            Rect {
+                x: p.x,
+                y: p.y + 25.,
+                w: p.w,
+                h: 20.,
+            },
+            10,
+            DWRITE_FONT_WEIGHT_MEDIUM,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            color(1., 1., 1., 0.74),
+        )?;
+        let region = m
+            .controls()
+            .into_iter()
+            .find_map(|(hit, rect)| (hit == Hit::CyclePlaybackMode).then_some(rect));
+        if let Some(r) = region {
+            self.fill(
+                r,
+                12.,
+                color(
+                    1.,
+                    1.,
+                    1.,
+                    if hover == Some(Hit::CyclePlaybackMode) {
+                        0.15
+                    } else {
+                        0.09
+                    },
+                ),
+            );
+            let label = if m.netease_busy {
+                "正在连接网易云…".to_owned()
+            } else if let Some(mode) = m.netease_mode {
+                format!(
+                    "切换为 {}",
+                    crate::netease::mode_label(crate::netease::next_mode(mode))
+                )
+            } else {
+                "读取播放模式".to_owned()
+            };
+            self.label(
+                &label,
+                Rect {
+                    x: r.x + 10.,
+                    y: r.y + 2.,
+                    w: r.w - 20.,
+                    h: r.h - 4.,
+                },
+                10,
+                DWRITE_FONT_WEIGHT_MEDIUM,
+                DWRITE_TEXT_ALIGNMENT_CENTER,
+                ICE,
+            )?;
+        }
+        if !m.netease_status.is_empty() {
+            self.ellipsis_label(
+                &m.netease_status,
+                Rect {
+                    x: p.x,
+                    y: p.y + 88.,
+                    w: p.w,
+                    h: 32.,
+                },
+                9,
+                color(1., 1., 1., 0.55),
+            )?;
+        } else if m.netease_mode.is_none() && !m.netease_busy {
+            self.label(
+                "仅在检测到本机网易云调试会话时可用",
+                Rect {
+                    x: p.x,
+                    y: p.y + 88.,
+                    w: p.w,
+                    h: 32.,
+                },
+                9,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_TEXT_ALIGNMENT_LEADING,
+                color(1., 1., 1., 0.5),
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(super) unsafe fn widget_shelf_panel(
+        &mut self,
+        m: &Model,
+        hover: Option<Hit>,
+    ) -> Result<()> {
+        let p = m.detail_content();
+        self.label(
+            "小组件 · 点击下方项目添加或移除",
+            Rect {
+                x: p.x,
+                y: p.y - 7.,
+                w: p.w,
+                h: 18.,
+            },
+            10,
+            DWRITE_FONT_WEIGHT_MEDIUM,
+            DWRITE_TEXT_ALIGNMENT_LEADING,
+            color(1., 1., 1., 0.56),
+        )?;
+        let (_, placements) = isle_core::widgets::layout(&m.widget_shelf);
+        for placement in placements {
+            let Some(definition) = isle_core::widgets::definition(&placement.id) else {
+                continue;
+            };
+            let width = (p.w - 6.) / 2.;
+            let r = Rect {
+                x: p.x + placement.column as f32 * (width + 6.),
+                y: p.y + 18. + placement.row as f32 * 22.,
+                w: if placement.span == 2 { p.w } else { width },
+                h: 18.,
+            };
+            self.fill(r, 7., color(1., 1., 1., 0.09));
+            let value = match definition.kind {
+                isle_core::widgets::WidgetKind::Music => m
+                    .media
+                    .as_ref()
+                    .filter(|media| !media.title.is_empty())
+                    .map(|media| format!("{} · {}", definition.name, media.title))
+                    .unwrap_or_else(|| format!("{} · 暂无曲目", definition.name)),
+                isle_core::widgets::WidgetKind::Volume => m
+                    .audio
+                    .as_ref()
+                    .map(|audio| format!("{} · {}%", definition.name, audio.volume))
+                    .unwrap_or_else(|| format!("{} · 不可用", definition.name)),
+                isle_core::widgets::WidgetKind::Timer => {
+                    let seconds = m
+                        .timer_deadline
+                        .map(|deadline| (deadline - m.now).max(0.) as u64)
+                        .unwrap_or(m.timer_left.max(0.) as u64);
+                    format!(
+                        "{} · {:02}:{:02}",
+                        definition.name,
+                        seconds / 60,
+                        seconds % 60
+                    )
+                }
+                isle_core::widgets::WidgetKind::Clock => crate::clock::now(&m.time_zone)
+                    .map(|time| {
+                        format!(
+                            "{} · {:02}:{:02}",
+                            definition.name, time.wHour, time.wMinute
+                        )
+                    })
+                    .unwrap_or_else(|| format!("{} · --:--", definition.name)),
+                isle_core::widgets::WidgetKind::Weather => m
+                    .weather
+                    .data
+                    .as_ref()
+                    .zip(m.weather.city.as_ref())
+                    .map(|(data, city)| {
+                        format!(
+                            "{} · {} {:.0}°",
+                            definition.name, city.name, data.temperature
+                        )
+                    })
+                    .unwrap_or_else(|| format!("{} · 暂无数据", definition.name)),
+                isle_core::widgets::WidgetKind::SystemStats => {
+                    format!("{} · 数据源不可用", definition.name)
+                }
+            };
+            self.ellipsis_label(
+                &value,
+                Rect {
+                    x: r.x + 8.,
+                    y: r.y,
+                    w: r.w - 16.,
+                    h: r.h,
+                },
+                9,
+                color(0.94, 0.96, 1., 0.9),
+            )?;
+        }
+        for (index, definition) in isle_core::widgets::BUILT_INS.iter().enumerate() {
+            let r = m
+                .controls()
+                .into_iter()
+                .find_map(|(hit, rect)| (hit == Hit::WidgetToggle(index)).then_some(rect));
+            let Some(r) = r else { continue };
+            let enabled = m
+                .widget_shelf
+                .iter()
+                .find(|widget| widget.id == definition.id)
+                .is_some_and(|widget| widget.enabled);
+            self.fill(
+                r,
+                10.,
+                color(1., 1., 1., if enabled { 0.12 } else { 0.055 }),
+            );
+            if hover == Some(Hit::WidgetToggle(index)) {
+                self.fill(r, 10., color(1., 1., 1., 0.07));
+            }
+            self.label(
+                definition.name,
+                Rect {
+                    x: r.x + 10.,
+                    y: r.y + 2.,
+                    w: r.w - 42.,
+                    h: r.h - 4.,
+                },
+                10,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_TEXT_ALIGNMENT_LEADING,
+                color(0.94, 0.96, 1., if enabled { 0.96 } else { 0.55 }),
+            )?;
+            self.icons.draw(
+                if enabled { Icon::Check } else { Icon::Close },
+                r.x + r.w - 23.,
+                r.y + 10.,
+                13.,
+                1.8,
+                color(0.72, 0.84, 1., if enabled { 0.96 } else { 0.4 }),
+            )?;
+        }
+        Ok(())
+    }
+
     unsafe fn text_width(
         &mut self,
         text: &str,

@@ -8,7 +8,7 @@
 
 ## 1. 当前阶段原则
 
-> **验收状态（2026-10-04）：UI 第一阶段已完成，代码验收版本 0.61。** 本文中的旧版本规划 0.61–0.65 与实际提交版本号不一一对应；相关实现已分别包含在 0.57–0.60。Playing Next、网易云 UI、Widget Shelf 和 Settings polish 属于 UI 第一阶段之后的路线图，不作为本阶段 DoD。
+> **状态（2026-10-05）：** UI 第一阶段已在 0.61 完成；0.62 已实现 Widget Shelf 与网易云播放模式 UI。后续清单见第 19 节。Playing Next 仍待真实队列提供方；当前主机没有网易云/CDP 实机端点，相关实机验收未勾选。
 
 当前项目已经具备：
 
@@ -639,13 +639,14 @@ misc changes
 | 0.59 | Music 元素布局 | 已完成：实际 0.57–0.58 |
 | 0.60 | Playback Controls | 已完成：实际 0.57–0.58 |
 | 0.61 | Compact UI | 已完成：实际 0.58 |
-| 0.62 | Morph 动画 | 已完成：实际 0.51、0.59 |
+| 0.62 | Morph 动画（旧规划编号） | 已完成：实际 0.51、0.59；当前发布 0.62 增加 Widget Shelf 与 NetEase UI |
 | 0.63 | 动画打断 / 反向 | 已完成：实际 0.59 |
 | 0.64 | Glass 简化 | 已完成：实际 0.60 |
 | 0.65 | Refraction 精修 | 已完成：实际 0.60 |
 | 0.66 | Live Activities 视觉 | 基础能力已完成：实际 0.52–0.56；后续可继续视觉精修 |
-| 0.67 | Playing Next | 后续阶段，待真实 Queue Provider；不属于 UI 第一阶段 DoD |
+| 0.67 | Playing Next | 未完成：等待真实 Queue Provider；不属于 UI 第一阶段 DoD |
 | 0.68 | UI 第一阶段 RC | 已完成：实际验收版本 0.61 |
+| 0.62 | Widget Shelf + NetEase UI | 已完成代码与 mock 验收；NetEase 实机与 Playing Next 仍待外部运行时 |
 
 ---
 
@@ -877,7 +878,7 @@ UI 第一阶段只有同时满足以下条件才完成：
 
 # 19. 后续阶段
 
-UI 第一阶段结束后，可继续推进以下后续阶段。Live Activities 的基础能力已在 0.52–0.56 实现；Playing Next 仍待真实 Queue Provider。
+UI 第一阶段结束后，按以下清单推进。已完成项只在代码、回归和相应证据确认后勾选；需要外部运行时的项目保留未完成状态，不以模拟数据代替实机验收。
 
 ```text
 Live Activities
@@ -896,3 +897,15 @@ Release QA
 核心原则保持：
 
 > **先把一个状态做漂亮，再增加下一个状态。**
+
+### 后续阶段验收清单（2026-10-05）
+
+- [x] **Live Activities** — 基础能力与视觉槽位已实现于 0.52–0.56；排队、优先级、过期与动效回归通过。
+- [ ] **Playing Next** — 等待真实 Queue Provider。Windows GSMTC 仅提供当前会话媒体属性与时间线；本机未运行网易云/CDP 队列会话。不可编造“下一首”内容，待 provider 可用后继续。
+- [x] **NetEase UI Integration（代码/协议）** — 音乐页提供网易云入口；专用页面异步读取模式，仅允许顺序/列表循环/单曲循环/随机并要求读回验证。Loopback mock 测试通过。
+- [ ] **NetEase 实机验收** — 本次主机检查不到网易云进程，`127.0.0.1:9223` 无监听；需在网易云启用本机调试会话后验证读/写。
+- [x] **Widget Shelf** — 六种内置项可配置，展示真实应用状态摘要；确定性网格、键盘焦点、未知项保留和设置重启回读回归通过。
+- [x] **Settings polish** — Shelf 配置可访问并自动持久化；已有 Settings 键盘/UIA 回归继续通过。
+- [x] **Release QA（代码门禁）** — fmt、check、clippy、workspace tests（164 passed，1 个 opt-in 网络测试 ignored）、release build、DISPLAY2 150% Shelf/网易云截图、Live Activity 回归和 Settings UIA 16 项交互通过；144/192 DPI 为合成 DPI，实屏均为 96 DPI。
+
+当前计划仍有两个明确的外部验收项：真实 Queue Provider 与网易云 CDP 实机端点。其余已完成项的代码验收版本为 0.62；未将这两项标成完成。

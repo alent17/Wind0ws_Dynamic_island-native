@@ -1593,6 +1593,34 @@ impl Renderer {
                 }
                 self.ctx.PopAxisAlignedClip();
             }
+            if let Some(button) = m.layout_snapshot().shelf_button {
+                let r = button.rect;
+                if hover == Some(Hit::Shelf) || pressed == Some(Hit::Shelf) {
+                    self.fill(r, button.radius, color(1., 1., 1., 0.1));
+                }
+                self.icons.draw(
+                    Icon::Shelf,
+                    r.x + 7.,
+                    r.y + 7.,
+                    16.,
+                    1.8,
+                    color(0.86, 0.91, 1., 0.78),
+                )?;
+            }
+            if let Some(button) = m.layout_snapshot().netease_button {
+                let r = button.rect;
+                if hover == Some(Hit::Netease) || pressed == Some(Hit::Netease) {
+                    self.fill(r, button.radius, color(1., 1., 1., 0.1));
+                }
+                self.icons.draw(
+                    Icon::Music,
+                    r.x + 6.,
+                    r.y + 6.,
+                    16.,
+                    1.8,
+                    color(0.86, 0.91, 1., 0.78),
+                )?;
+            }
             let exit_opacity = m.pending_page.map_or(1., |(_, started)| {
                 1. - isle_ui::rolling::page_ease(((m.now - started) / 0.1).clamp(0., 1.) as f32)
             });
@@ -1642,6 +1670,8 @@ impl Renderer {
                         Page::Volume => "系统音量",
                         Page::Clock => "时间",
                         Page::Weather => "天气",
+                        Page::Shelf => "小组件",
+                        Page::NetEase => "网易云",
                         _ => "",
                     },
                     Rect {
@@ -2185,6 +2215,8 @@ impl Renderer {
                 Page::Timer => self.timer_panel(m, hover)?,
                 Page::Clock => self.clock_panel(m)?,
                 Page::Weather => self.weather_panel(m, hover)?,
+                Page::Shelf => self.widget_shelf_panel(m, hover)?,
+                Page::NetEase => self.netease_panel(m, hover)?,
             }
             self.ctx.SetTransform(&Matrix3x2 {
                 M11: 1.,
