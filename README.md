@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.44**（Cargo / Windows 文件版本 `0.44.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.45**（Cargo / Windows 文件版本 `0.45.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -89,6 +89,8 @@ cargo test --workspace
 0.43 为 UI 2.0 的长艺术家名称添加 DirectWrite 单行省略号裁切，并扩展隔离 fixture 到长标题、长艺术家、无媒体和缺失封面状态；测试诊断暴露文本/控件矩形，用于副屏视觉验收。
 
 0.44 将 Dynamic Glass 的折射贴图限制在透明度已从纯黑下降的下部区域（82% 起），渐变前段不再叠加折射；新增断言保证折射起点始终位于纯黑渐变之后。
+
+0.45 让玻璃背景/折射跟随弹簧当前宽高绘制，而不是在收起动画开始时随目标状态立即切回纯黑；窄到紧凑岛尺寸后自动停止采样。DISPLAY2 96/192 DPI 开合过程逐帧截图通过，黑色核心与透明尾部持续稳定。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

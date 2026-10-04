@@ -86,6 +86,8 @@ try:
                 if max(clear_sample) - min(clear_sample) < 24:
                     raise AssertionError((dpi, 'transparent tail does not reveal saturated desktop', clear_sample))
                 edge_sample = sample(.12, .84)
+                if max(edge_sample) - min(edge_sample) < 20:
+                    raise AssertionError((dpi, 'transparent edge lacks sampled desktop color', edge_sample))
                 cases.append({
                     'dpi': dpi,
                     'fontFamily': state['fontFamily'],

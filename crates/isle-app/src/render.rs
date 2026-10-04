@@ -337,6 +337,10 @@ fn should_build_glass_blur(ui_v2: bool, artwork_visible: bool) -> bool {
     ui_v2 && artwork_visible
 }
 
+fn should_render_dynamic_glass(ui_v2: bool, width: f32, height: f32, opaque_preview: bool) -> bool {
+    ui_v2 && !opaque_preview && width > 120. && height > 40.
+}
+
 /// Make a small, cached blur source when artwork changes. This is never run
 /// from the frame renderer after the cache has been built.
 fn blurred_cover(cover: &isle_core::Cover) -> Vec<u8> {
@@ -1040,8 +1044,13 @@ impl Renderer {
         pressed: Option<Hit>,
         dragging: bool,
     ) -> Result<()> {
-        let refraction_active =
-            m.ui_v2 && m.expanded && m.edge == Edge::Top && !self.opaque_preview;
+        let dynamic_glass_active = should_render_dynamic_glass(
+            m.ui_v2,
+            m.width.value,
+            m.height.value,
+            self.opaque_preview,
+        );
+        let refraction_active = dynamic_glass_active && m.edge == Edge::Top;
         if refraction_active
             && self
                 .last_refraction_capture
@@ -1256,7 +1265,7 @@ impl Renderer {
         if self.opaque_preview {
             self.ink(color(1., 1., 1., 1.));
             self.ctx.FillGeometry(&shape, &self.brush, None);
-        } else if m.ui_v2 && m.expanded {
+        } else if dynamic_glass_active {
             let origin = m.origin();
             self.glass_brush.SetStartPoint(point(origin.x, origin.y));
             self.glass_brush
@@ -1266,7 +1275,7 @@ impl Renderer {
             self.ink(background_color);
             self.ctx.FillGeometry(&shape, &self.brush, None);
         }
-        if m.ui_v2 && m.expanded && !self.opaque_preview {
+        if dynamic_glass_active {
             // A dark inner edge gives the transparent fill a refractive boundary
             // without tinting the desktop visible through the lower half.
             self.ink(color(0., 0., 0., 0.42));
@@ -1293,7 +1302,7 @@ impl Renderer {
         };
         self.ctx.PushLayer(&layer, None);
         std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
-        if m.ui_v2 && m.expanded && !self.opaque_preview {
+        if dynamic_glass_active {
             let origin = m.origin();
             if self.refraction_capture_ready {
                 if let Some((width, height, bitmap)) = &self.refraction_bitmap {
@@ -2105,7 +2114,7 @@ mod tests {
     use super::{
         cover_spectrum_palette, format_media_time, glass_opacity_at, glass_rim_opacity_at,
         normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
-        DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
+        should_render_dynamic_glass, DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
         DYNAMIC_GLASS_REFRACTION_START, DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
         MAX_CROSSFADE_LAYERS,
     };
@@ -2150,6 +2159,18 @@ mod tests {
                 assert_eq!(glass_rim_opacity_at(position), 0.0);
             }
         }
+    }
+
+    #[test]
+    fn dynamic_glass_tracks_live_morph_dimensions_until_the_surface_collapses() {
+        assert!(!should_render_dynamic_glass(false, 300., 200., false));
+        assert!(!should_render_dynamic_glass(true, 300., 200., true));
+        assert!(!should_render_dynamic_glass(true, 100., 200., false));
+        assert!(!should_render_dynamic_glass(true, 300., 32., false));
+        assert!(should_render_dynamic_glass(true, 299., 247., false));
+        assert!(should_render_dynamic_glass(true, 180., 80., false));
+        assert!(should_render_dynamic_glass(true, 121., 41., false));
+        assert!(!should_render_dynamic_glass(true, 119., 41., false));
     }
 
     #[test]
