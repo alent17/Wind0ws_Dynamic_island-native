@@ -59,6 +59,51 @@ pub struct LayoutInput {
     pub seek: bool,
 }
 
+/// Places the highest-priority compact activities beside the single island
+/// surface. The capsules share the island HWND and remain inside its 480-DIP
+/// host on every edge.
+pub fn activity_slots(surface: Rect, edge: Edge, count: usize) -> Vec<ElementLayout> {
+    const SLOT_WIDTH: f32 = 76.;
+    const SLOT_HEIGHT: f32 = 28.;
+    const GAP: f32 = 4.;
+
+    let count = count.min(2);
+    (0..count)
+        .map(|index| {
+            let mut rect = if matches!(edge, Edge::Left | Edge::Right) {
+                Rect {
+                    x: surface.x + (surface.w - SLOT_WIDTH) * 0.5,
+                    y: if index == 0 {
+                        surface.y - GAP - SLOT_HEIGHT
+                    } else {
+                        surface.y + surface.h + GAP
+                    },
+                    w: SLOT_WIDTH,
+                    h: SLOT_HEIGHT,
+                }
+            } else {
+                Rect {
+                    x: if index == 0 {
+                        surface.x - GAP - SLOT_WIDTH
+                    } else {
+                        surface.x + surface.w + GAP
+                    },
+                    y: surface.y + (surface.h - SLOT_HEIGHT) * 0.5,
+                    w: SLOT_WIDTH,
+                    h: SLOT_HEIGHT,
+                }
+            };
+            rect.x = rect.x.clamp(0., HOST - SLOT_WIDTH);
+            rect.y = rect.y.clamp(0., HOST - SLOT_HEIGHT);
+            ElementLayout {
+                rect,
+                radius: SLOT_HEIGHT * 0.5,
+                opacity: 1.,
+            }
+        })
+        .collect()
+}
+
 /// All returned coordinates are host-local DIPs. Edge changes only the
 /// surface anchor and attached shoulder; text and controls stay readable.
 pub fn compute(input: LayoutInput) -> LayoutSnapshot {

@@ -556,11 +556,39 @@ impl App {
                 y: (p.y * self.scale).round() as i32,
             })
             .collect();
-        if self.region.len() == points.len()
+        let activity_rects: Vec<RECT> = if self.model.ui_v2 && !self.model.expanded {
+            self.model
+                .layout_snapshot()
+                .activities
+                .into_iter()
+                .map(|slot| RECT {
+                    left: (slot.rect.x * self.scale).round() as i32,
+                    top: (slot.rect.y * self.scale).round() as i32,
+                    right: ((slot.rect.x + slot.rect.w) * self.scale).round() as i32,
+                    bottom: ((slot.rect.y + slot.rect.h) * self.scale).round() as i32,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut region_signature = points.clone();
+        for rect in &activity_rects {
+            region_signature.extend([
+                POINT {
+                    x: rect.left,
+                    y: rect.top,
+                },
+                POINT {
+                    x: rect.right,
+                    y: rect.bottom,
+                },
+            ]);
+        }
+        if self.region.len() == region_signature.len()
             && self
                 .region
                 .iter()
-                .zip(&points)
+                .zip(&region_signature)
                 .all(|(a, b)| a.x == b.x && a.y == b.y)
         {
             return Ok(());
@@ -569,11 +597,32 @@ impl App {
         if region.0 == 0 {
             return Err(Error::from_win32());
         }
+        for rect in activity_rects {
+            let diameter = (28. * self.scale).round() as i32;
+            let slot = CreateRoundRectRgn(
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
+                diameter,
+                diameter,
+            );
+            if slot.0 == 0 {
+                DeleteObject(region);
+                return Err(Error::from_win32());
+            }
+            let combined = CombineRgn(region, region, slot, RGN_OR);
+            DeleteObject(slot);
+            if combined == GDI_REGION_TYPE(0) {
+                DeleteObject(region);
+                return Err(Error::from_win32());
+            }
+        }
         if SetWindowRgn(self.window, region, false) == 0 {
             DeleteObject(region);
             return Err(Error::from_win32());
         }
-        self.region = points;
+        self.region = region_signature;
         self.region_updates += 1;
         Ok(())
     }
@@ -2261,6 +2310,25 @@ impl App {
                 ",\"volumeControlRect\":{}",
                 serde_json::to_string(&volume_rect).unwrap_or_else(|_| "null".into())
             ));
+            let layout = self.model.layout_snapshot();
+            let activity_rects: Vec<_> = layout
+                .activities
+                .iter()
+                .map(|slot| [slot.rect.x, slot.rect.y, slot.rect.w, slot.rect.h])
+                .collect();
+            let activity_ids: Vec<_> = self
+                .model
+                .ui_state
+                .activities
+                .iter()
+                .take(2)
+                .map(|activity| activity.id.as_str())
+                .collect();
+            text.push_str(&format!(
+                ",\"activityRects\":{},\"activityIds\":{}",
+                serde_json::to_string(&activity_rects).unwrap_or_else(|_| "[]".into()),
+                serde_json::to_string(&activity_ids).unwrap_or_else(|_| "[]".into())
+            ));
             let p95_of = |values: &[f64]| {
                 let mut sorted = values.to_vec();
                 sorted.sort_by(f64::total_cmp);
@@ -2821,6 +2889,45 @@ unsafe fn run() -> Result<()> {
             ..Default::default()
         });
         model.retarget();
+    }
+    if test_fixture {
+        let activity_count = value(&args, "--test-activities")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0)
+            .min(3);
+        let fixtures = [
+            isle_core::activity::LiveActivity {
+                id: "fixture.timer".into(),
+                kind: isle_core::activity::ActivityKind::Timer,
+                title: "倒计时".into(),
+                value: "1:24 · 进行中".into(),
+                progress: Some(0.3),
+                priority: 120,
+                expires_at: None,
+                completed: false,
+            },
+            isle_core::activity::LiveActivity {
+                id: "fixture.volume".into(),
+                kind: isle_core::activity::ActivityKind::Volume,
+                title: "音量".into(),
+                value: "42% · 未静音".into(),
+                progress: Some(0.42),
+                priority: 90,
+                expires_at: None,
+                completed: false,
+            },
+            isle_core::activity::LiveActivity {
+                id: "fixture.media".into(),
+                kind: isle_core::activity::ActivityKind::Media,
+                title: "音乐".into(),
+                value: "播放中".into(),
+                progress: None,
+                priority: 60,
+                expires_at: None,
+                completed: false,
+            },
+        ];
+        model.set_activities(fixtures.into_iter().take(activity_count).collect());
     }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;

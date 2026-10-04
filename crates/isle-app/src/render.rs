@@ -679,6 +679,49 @@ fn cover_spectrum_palette(cover: &isle_core::Cover) -> [[f32; 3]; 2] {
     [palette_color(0.), palette_color(1.)]
 }
 
+fn compact_activity_content(activity: &isle_core::activity::LiveActivity) -> (Icon, String) {
+    use isle_core::activity::ActivityKind;
+
+    let (icon, label) = match activity.kind {
+        ActivityKind::Timer if activity.completed => (Icon::Timer, "完成".to_owned()),
+        ActivityKind::Timer => (
+            Icon::Timer,
+            activity
+                .value
+                .split('·')
+                .next()
+                .unwrap_or(&activity.value)
+                .trim()
+                .to_owned(),
+        ),
+        ActivityKind::Volume => {
+            let (level, state) = activity
+                .value
+                .split_once('·')
+                .map_or((activity.value.as_str(), ""), |(level, state)| {
+                    (level, state.trim())
+                });
+            (
+                Icon::Volume,
+                if state == "静音" {
+                    "静音".to_owned()
+                } else {
+                    level.trim().to_owned()
+                },
+            )
+        }
+        ActivityKind::Media => {
+            let label = if activity.title.is_empty() {
+                &activity.value
+            } else {
+                &activity.title
+            };
+            (Icon::Music, label.to_owned())
+        }
+    };
+    (icon, label)
+}
+
 impl Renderer {
     pub fn cover_alive(&self) -> bool {
         self.cover.is_some()
@@ -2069,6 +2112,9 @@ impl Renderer {
             }
         }
         self.ctx.PopLayer();
+        if m.ui_v2 && !m.expanded {
+            self.draw_activity_slots(m)?;
+        }
         if !self.number_used {
             self.digits.clear();
         }
@@ -2077,6 +2123,50 @@ impl Renderer {
         self.render_cpu_ms = render_started.elapsed().as_secs_f64() * 1000.;
         self.swap.Present(1, 0).ok()?;
         self.frames += 1;
+        Ok(())
+    }
+    unsafe fn draw_activity_slots(&mut self, model: &Model) -> Result<()> {
+        let layout = model.layout_snapshot();
+        for (slot, activity) in layout
+            .activities
+            .iter()
+            .zip(model.ui_state.activities.iter().take(2))
+        {
+            let r = slot.rect;
+            self.fill(r, slot.radius, color(0., 0., 0., slot.opacity));
+            self.ink(color(1., 1., 1., 0.12 * slot.opacity));
+            self.ctx.DrawRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: rect(r),
+                    radiusX: slot.radius,
+                    radiusY: slot.radius,
+                },
+                &self.brush,
+                0.8,
+                None,
+            );
+            let (icon, label) = compact_activity_content(activity);
+            self.icons.draw(
+                icon,
+                r.x + 7.,
+                r.y + 8.,
+                12.,
+                1.8,
+                color(0.78, 0.86, 1., 0.94),
+            )?;
+            self.text_with_ellipsis(
+                &label,
+                Rect {
+                    x: r.x + 24.,
+                    y: r.y + 6.,
+                    w: (r.w - 29.).max(20.),
+                    h: r.h - 12.,
+                },
+                9,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                color(0.94, 0.96, 1., 0.96),
+            )?;
+        }
         Ok(())
     }
     unsafe fn spectrum(&self, x: f32, y: f32, m: &Model) {
@@ -2182,7 +2272,7 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        corner_lens_strength, cover_spectrum_palette, dispersion_offset,
+        compact_activity_content, corner_lens_strength, cover_spectrum_palette, dispersion_offset,
         dynamic_glass_blur_opacity, format_media_time, glass_opacity_at, glass_rim_opacity_at,
         normalized_artwork_crop, rebase_crossfade_weights, should_build_glass_blur,
         should_render_dynamic_glass, DYNAMIC_GLASS_BLUR_OPACITY, DYNAMIC_GLASS_CORNER_LENS_GAIN,
@@ -2190,6 +2280,35 @@ mod tests {
         DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_REFRACTION_START,
         DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
     };
+
+    #[test]
+    fn compact_activity_labels_show_timer_volume_and_mute_state() {
+        use isle_core::activity::{ActivityKind, LiveActivity};
+
+        let activity = |kind, value: &str, completed| LiveActivity {
+            id: "test".into(),
+            kind,
+            title: "示例".into(),
+            value: value.into(),
+            progress: None,
+            priority: 1,
+            expires_at: None,
+            completed,
+        };
+        let (timer_icon, timer) =
+            compact_activity_content(&activity(ActivityKind::Timer, "1:24 · 进行中", false));
+        assert!(matches!(timer_icon, super::Icon::Timer));
+        assert_eq!(timer, "1:24");
+        let (_, finished) =
+            compact_activity_content(&activity(ActivityKind::Timer, "计时完成", true));
+        assert_eq!(finished, "完成");
+        let (_, volume) =
+            compact_activity_content(&activity(ActivityKind::Volume, "42% · 未静音", false));
+        assert_eq!(volume, "42%");
+        let (_, muted) =
+            compact_activity_content(&activity(ActivityKind::Volume, "42% · 静音", false));
+        assert_eq!(muted, "静音");
+    }
 
     #[test]
     fn dynamic_glass_stays_black_until_the_bottom_quarter_then_fades_clear() {

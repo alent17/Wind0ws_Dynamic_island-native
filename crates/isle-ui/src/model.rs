@@ -809,6 +809,15 @@ impl Model {
                 }
             }
         }
+        layout.activities = if self.ui_v2 && !self.expanded {
+            crate::layout::activity_slots(
+                layout.surface,
+                self.edge,
+                self.ui_state.activities.len().min(2),
+            )
+        } else {
+            Vec::new()
+        };
         layout
     }
     pub fn progress_rect(&self) -> Rect {
@@ -1742,6 +1751,83 @@ mod tests {
         assert_eq!(m.ui_state.activities.len(), 2);
         assert_eq!(m.ui_state.activities[0].id, "important");
         assert_eq!(m.ui_state.activities[1].id, TIMER_ACTIVITY_ID);
+    }
+    #[test]
+    fn ui_v2_compact_activities_use_bounded_side_slots_on_every_edge() {
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            for attached in [false, true] {
+                let mut m = Model {
+                    edge,
+                    attached,
+                    reduced: true,
+                    ..Model::default()
+                };
+                m.set_ui_v2(true);
+                m.set_activities(vec![
+                    crate::state::LiveActivity {
+                        id: "timer".into(),
+                        kind: crate::state::ActivityKind::Timer,
+                        title: "Timer".into(),
+                        value: "1:00 · 进行中".into(),
+                        progress: Some(0.25),
+                        priority: 100,
+                        expires_at: None,
+                        completed: false,
+                    },
+                    crate::state::LiveActivity {
+                        id: "volume".into(),
+                        kind: crate::state::ActivityKind::Volume,
+                        title: "Volume".into(),
+                        value: "42% · 未静音".into(),
+                        progress: Some(0.42),
+                        priority: 90,
+                        expires_at: Some(3.),
+                        completed: false,
+                    },
+                ]);
+                let layout = m.layout_snapshot();
+                assert_eq!(layout.activities.len(), 2, "{edge:?} attached={attached}");
+                let main = layout.surface;
+                for slot in &layout.activities {
+                    let r = slot.rect;
+                    assert!(r.x >= 0. && r.y >= 0., "{edge:?} {r:?}");
+                    assert!(r.x + r.w <= HOST && r.y + r.h <= HOST, "{edge:?} {r:?}");
+                }
+                if vertical(edge) {
+                    assert!(layout.activities[0].rect.y + layout.activities[0].rect.h <= main.y);
+                    assert!(layout.activities[1].rect.y >= main.y + main.h);
+                } else {
+                    assert!(layout.activities[0].rect.x + layout.activities[0].rect.w <= main.x);
+                    assert!(layout.activities[1].rect.x >= main.x + main.w);
+                }
+
+                m.expanded = true;
+                assert!(m.layout_snapshot().activities.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn ui_v2_compact_activity_keeps_one_priority_slot_on_the_leading_side() {
+        let mut m = Model {
+            compact_length: 300,
+            reduced: true,
+            ..Model::default()
+        };
+        m.set_ui_v2(true);
+        m.set_activities(vec![crate::state::LiveActivity {
+            id: "timer".into(),
+            kind: crate::state::ActivityKind::Timer,
+            title: "Timer".into(),
+            value: "完成".into(),
+            progress: Some(1.),
+            priority: 100,
+            expires_at: Some(3.),
+            completed: true,
+        }]);
+        let layout = m.layout_snapshot();
+        assert_eq!(layout.activities.len(), 1);
+        assert!(layout.activities[0].rect.x + layout.activities[0].rect.w <= layout.surface.x);
+        assert!(layout.activities[0].rect.x >= 0.);
     }
     #[test]
     fn volume_activity_tracks_observed_volume_and_mute_changes_until_ttl() {
