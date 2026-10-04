@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.40**（Cargo / Windows 文件版本 `0.40.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.41**（Cargo / Windows 文件版本 `0.41.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -81,6 +81,8 @@ cargo test --workspace
 0.39 展开播放器先显示 128px 封面；后台 512px 封面就绪后，在同一 Shared Album 矩形内淡入升级，不等待高清图才展开。DISPLAY2 96/192 DPI 验收确认封面矩形稳定，上传和绘制耗时低于 50ms。
 
 0.40 把封面裁切统一为归一化 UV，保证横版、竖版封面在 128/512 两个分辨率层保持一致中心裁切；播放器控件由 `MediaCapabilities` 门控，Seek 命中区跟随动画进度条。Playing Next 仍待真实 Queue Provider，因此相关跨布局裁切验收暂不标完成。
+
+0.41 为 UI-06/07 增加 Leave Grace / pointer-down 诊断，并提供 DISPLAY2 专用回归：验证 150ms 离开宽限、宽限内重入取消、正常超时收起，以及按下期间不误收起。测试只运行隔离 fixture，不触发系统媒体控制。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

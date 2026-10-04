@@ -21,6 +21,7 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const SETTINGS_CONTROL_FAULT: u32 = 0x8056;
 const TEST_ARTWORK_CHANGE: u32 = 0x803D;
 const TEST_ARTWORK_UPGRADE: u32 = 0x803E;
+const TEST_MOUSE_MOVE: u32 = 0x803F;
 use isle_ui::{geometry::*, model::*};
 use render::Renderer;
 use std::{
@@ -299,6 +300,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 dwHoverTime: 0,
             };
             let _ = TrackMouseEvent(&mut track);
+            LRESULT(0)
+        }
+        TEST_MOUSE_MOVE if GetPropW(hwnd, w!("IsleTestFixture")).0 != 0 => {
+            let (x, y) = coordinates(lp);
+            enqueue(Event::Move(x, y));
             LRESULT(0)
         }
         WM_MOUSELEAVE => {
@@ -2192,6 +2198,11 @@ impl App {
             text.push_str(&format!(",\"albumRect\":[{},{},{},{}],\"surfaceRect\":[{},{},{},{}],\"expanded\":{},\"hovered\":{},\"inspectionLocked\":{},\"motionTimeScale\":{}",
                 album.x,album.y,album.w,album.h,surface_origin.x,surface_origin.y,self.model.width.value,self.model.height.value,
                 self.model.expanded,self.model.hovered,self.inspection_previous.is_some(),self.model.motion_time_scale));
+            text.push_str(&format!(
+                ",\"hoverGraceActive\":{},\"pointerDown\":{}",
+                self.hover_leave_at.is_some(),
+                self.down.is_some()
+            ));
             text.push_str(&format!(",\"runtimeRevision\":{},\"persistedRevision\":{},\"configurationDirty\":{},\"configurationSaveError\":{}",
                 self.configuration.runtime_revision(),self.configuration.persisted_revision(),self.configuration.dirty(),self.configuration.last_error().is_some()));
             text.push_str(&format!(
@@ -2462,6 +2473,9 @@ unsafe fn run() -> Result<()> {
             "startup.create_main_window",
             Error::from_win32(),
         ));
+    }
+    if args.iter().any(|arg| arg == "--test-fixture") {
+        SetPropW(window, w!("IsleTestFixture"), HANDLE(1))?;
     }
     let accessible = std::sync::Arc::new(std::sync::Mutex::new(accessibility::Snapshot {
         hwnd: window.0,
