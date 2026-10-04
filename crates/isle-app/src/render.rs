@@ -2012,7 +2012,7 @@ impl Renderer {
                             let center = r.center();
                             let x = center.x;
                             let y = center.y;
-                            let nominal_width = if hit == Hit::Play { 42. } else { 36. };
+                            let nominal_width = if hit == Hit::Play { 48. } else { 40. };
                             let rect_scale = if m.ui_v2 {
                                 (r.w / nominal_width).clamp(0., 1.)
                             } else {
@@ -2027,20 +2027,20 @@ impl Renderer {
                             if hit == Hit::Play && m.playing {
                                 self.fill(
                                     Rect {
-                                        x: x - 6. * icon_scale,
-                                        y: y - 7. * icon_scale,
-                                        w: 4. * icon_scale,
-                                        h: 14. * icon_scale,
+                                        x: x - 8. * icon_scale,
+                                        y: y - 12. * icon_scale,
+                                        w: 6. * icon_scale,
+                                        h: 24. * icon_scale,
                                     },
                                     1.,
                                     white,
                                 );
                                 self.fill(
                                     Rect {
-                                        x: x + 2. * icon_scale,
-                                        y: y - 7. * icon_scale,
-                                        w: 4. * icon_scale,
-                                        h: 14. * icon_scale,
+                                        x: x + 3. * icon_scale,
+                                        y: y - 12. * icon_scale,
+                                        w: 6. * icon_scale,
+                                        h: 24. * icon_scale,
                                     },
                                     1.,
                                     white,
@@ -2050,12 +2050,12 @@ impl Renderer {
                                 let triangle = self.factory.CreatePathGeometry()?;
                                 let sink = triangle.Open()?;
                                 sink.BeginFigure(
-                                    point(x - 5. * direction * icon_scale, y - 7. * icon_scale),
+                                    point(x - 8. * direction * icon_scale, y - 11. * icon_scale),
                                     D2D1_FIGURE_BEGIN_FILLED,
                                 );
                                 sink.AddLines(&[
-                                    point(x + 6. * direction * icon_scale, y),
-                                    point(x - 5. * direction * icon_scale, y + 7. * icon_scale),
+                                    point(x + 8. * direction * icon_scale, y),
+                                    point(x - 8. * direction * icon_scale, y + 11. * icon_scale),
                                 ]);
                                 sink.EndFigure(D2D1_FIGURE_END_CLOSED);
                                 sink.Close()?;
@@ -2064,10 +2064,10 @@ impl Renderer {
                                 if hit != Hit::Play {
                                     self.fill(
                                         Rect {
-                                            x: x + 7. * direction * icon_scale - icon_scale,
-                                            y: y - 7. * icon_scale,
-                                            w: 2. * icon_scale,
-                                            h: 14. * icon_scale,
+                                            x: x + 10. * direction * icon_scale - 1.5 * icon_scale,
+                                            y: y - 11. * icon_scale,
+                                            w: 3. * icon_scale,
+                                            h: 22. * icon_scale,
                                         },
                                         1.,
                                         white,
@@ -2075,6 +2075,29 @@ impl Renderer {
                                 }
                             }
                         }
+                    }
+                    if let (Some(favorite), Some(liked)) = (
+                        m.layout_snapshot().favorite,
+                        m.layout_snapshot().favorite_state,
+                    ) {
+                        let rect = favorite.rect;
+                        let tint = if liked {
+                            color(1., 0.32, 0.48, m.visual_state.content_opacity.value)
+                        } else {
+                            color(0.72, 0.74, 0.78, m.visual_state.content_opacity.value)
+                        };
+                        self.icons.draw(
+                            if liked {
+                                Icon::HeartFilled
+                            } else {
+                                Icon::Heart
+                            },
+                            rect.x + 6.,
+                            rect.y + 6.,
+                            20.,
+                            1.8,
+                            tint,
+                        )?;
                     }
                 }
                 Page::Volume => self.volume_panel(m, hover)?,

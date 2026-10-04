@@ -2817,7 +2817,7 @@ unsafe fn run() -> Result<()> {
         track: usize::from(args.iter().any(|a| a == "--long-title")),
         ..Model::default()
     };
-    model.set_ui_v2(args.iter().any(|arg| arg == "--ui-v2"));
+    model.set_ui_v2(!args.iter().any(|arg| arg == "--legacy-ui"));
     model.motion_time_scale = value(&args, "--motion-scale")
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| matches!(*value, 1.0 | 0.5 | 0.2))
@@ -2941,6 +2941,8 @@ unsafe fn run() -> Result<()> {
             play_pause: model.ui_v2,
             next: model.ui_v2,
             seek: model.ui_v2,
+            set_favorite: model.ui_v2,
+            favorite_state: model.ui_v2.then_some(false),
             timeline: isle_core::Timeline {
                 position_ms: 122_000,
                 duration_ms: 244_000,

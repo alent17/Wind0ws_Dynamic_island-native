@@ -34,6 +34,8 @@ pub struct LayoutSnapshot {
     pub artist: Option<ElementLayout>,
     pub progress: Option<ElementLayout>,
     pub controls: Vec<ControlLayout>,
+    pub favorite: Option<ElementLayout>,
+    pub favorite_state: Option<bool>,
     pub toolbar: Vec<ElementLayout>,
     pub activities: Vec<ElementLayout>,
     pub hit_regions: Vec<HitRegion>,
@@ -57,6 +59,7 @@ pub struct LayoutInput {
     pub play_pause: bool,
     pub next: bool,
     pub seek: bool,
+    pub favorite_state: Option<bool>,
 }
 
 /// Places the highest-priority compact activities beside the single island
@@ -114,12 +117,19 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         } else {
             0.
         };
-        let height = match input.page {
-            Page::Weather => 300.,
-            Page::Music => 248.,
-            _ => 228.,
+        let (width, height) = match input.page {
+            Page::Weather => (396., 300.),
+            Page::Music => (
+                448.,
+                if input.tool_ids.iter().any(|visible| *visible) {
+                    216.
+                } else {
+                    188.
+                },
+            ),
+            _ => (396., 228.),
         };
-        (396., height, input.corner_radius.clamp(8., 80.), shoulder)
+        (width, height, input.corner_radius.clamp(8., 80.), shoulder)
     } else {
         let length = input.compact_length.clamp(80., 300.).max(
             if input.timer_active || input.timer_finished {
@@ -166,27 +176,27 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         );
         let album = Rect {
             x: body_x,
-            y: body_y + 12.,
-            w: 112.,
-            h: 112.,
+            y: body_y + 5.,
+            w: 64.,
+            h: 64.,
         };
         let title = Rect {
-            x: body_x + 132.,
-            y: body_y + 25.,
-            w: (body_w - 142.).max(40.),
-            h: 22.,
+            x: body_x + 82.,
+            y: body_y + 10.,
+            w: (body_w - 124.).max(40.),
+            h: 24.,
         };
         let artist = Rect {
             x: title.x,
-            y: title.y + 26.,
+            y: title.y + 27.,
             w: title.w,
-            h: 18.,
+            h: 20.,
         };
         let progress = Rect {
-            x: title.x,
-            y: body_y + 100.,
-            w: title.w,
-            h: 24.,
+            x: body_x + 14.,
+            y: body_y + 87.,
+            w: (body_w - 28.).max(40.),
+            h: 20.,
         };
         let visible_controls: Vec<Hit> = [
             input.previous.then_some(Hit::Previous),
@@ -196,8 +206,8 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         .into_iter()
         .flatten()
         .collect();
-        let control_width = visible_controls.len() as f32 * 42.;
-        let controls_left = title.x + (title.w - control_width) * 0.5;
+        let control_width = visible_controls.len() as f32 * 56.;
+        let controls_left = body_x + (body_w - control_width) * 0.5;
         let mut controls = Vec::new();
         if input.seek {
             controls.push(ControlLayout {
@@ -212,13 +222,13 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         }
         for (i, hit) in visible_controls.into_iter().enumerate() {
             let button_size = if hit == Hit::Play {
-                (42., 38.)
+                (48., 46.)
             } else {
-                (36., 36.)
+                (40., 40.)
             };
             let rect = Rect {
-                x: controls_left + i as f32 * 42. + (42. - button_size.0) * 0.5,
-                y: body_y + 148.,
+                x: controls_left + i as f32 * 56. + (56. - button_size.0) * 0.5,
+                y: body_y + 110.,
                 w: button_size.0,
                 h: button_size.1,
             };
@@ -228,6 +238,19 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
                 enabled: true,
             });
             snapshot.hit_regions.push(HitRegion { hit, rect });
+        }
+        if let Some(liked) = input.favorite_state {
+            snapshot.favorite = Some(ElementLayout {
+                rect: Rect {
+                    x: surface.x + surface.w * 0.285 - 16.,
+                    y: body_y + 112.,
+                    w: 32.,
+                    h: 32.,
+                },
+                radius: 16.,
+                opacity: 1.,
+            });
+            snapshot.favorite_state = Some(liked);
         }
         snapshot.album = Some(ElementLayout {
             rect: album,
@@ -330,4 +353,57 @@ fn toolbar_layout(surface: Rect, tool_ids: [bool; 7]) -> Vec<ElementLayout> {
             opacity: 1.,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::ExpandedView;
+
+    #[test]
+    fn expanded_music_layout_matches_wide_reference_and_stays_inside_surface() {
+        let layout = compute(LayoutInput {
+            edge: Edge::Top,
+            attached: false,
+            mode: PrimarySurfaceMode::Expanded(ExpandedView::Music),
+            page: Page::Music,
+            hovered: false,
+            timer_active: false,
+            timer_finished: false,
+            compact_length: 80.,
+            collapsed_shoulder: 8.,
+            expanded_shoulder: 32.,
+            corner_radius: 32.,
+            tool_ids: [false; 7],
+            previous: true,
+            play_pause: true,
+            next: true,
+            seek: true,
+            favorite_state: Some(false),
+        });
+        assert!(layout.surface.w / layout.surface.h > 2.3);
+        let album = layout.album.unwrap().rect;
+        assert_eq!(album.w, album.h);
+        assert!(album.w >= 60.);
+        for rect in [
+            layout.title.unwrap().rect,
+            layout.artist.unwrap().rect,
+            layout.progress.unwrap().rect,
+            layout.controls[0].rect,
+            layout.controls[1].rect,
+            layout.controls[2].rect,
+        ] {
+            assert!(rect.x >= layout.surface.x);
+            assert!(rect.y >= layout.surface.y);
+            assert!(rect.x + rect.w <= layout.surface.x + layout.surface.w);
+            assert!(rect.y + rect.h <= layout.surface.y + layout.surface.h);
+        }
+        assert!(layout.controls[0].rect.x < layout.controls[1].rect.x);
+        assert!(layout.controls[1].rect.x < layout.controls[2].rect.x);
+        let favorite = layout.favorite.unwrap().rect;
+        assert!(!layout.favorite_state.unwrap());
+        assert!(favorite.x >= layout.surface.x);
+        assert!(favorite.x + favorite.w < layout.controls[1].rect.x);
+        assert!(favorite.y + favorite.h <= layout.surface.y + layout.surface.h);
+    }
 }

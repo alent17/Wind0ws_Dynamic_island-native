@@ -48,11 +48,18 @@ def verify_full_player_layout(state):
     album = state['albumRect']
     if surface[2] < 300 or surface[3] < 180:
         raise AssertionError(('expanded glass player did not reach its full layout', state))
-    if album[2] < 100 or abs(album[2] - album[3]) > 0.1 or not contained(album, surface):
+    if album[2] < 60 or abs(album[2] - album[3]) > 0.1 or not contained(album, surface):
         raise AssertionError(('shared album escaped or changed shape during morph', state))
     for rect in [state['titleRect'], state['artistRect'], *state['controlRects']]:
         if not contained(rect, surface):
             raise AssertionError(('player content escaped animated glass surface', rect, surface, state))
+    title = state['titleRect']
+    progress = state['progressRect']
+    transports = state['controlRects'][1:]
+    if title[0] < album[0] + album[2] - 2 or title[1] > album[1] + album[3]:
+        raise AssertionError(('metadata must sit beside the square cover', album, title, state))
+    if progress[1] <= album[1] + album[3] or any(r[1] <= progress[1] for r in transports):
+        raise AssertionError(('timeline and transport row must follow metadata', progress, transports, state))
 
 
 def snapshot(hwnd, report):
@@ -74,7 +81,7 @@ for dpi in (96, 192):
     report = folder / f'dpi-{dpi}.json'
     report.unlink(missing_ok=True)
     proc = subprocess.Popen([
-        str(exe), '--ui-v2', '--test-fixture', '--test-cover', '--paused', '--benchmark',
+        str(exe), '--test-fixture', '--test-cover', '--paused', '--benchmark',
         '--test-dpi', str(dpi), '--settings-path', str(settings), '--log', str(report),
     ])
     hwnd = None
@@ -110,7 +117,7 @@ for dpi in (96, 192):
                             raise AssertionError((direction, dpi, 'black core leaked', black, state))
                         clear = None
                         if live_height > 160:
-                            clear = image.getpixel((round((x + width * .5) * scale),
+                            clear = image.getpixel((round((x + width * .15) * scale),
                                                     round((y + live_height * .97) * scale)))
                             if max(clear) - min(clear) < 18:
                                 raise AssertionError((direction, dpi, 'clear tail lost desktop', clear, state))
@@ -123,6 +130,10 @@ for dpi in (96, 192):
                 raise AssertionError((direction, dpi, 'spring did not settle', state))
             if expanded:
                 verify_full_player_layout(state)
+                settled_screenshot = folder / f'settled-expand-{dpi}.png'
+                save_test_screenshot(settled_screenshot, bounds)
+                cases.append({'dpi': dpi, 'direction': 'settled-expand',
+                              'state': state, 'screenshot': str(settled_screenshot)})
             elif state['surfaceRect'][2] > 100 or state['surfaceRect'][3] > 40:
                 raise AssertionError(('collapsed player retained expanded geometry', state))
             if len(samples) < 2:

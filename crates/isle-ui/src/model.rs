@@ -738,6 +738,9 @@ impl Model {
             next: capabilities.next,
             seek: capabilities.seek
                 && media.is_some_and(|m| m.timeline.position_known && m.timeline.duration_ms > 0),
+            favorite_state: capabilities
+                .favorite
+                .then(|| media.and_then(|m| m.favorite_state).unwrap_or(false)),
         })
     }
     /// Snapshot expressed in host-local DIP coordinates at the current Spring
@@ -766,6 +769,7 @@ impl Model {
             &mut layout.title,
             &mut layout.artist,
             &mut layout.progress,
+            &mut layout.favorite,
         ]
         .into_iter()
         .flatten()

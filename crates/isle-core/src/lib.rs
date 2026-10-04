@@ -33,6 +33,8 @@ pub struct MediaSnapshot {
     pub play_pause: bool,
     pub next: bool,
     pub seek: bool,
+    pub set_favorite: bool,
+    pub favorite_state: Option<bool>,
     pub timeline: Timeline,
 }
 
@@ -49,6 +51,7 @@ pub struct MediaCapabilities {
     pub shuffle: bool,
     pub repeat: bool,
     pub queue: bool,
+    pub favorite: bool,
 }
 
 impl MediaSnapshot {
@@ -62,6 +65,7 @@ impl MediaSnapshot {
             shuffle: false,
             repeat: false,
             queue: false,
+            favorite: self.set_favorite && self.favorite_state.is_some(),
         }
     }
 }
@@ -268,11 +272,38 @@ mod tests {
                 shuffle: false,
                 repeat: false,
                 queue: false,
+                favorite: false,
             }
         );
         assert_eq!(
             MediaSnapshot::default().capabilities(),
             MediaCapabilities::default()
+        );
+        assert!(
+            !MediaSnapshot {
+                favorite_state: Some(false),
+                ..Default::default()
+            }
+            .capabilities()
+            .favorite
+        );
+        assert!(
+            MediaSnapshot {
+                set_favorite: true,
+                favorite_state: Some(false),
+                ..Default::default()
+            }
+            .capabilities()
+            .favorite
+        );
+        assert!(
+            !MediaSnapshot {
+                set_favorite: true,
+                favorite_state: None,
+                ..Default::default()
+            }
+            .capabilities()
+            .favorite
         );
     }
 
