@@ -42,7 +42,7 @@ impl Default for Appearance {
             style: "floating".into(),
             edge: "top".into(),
             edge_position: 50,
-            compact_length: 80,
+            compact_length: 156,
             collapsed_shoulder_radius: 8,
             expanded_shoulder_radius: 32,
             expanded_corner_radius: 45,
@@ -209,7 +209,7 @@ impl Document {
                 .and_then(|value| u8::try_from(value).ok())
                 .filter(|value| *value <= 100)
                 .unwrap_or(50),
-            compact_length: self.0["compactLength"].as_u64().unwrap_or(80) as u16,
+            compact_length: self.0["compactLength"].as_u64().unwrap_or(156) as u16,
             collapsed_shoulder_radius: self.0["collapsedEdgeShoulderRadius"].as_u64().unwrap_or(8)
                 as u8,
             expanded_shoulder_radius: self.0["expandedEdgeShoulderRadius"].as_u64().unwrap_or(32)
@@ -422,6 +422,10 @@ mod tests {
     fn defaults_match_every_legacy_field() {
         let mut current = serde_json::to_value(AppPreferences::default()).unwrap();
         assert_eq!(current["remoteDebuggingPort"], 9223);
+        assert_eq!(current["compactLength"], 156);
+        // The native Music UI uses a wider default; persisted legacy values
+        // are still read verbatim. Compare the remaining legacy defaults.
+        current["compactLength"] = Value::from(80);
         current
             .as_object_mut()
             .unwrap()

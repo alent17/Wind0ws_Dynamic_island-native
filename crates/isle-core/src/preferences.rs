@@ -139,7 +139,7 @@ impl Default for AppPreferences {
             island_edge_position: 50,
             collapsed_edge_shoulder_radius: 8,
             expanded_edge_shoulder_radius: 32,
-            compact_length: 80,
+            compact_length: 156,
             language: "system".to_string(),
             font_id: "misans".to_string(),
             capture_hide_on_screenshot: true,

@@ -46,7 +46,7 @@ def contained(inner, outer):
 def verify_full_player_layout(state):
     surface = state['surfaceRect']
     album = state['albumRect']
-    if surface[2] < 300 or surface[3] < 180:
+    if surface[2] < 300 or surface[3] < 154:
         raise AssertionError(('expanded glass player did not reach its full layout', state))
     if album[2] < 60 or abs(album[2] - album[3]) > 0.1 or not contained(album, surface):
         raise AssertionError(('shared album escaped or changed shape during morph', state))
@@ -77,7 +77,7 @@ def snapshot(hwnd, report):
     raise AssertionError('glass motion snapshot timed out')
 
 
-for dpi in (96, 192):
+for dpi in (96, 144, 192):
     report = folder / f'dpi-{dpi}.json'
     report.unlink(missing_ok=True)
     proc = subprocess.Popen([
@@ -134,7 +134,7 @@ for dpi in (96, 192):
                 save_test_screenshot(settled_screenshot, bounds)
                 cases.append({'dpi': dpi, 'direction': 'settled-expand',
                               'state': state, 'screenshot': str(settled_screenshot)})
-            elif state['surfaceRect'][2] > 100 or state['surfaceRect'][3] > 40:
+            elif state['surfaceRect'][2] > state['compactLength'] + .1 or state['surfaceRect'][3] > 40:
                 raise AssertionError(('collapsed player retained expanded geometry', state))
             if len(samples) < 2:
                 raise AssertionError((direction, dpi, 'insufficient intermediate captures', len(samples)))

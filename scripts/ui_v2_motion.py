@@ -75,7 +75,7 @@ for dpi in [96, 120, 144, 168, 192]:
             u.GetWindowRect(hwnd, c.byref(rect))
             assert rect.right - rect.left == round(480 * dpi / 96), state
             album = state['albumRect']
-            assert abs(album[2] - album[3]) < .01 and album[2] >= 100, state
+            assert abs(album[2] - album[3]) < .01 and album[2] >= 64, state
             # Same geometry drives the native pointer seek and diagnostics.
             x, y, width, height = state['progressRect']
             packed = (round((x + width * .75) * state['scale']) & 65535) | (
@@ -101,7 +101,7 @@ try:
         key(hwnd, 0x0d)
         state = settled(hwnd, report, True)
         finite_bounds(state)
-        assert state['albumRect'][2] > 100, state
+        assert state['albumRect'][2] >= 64, state
         key(hwnd, 0x1b)
         state = settled(hwnd, report, False)
         finite_bounds(state)

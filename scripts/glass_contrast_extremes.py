@@ -60,7 +60,7 @@ def percentile(histogram, fraction):
 
 
 try:
-    for dpi in (96, 192):
+    for dpi in (96, 144, 192):
         for art in ("bright", "dark"):
             for desktop, color in (("white", "#ffffff"), ("black", "#000000")):
                 canvas.configure(background=color)

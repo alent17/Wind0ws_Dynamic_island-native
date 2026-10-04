@@ -135,7 +135,7 @@ impl Default for Model {
             media_failed: false,
             edge: Edge::Top,
             attached: false,
-            compact_length: 80,
+            compact_length: 156,
             collapsed_shoulder_radius: 8,
             expanded_shoulder_radius: 32,
             expanded_corner_radius: 45,

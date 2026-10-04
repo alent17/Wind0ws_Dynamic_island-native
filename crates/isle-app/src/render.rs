@@ -1747,7 +1747,7 @@ impl Renderer {
                         l.clone()
                     } else {
                         self.layouts.clear(); // Only the currently displayed title owns a layout.
-                        let f = self.format(13)?;
+                        let f = self.format(if m.ui_v2 { 16 } else { 13 })?;
                         let wide: Vec<u16> = title.encode_utf16().collect();
                         let l = self.write.CreateTextLayout(&wide, &f, 2000., 24.)?;
                         let mut metrics = DWRITE_TEXT_METRICS::default();
@@ -1848,7 +1848,7 @@ impl Renderer {
                         self.text_with_ellipsis(
                             artist,
                             artist_rect,
-                            11,
+                            13,
                             DWRITE_FONT_WEIGHT_MEDIUM,
                             artist_color,
                         )?;
@@ -1861,7 +1861,17 @@ impl Renderer {
                             artist_color,
                         )?;
                     }
-                    self.spectrum(c.x + c.w - 28., c.y + 30., m);
+                    if m.ui_v2 {
+                        if let Some(metadata) = m.layout_snapshot().title {
+                            self.spectrum(
+                                metadata.rect.x + metadata.rect.w + 8.,
+                                metadata.rect.y + 14.,
+                                m,
+                            );
+                        }
+                    } else {
+                        self.spectrum(c.x + c.w - 28., c.y + 30., m);
+                    }
                     let (elapsed_ms, duration_ms, position_known) = m
                         .media
                         .as_ref()
@@ -1922,7 +1932,7 @@ impl Renderer {
                         &elapsed_label[..elapsed_label_len],
                         Rect {
                             x: if m.ui_v2 { progress_x - 31. } else { c.x },
-                            y: progress_y - 5.,
+                            y: progress_y - 8.,
                             w: if m.ui_v2 { 27. } else { 26. },
                             h: 16.,
                         },
@@ -1956,7 +1966,7 @@ impl Renderer {
                             } else {
                                 c.x + c.w - 34.
                             },
-                            y: progress_y - 5.,
+                            y: progress_y - 8.,
                             w: 34.,
                             h: 16.,
                         },
@@ -1967,7 +1977,7 @@ impl Renderer {
                     self.fill(
                         Rect {
                             x: progress_x,
-                            y: progress_y - 1.5,
+                            y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
                             w: progress_width,
                             h: if m.ui_v2 { 4. } else { 6. },
                         },
@@ -1977,13 +1987,25 @@ impl Renderer {
                     self.fill(
                         Rect {
                             x: progress_x,
-                            y: progress_y - 1.5,
+                            y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
                             w: progress_width * progress,
                             h: if m.ui_v2 { 4. } else { 6. },
                         },
                         3.,
                         color(white.r, white.g, white.b, progress_opacity),
                     );
+                    if m.ui_v2 && position_known && duration_ms > 0 {
+                        self.fill(
+                            Rect {
+                                x: progress_x + progress_width * progress - 4.,
+                                y: progress_y - 4.,
+                                w: 8.,
+                                h: 8.,
+                            },
+                            4.,
+                            color(white.r, white.g, white.b, progress_opacity),
+                        );
+                    }
                     for (hit, r) in m.visual_controls() {
                         if matches!(hit, Hit::Previous | Hit::Play | Hit::Next) {
                             let control_opacity = if m.ui_v2 {

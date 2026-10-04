@@ -2,7 +2,7 @@
 
 独立的 Windows 原生灵动岛应用，使用 Rust、Win32、Direct2D、DirectWrite、DXGI 和 DirectComposition。运行时不依赖 Tauri、Wry 或 WebView2。
 
-当前版本：**0.57**（Cargo / Windows 文件版本 `0.57.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
+当前版本：**0.58**（Cargo / Windows 文件版本 `0.58.0`）。版本序列从 0.10 延续，每个完成并验证的步骤递增版本，在 `main` 提交并推送。
 
 原 Tauri/WebView 项目位于 [Wind0ws_Dynamic_island](https://github.com/alent17/Wind0ws_Dynamic_island)。
 
@@ -40,9 +40,9 @@ cargo test --workspace
 
 ## 迁移与验收状态
 
-本项目按单 Agent 路线图推进。GitHub 仅维护本 README 作为项目说明和状态入口；路线图、参考图片、项目状态、QA 文档及性能记录集中保存在仓库内的 `local-only/` 并由 Git 忽略。代码、构建脚本和许可证继续纳入版本控制。
+当前按多 Agent UI 优先方案推进，依次完成静态布局、动画与 Glass，由 Lead 统一评审和验证。GitHub 仅维护本 README 作为项目说明和状态入口；路线图、参考图片、项目状态、QA 文档及性能记录集中保存在仓库内的 `local-only/` 并由 Git 忽略。代码、构建脚本和许可证继续纳入版本控制。
 
-当前优先级是 P0 稳定性：记录历史 `0x80070057` 尚未复现的条件，并在可用的不同 DPI 显示器上完成真实跨屏验收；随后继续网易云专用适配、Full Player、Glass、Live Activities 和 Widget Shelf。单窗口 UI 2.0 是默认界面；需要回退诊断时可用 `--legacy-ui`。
+当前优先完成 Compact ↔ Expanded Music 的视觉比例、连续动画和克制的黑色 Glass，不扩展新的媒体适配、Widget 或 Playing Next。真实混合 DPI 与跨屏验收仍待完成。单窗口 UI 2.0 是默认界面；需要回退诊断时可用 `--legacy-ui`。
 
 0.22 为原生 ComboBox 和弹出选项列表提供 Selection / SelectionItem UIA 树；副屏实测列出全部六个时区选项，完成切换、还原和必选约束验证。
 
@@ -105,6 +105,8 @@ cargo test --workspace
 0.51 扩展单窗口形态回归：同一播放器从紧凑岛展开为完整玻璃播放器并收回；DISPLAY2 96/192 DPI 验证专辑、标题、进度和控件始终留在动画表面内。
 
 0.57 将 UI 2.0 设为默认单窗口界面，并把展开音乐播放器改为参考图的横向排布：封面与元数据并列、完整进度行、居中的传输控制。DISPLAY2 96/192 DPI 的开合截图验证布局不越出玻璃表面。收藏爱心及其 Provider 能力门控仍待下一步完成。
+
+0.58 按参考图收紧 Music UI：430×164 DIP（工具栏 430×202），72 DIP 封面、16/13 DIP 标题与歌手、4 DIP 进度条和对称传输控制。Compact 默认 156×36 DIP，Hover 176×40；已有尺寸设置保留。四边 attached 布局与最大肩部边界测试通过；DISPLAY2 96/144/192 DPI 的长文本、无媒体、缺失封面及横竖封面裁切回归通过。物理显示器仍为 96 DPI，高 DPI 为合成测试。
 
 0.21 Settings 为单选组根窗口提供 Selection、Radio 控件提供 SelectionItem；副屏隔离测试验证单选切换、容器关联、必选约束和原值恢复。
 

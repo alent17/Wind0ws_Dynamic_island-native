@@ -120,14 +120,22 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         let (width, height) = match input.page {
             Page::Weather => (396., 300.),
             Page::Music => (
-                448.,
+                430.,
                 if input.tool_ids.iter().any(|visible| *visible) {
-                    216.
+                    202.
                 } else {
-                    188.
+                    164.
                 },
             ),
             _ => (396., 228.),
+        };
+        let height = if input.page == Page::Music
+            && input.attached
+            && matches!(input.edge, Edge::Left | Edge::Right)
+        {
+            height + shoulder * 2.
+        } else {
+            height
         };
         (width, height, input.corner_radius.clamp(8., 80.), shoulder)
     } else {
@@ -139,16 +147,16 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
             },
         );
         let length = if input.hovered {
-            (length + 8.).min(300.)
+            (length + 20.).min(300.)
         } else {
             length
         };
-        let thickness = if input.hovered { 30. } else { 28. };
+        let thickness = if input.hovered { 40. } else { 36. };
         let (w, h) = match input.edge {
             Edge::Left | Edge::Right => (thickness, length),
             Edge::Top | Edge::Bottom => (length, thickness),
         };
-        (w, h, 14., input.collapsed_shoulder.clamp(0., 16.))
+        (w, h, 18., input.collapsed_shoulder.clamp(0., 16.))
     };
 
     let origin = offset(w, h, HOST, input.edge, input.attached);
@@ -176,26 +184,26 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         );
         let album = Rect {
             x: body_x,
-            y: body_y + 5.,
-            w: 64.,
-            h: 64.,
+            y: body_y,
+            w: 72.,
+            h: 72.,
         };
         let title = Rect {
-            x: body_x + 82.,
-            y: body_y + 10.,
-            w: (body_w - 124.).max(40.),
+            x: body_x + 88.,
+            y: body_y + 16.,
+            w: (body_w - 122.).max(40.),
             h: 24.,
         };
         let artist = Rect {
             x: title.x,
-            y: title.y + 27.,
+            y: title.y + 26.,
             w: title.w,
             h: 20.,
         };
         let progress = Rect {
-            x: body_x + 14.,
-            y: body_y + 87.,
-            w: (body_w - 28.).max(40.),
+            x: body_x + 36.,
+            y: body_y + 77.,
+            w: (body_w - 78.).max(40.),
             h: 20.,
         };
         let visible_controls: Vec<Hit> = [
@@ -206,7 +214,7 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         .into_iter()
         .flatten()
         .collect();
-        let control_width = visible_controls.len() as f32 * 56.;
+        let control_width = 168.;
         let controls_left = body_x + (body_w - control_width) * 0.5;
         let mut controls = Vec::new();
         if input.seek {
@@ -220,7 +228,12 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
                 rect: progress,
             });
         }
-        for (i, hit) in visible_controls.into_iter().enumerate() {
+        for hit in visible_controls {
+            let i = match hit {
+                Hit::Previous => 0,
+                Hit::Play => 1,
+                _ => 2,
+            };
             let button_size = if hit == Hit::Play {
                 (48., 46.)
             } else {
@@ -228,7 +241,7 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
             };
             let rect = Rect {
                 x: controls_left + i as f32 * 56. + (56. - button_size.0) * 0.5,
-                y: body_y + 110.,
+                y: body_y + 100.,
                 w: button_size.0,
                 h: button_size.1,
             };
@@ -242,8 +255,8 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         if let Some(liked) = input.favorite_state {
             snapshot.favorite = Some(ElementLayout {
                 rect: Rect {
-                    x: surface.x + surface.w * 0.285 - 16.,
-                    y: body_y + 112.,
+                    x: body_x + 8.,
+                    y: body_y + 107.,
                     w: 32.,
                     h: 32.,
                 },
@@ -254,7 +267,7 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         }
         snapshot.album = Some(ElementLayout {
             rect: album,
-            radius: 16.,
+            radius: 17.,
             opacity: 1.,
         });
         snapshot.title = Some(ElementLayout {
@@ -322,11 +335,11 @@ fn music_body(
     } else {
         0.
     };
-    let toolbar = if has_toolbar { 40. } else { 0. };
+    let toolbar = if has_toolbar { 38. } else { 0. };
     (
-        surface.x + 28. + side_inset,
-        surface.y + top_inset + toolbar + 12.,
-        (surface.w - 56. - side_inset * 2.).max(40.),
+        surface.x + 24. + side_inset,
+        surface.y + top_inset + toolbar + 16.,
+        (surface.w - 48. - side_inset * 2.).max(40.),
         surface.h - top_inset - toolbar - 12.,
     )
 }
@@ -359,6 +372,70 @@ fn toolbar_layout(surface: Rect, tool_ids: [bool; 7]) -> Vec<ElementLayout> {
 mod tests {
     use super::*;
     use crate::state::ExpandedView;
+
+    #[test]
+    fn music_content_and_time_labels_fit_every_edge_with_toolbar_and_shoulders() {
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            for attached in [false, true] {
+                for toolbar in [false, true] {
+                    let layout = compute(LayoutInput {
+                        edge,
+                        attached,
+                        mode: PrimarySurfaceMode::Expanded(ExpandedView::Music),
+                        page: Page::Music,
+                        hovered: false,
+                        timer_active: false,
+                        timer_finished: false,
+                        compact_length: 156.,
+                        collapsed_shoulder: 8.,
+                        expanded_shoulder: 64.,
+                        corner_radius: 32.,
+                        tool_ids: [toolbar; 7],
+                        previous: true,
+                        play_pause: true,
+                        next: true,
+                        seek: true,
+                        favorite_state: Some(false),
+                    });
+                    for rect in layout.controls.iter().map(|control| control.rect).chain([
+                        layout.album.unwrap().rect,
+                        layout.title.unwrap().rect,
+                        layout.artist.unwrap().rect,
+                        layout.favorite.unwrap().rect,
+                    ]) {
+                        assert!(rect.x >= layout.surface.x && rect.y >= layout.surface.y);
+                        assert!(rect.x + rect.w <= layout.surface.x + layout.surface.w);
+                        assert!(rect.y + rect.h <= layout.surface.y + layout.surface.h);
+                    }
+                    let timeline = layout.progress.unwrap().rect;
+                    assert!(timeline.x - 31. >= layout.surface.x);
+                    assert!(timeline.x + timeline.w + 38. <= layout.surface.x + layout.surface.w);
+                    let previous = layout
+                        .controls
+                        .iter()
+                        .find(|control| control.hit == Hit::Previous)
+                        .unwrap()
+                        .rect
+                        .center();
+                    let play = layout
+                        .controls
+                        .iter()
+                        .find(|control| control.hit == Hit::Play)
+                        .unwrap()
+                        .rect
+                        .center();
+                    let next = layout
+                        .controls
+                        .iter()
+                        .find(|control| control.hit == Hit::Next)
+                        .unwrap()
+                        .rect
+                        .center();
+                    assert!((play.x - previous.x - (next.x - play.x)).abs() < 0.01);
+                }
+            }
+        }
+    }
 
     #[test]
     fn expanded_music_layout_matches_wide_reference_and_stays_inside_surface() {

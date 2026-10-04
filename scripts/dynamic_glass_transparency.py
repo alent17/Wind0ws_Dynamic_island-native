@@ -37,7 +37,7 @@ root.update()
 cases = []
 
 try:
-    for dpi in (96, 192):
+    for dpi in (96, 144, 192):
         settings.write_text('{"enableAnimations":true,"reduceAnimations":true}', encoding='utf-8')
         report.unlink(missing_ok=True)
         proc = subprocess.Popen([

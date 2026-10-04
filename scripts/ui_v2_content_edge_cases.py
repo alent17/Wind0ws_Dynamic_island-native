@@ -60,7 +60,7 @@ def visible(rect):
     return rect[2] > 0 and rect[3] > 0
 
 
-for dpi in (96, 192):
+for dpi in (96, 144, 192):
     dpi_cases = []
     for name, args in (
         ('long-text', ['--test-cover', '--test-long-text']),

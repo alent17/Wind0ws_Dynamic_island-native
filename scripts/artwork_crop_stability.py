@@ -60,7 +60,7 @@ def crop_signature(path, state):
 
 
 monitor = test_monitor_rect()
-for dpi in (96, 192):
+for dpi in (96, 144, 192):
     for kind, dimensions in (("landscape", (512, 320)), ("portrait", (320, 512))):
         report = folder / f"{dpi}-{kind}.json"
         settings = folder / f"{dpi}-{kind}-settings.json"
@@ -85,7 +85,7 @@ for dpi in (96, 192):
             u.PostMessageW(hwnd, 0x100, 0x0D, 0)
             expanded = settled(hwnd, report, True)
             album = expanded["albumRect"]
-            assert album[2] > 100 and album[3] > 100, expanded
+            assert album[2] >= 64 and album[3] >= 64, expanded
             assert abs(album[2] - album[3]) < 0.1, (kind, "album crop must remain square", album)
             surface = expanded["surfaceRect"]
             assert album[0] >= surface[0] and album[1] >= surface[1], (album, surface)
