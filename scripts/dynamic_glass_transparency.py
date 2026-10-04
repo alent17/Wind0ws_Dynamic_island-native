@@ -89,6 +89,9 @@ try:
                 edge_sample = sample(.12, .84)
                 if max(edge_sample) - min(edge_sample) < 20:
                     raise AssertionError((dpi, 'transparent edge lacks sampled desktop color', edge_sample))
+                corner_samples = [sample(x, .90) for x in (.10, .90)]
+                if any(max(pixel) - min(pixel) < 16 for pixel in corner_samples):
+                    raise AssertionError((dpi, 'rounded transparent corners hide desktop color', corner_samples))
                 cases.append({
                     'dpi': dpi,
                     'fontFamily': state['fontFamily'],
@@ -96,6 +99,7 @@ try:
                     'blackSamples': black_samples,
                     'transparentTailSample': clear_sample,
                     'transparentEdgeSample': edge_sample,
+                    'transparentCornerSamples': corner_samples,
                     'screenshot': str(screenshot),
                 })
                 print(f'PASS: DISPLAY2 {dpi} DPI; pure-black core and transparent desktop verified')

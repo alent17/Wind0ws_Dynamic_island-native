@@ -135,10 +135,16 @@ const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 4] = [
 const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 10.;
 const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
 const DYNAMIC_GLASS_BLUR_OPACITY: f32 = 0.08;
+const DYNAMIC_GLASS_CORNER_LENS_REACH: f32 = 0.18;
+const DYNAMIC_GLASS_CORNER_LENS_GAIN: f32 = 1.5;
 const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
 const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.82;
 const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 const _: () = assert!(DYNAMIC_GLASS_REFRACTION_START > DYNAMIC_GLASS_FADE_START);
+
+fn corner_lens_strength(column_progress: f32) -> f32 {
+    (1. - column_progress.min(1. - column_progress) / DYNAMIC_GLASS_CORNER_LENS_REACH).clamp(0., 1.)
+}
 
 fn gradient_stops(profile: &[(f32, f32)], rgb: [f32; 3]) -> Vec<D2D1_GRADIENT_STOP> {
     profile
@@ -254,12 +260,14 @@ unsafe fn capture_refracted_strip(
             for column in 0..width_px as usize {
                 let phase = column as f32 / (scale * 54.).max(1.)
                     + row as f32 / (output_height_px as f32).max(1.) * 0.9;
-                let source_x = (column as f32 + phase.sin() * amplitude_x)
+                let column_progress = column as f32 / (width_px as f32 - 1.).max(1.);
+                let corner_lens =
+                    1. + corner_lens_strength(column_progress) * DYNAMIC_GLASS_CORNER_LENS_GAIN;
+                let source_x = (column as f32 + phase.sin() * amplitude_x * corner_lens)
                     .clamp(0., width_px.saturating_sub(1) as f32);
                 let row_progress = row as f32 / (output_height_px as f32 - 1.).max(1.);
-                let column_progress = column as f32 / (width_px as f32 - 1.).max(1.);
                 let source_y = (row_progress * source_height_px.saturating_sub(1) as f32
-                    + (phase * 0.72).cos() * amplitude_y)
+                    + (phase * 0.72).cos() * amplitude_y * corner_lens)
                     .clamp(0., source_height_px.saturating_sub(1) as f32);
                 let x0 = source_x.floor() as usize;
                 let y0 = source_y.floor() as usize;
@@ -1068,13 +1076,12 @@ impl Renderer {
                 .is_none_or(|captured| captured.elapsed() >= DYNAMIC_GLASS_SAMPLE_INTERVAL)
         {
             let origin = m.origin();
-            let inset = m.radius.value.max(20.);
-            let strip_width = (m.width.value - inset * 2.).max(1.);
+            let strip_width = m.width.value.max(1.);
             if let Some((width, height, pixels)) = capture_refracted_strip(
                 self.hwnd,
                 self.scale,
                 RefractionStrip {
-                    x: origin.x + inset,
+                    x: origin.x,
                     y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
                     width: strip_width,
                     source_height: (m.height.value * 0.14).max(DYNAMIC_GLASS_REFRACTION_WIDTH),
@@ -1356,9 +1363,8 @@ impl Renderer {
             let origin = m.origin();
             if self.refraction_capture_ready {
                 if let Some((width, height, bitmap)) = &self.refraction_bitmap {
-                    let inset = m.radius.value.max(20.);
                     let destination = rect(Rect {
-                        x: origin.x + inset,
+                        x: origin.x,
                         y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
                         w: *width as f32 / self.scale,
                         h: *height as f32 / self.scale,
@@ -2162,12 +2168,13 @@ unsafe fn load_fonts(write: &IDWriteFactory) -> Option<IDWriteFontCollection> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cover_spectrum_palette, dynamic_glass_blur_opacity, format_media_time, glass_opacity_at,
-        glass_rim_opacity_at, normalized_artwork_crop, rebase_crossfade_weights,
-        should_build_glass_blur, should_render_dynamic_glass, DYNAMIC_GLASS_BLUR_OPACITY,
-        DYNAMIC_GLASS_FADE_START, DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH,
-        DYNAMIC_GLASS_REFRACTION_START, DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY,
-        MAX_CROSSFADE_LAYERS,
+        corner_lens_strength, cover_spectrum_palette, dynamic_glass_blur_opacity,
+        format_media_time, glass_opacity_at, glass_rim_opacity_at, normalized_artwork_crop,
+        rebase_crossfade_weights, should_build_glass_blur, should_render_dynamic_glass,
+        DYNAMIC_GLASS_BLUR_OPACITY, DYNAMIC_GLASS_CORNER_LENS_GAIN,
+        DYNAMIC_GLASS_CORNER_LENS_REACH, DYNAMIC_GLASS_FADE_START,
+        DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, DYNAMIC_GLASS_REFRACTION_START,
+        DYNAMIC_GLASS_REFRACTION_WIDTH, DYNAMIC_GLASS_RIM_OPACITY, MAX_CROSSFADE_LAYERS,
     };
 
     #[test]
@@ -2324,6 +2331,18 @@ mod tests {
             dynamic_glass_blur_opacity(true, 2.),
             DYNAMIC_GLASS_BLUR_OPACITY
         );
+    }
+
+    #[test]
+    fn dynamic_glass_corner_lens_strength_is_symmetric_and_fades_to_the_center() {
+        assert_eq!(DYNAMIC_GLASS_CORNER_LENS_REACH, 0.18);
+        assert_eq!(DYNAMIC_GLASS_CORNER_LENS_GAIN, 1.5);
+        assert_eq!(corner_lens_strength(0.), 1.);
+        assert_eq!(corner_lens_strength(0.05), corner_lens_strength(0.95));
+        assert!(corner_lens_strength(0.05) > corner_lens_strength(0.12));
+        assert_eq!(corner_lens_strength(0.18), 0.);
+        assert_eq!(corner_lens_strength(0.5), 0.);
+        assert_eq!(corner_lens_strength(1.), 1.);
     }
 
     #[test]
