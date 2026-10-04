@@ -78,20 +78,22 @@ try:
                     return image.getpixel((round((x + x_fraction * width) * scale),
                                            round((y + y_fraction * height) * scale)))
 
+                # Avoid album, toolbar, metadata and seek track while probing <72% core.
                 black_samples = [sample(x, y) for x, y in (
-                    (.12, .12), (.88, .12), (.12, .25), (.88, .25),
+                    (.4, .05), (.6, .05), (.4, .60), (.6, .60),
                 )]
                 if any(max(pixel) > 18 for pixel in black_samples):
                     raise AssertionError((dpi, 'solid black core leaked desktop/refraction', black_samples))
-                clear_sample = sample(.5, .97)
+                # Sample only the final transparent tail; the control zone stays dark.
+                clear_sample = sample(.5, .99)
                 if max(clear_sample) - min(clear_sample) < 24:
                     raise AssertionError((dpi, 'transparent tail does not reveal saturated desktop', clear_sample))
-                edge_sample = sample(.12, .84)
+                edge_sample = sample(.5, .985)
                 if max(edge_sample) - min(edge_sample) < 20:
-                    raise AssertionError((dpi, 'transparent edge lacks sampled desktop color', edge_sample))
-                corner_samples = [sample(x, .90) for x in (.10, .90)]
+                    raise AssertionError((dpi, 'bottom edge lacks sampled desktop color', edge_sample))
+                corner_samples = [sample(x, .985) for x in (.32, .68)]
                 if any(max(pixel) - min(pixel) < 16 for pixel in corner_samples):
-                    raise AssertionError((dpi, 'rounded transparent corners hide desktop color', corner_samples))
+                    raise AssertionError((dpi, 'transparent tail shoulders hide desktop color', corner_samples))
                 cases.append({
                     'dpi': dpi,
                     'fontFamily': state['fontFamily'],

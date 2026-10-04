@@ -70,7 +70,9 @@ pub struct VisualState {
 impl Default for VisualState {
     fn default() -> Self {
         Self {
-            album: VisualElement::new(Default::default(), 10., MotionProfile::Content),
+            // Shared artwork must follow the surface trajectory; faster content
+            // motion can carry its left edge outside the expanding clip.
+            album: VisualElement::new(Default::default(), 10., MotionProfile::Surface),
             title: VisualElement::new(Default::default(), 0., MotionProfile::Content),
             artist: VisualElement::new(Default::default(), 0., MotionProfile::Content),
             progress: VisualElement::new(Default::default(), 2., MotionProfile::Content),
@@ -85,6 +87,10 @@ impl Default for VisualState {
 }
 
 impl VisualState {
+    pub(crate) fn initialized(&self) -> bool {
+        self.initialized
+    }
+
     pub fn retarget(
         &mut self,
         layout: &LayoutSnapshot,

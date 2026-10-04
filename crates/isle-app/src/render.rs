@@ -52,6 +52,7 @@ pub struct Renderer {
     brush: ID2D1SolidColorBrush,
     glass_brush: ID2D1LinearGradientBrush,
     glass_rim_brush: ID2D1LinearGradientBrush,
+    glass_tint_brush: ID2D1LinearGradientBrush,
     formats: HashMap<(u32, i32), IDWriteTextFormat>,
     ellipsis_formats: HashMap<(u32, i32), IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
@@ -118,11 +119,11 @@ fn color(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
 
 const DYNAMIC_GLASS_OPACITY: [(f32, f32); 7] = [
     (0.0, 1.0),
-    (0.69, 1.0),
-    (0.74, 1.0),
-    (0.82, 0.62),
-    (0.91, 0.22),
-    (0.98, 0.04),
+    (0.72, 1.0),
+    (0.82, 0.97),
+    (0.92, 0.92),
+    (0.97, 0.55),
+    (0.99, 0.08),
     (1.0, 0.0),
 ];
 
@@ -132,14 +133,14 @@ const DYNAMIC_GLASS_RIM_OPACITY: [(f32, f32); 4] = [
     (0.82, 0.025),
     (1.0, 0.07),
 ];
-const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 10.;
+const DYNAMIC_GLASS_REFRACTION_WIDTH: f32 = 5.;
 const DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH: f32 = 0.75;
-const DYNAMIC_GLASS_BLUR_OPACITY: f32 = 0.08;
+const DYNAMIC_GLASS_BLUR_OPACITY: f32 = 0.06;
 const DYNAMIC_GLASS_CORNER_LENS_REACH: f32 = 0.18;
 const DYNAMIC_GLASS_CORNER_LENS_GAIN: f32 = 1.5;
-const DYNAMIC_GLASS_DISPERSION_MAX_PX: f32 = 0.28;
-const DYNAMIC_GLASS_FADE_START: f32 = 0.74;
-const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.82;
+const DYNAMIC_GLASS_DISPERSION_MAX_PX: f32 = 0.14;
+const DYNAMIC_GLASS_FADE_START: f32 = 0.72;
+const DYNAMIC_GLASS_REFRACTION_START: f32 = 0.92;
 const DYNAMIC_GLASS_SAMPLE_INTERVAL: Duration = Duration::from_millis(33);
 const _: () = assert!(DYNAMIC_GLASS_REFRACTION_START > DYNAMIC_GLASS_FADE_START);
 
@@ -815,6 +816,27 @@ impl Renderer {
             None,
             &rim_stops,
         )?;
+        let tint_stops = gradient_stops(
+            &[
+                (0., 0.),
+                (DYNAMIC_GLASS_FADE_START, 0.),
+                (0.88, 1.),
+                (0.94, 1.),
+                (0.99, 0.),
+                (1., 0.),
+            ],
+            [1., 1., 1.],
+        );
+        let tint_stops =
+            ctx.CreateGradientStopCollection(&tint_stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
+        let glass_tint_brush = ctx.CreateLinearGradientBrush(
+            &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: point(0., 0.),
+                endPoint: point(0., HOST),
+            },
+            None,
+            &tint_stops,
+        )?;
         let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
         let fonts = load_fonts(&write);
         let font_family = if fonts.is_some() {
@@ -841,6 +863,7 @@ impl Renderer {
             brush,
             glass_brush,
             glass_rim_brush,
+            glass_tint_brush,
             formats: HashMap::new(),
             ellipsis_formats: HashMap::new(),
             cover: None,
@@ -1139,7 +1162,7 @@ impl Renderer {
                 self.scale,
                 RefractionStrip {
                     x: origin.x,
-                    y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
+                    y: origin.y + m.height.value - DYNAMIC_GLASS_REFRACTION_WIDTH,
                     width: strip_width,
                     source_height: (m.height.value * 0.14).max(DYNAMIC_GLASS_REFRACTION_WIDTH),
                     output_height: DYNAMIC_GLASS_REFRACTION_WIDTH,
@@ -1343,10 +1366,18 @@ impl Renderer {
             self.ctx.FillGeometry(&shape, &self.brush, None);
         } else if dynamic_glass_active {
             let origin = m.origin();
+            self.glass_brush.SetStartPoint(point(origin.x, origin.y));
+            self.glass_brush
+                .SetEndPoint(point(origin.x, origin.y + m.height.value));
+            self.ctx.FillGeometry(&shape, &self.glass_brush, None);
             let blur_opacity =
                 dynamic_glass_blur_opacity(self.glass_cover.is_some(), self.artwork_fade.value);
             if blur_opacity > 0. {
                 if let Some((_, bitmap)) = &self.glass_cover {
+                    self.glass_tint_brush
+                        .SetStartPoint(point(origin.x, origin.y));
+                    self.glass_tint_brush
+                        .SetEndPoint(point(origin.x, origin.y + m.height.value));
                     let mut layer = D2D1_LAYER_PARAMETERS {
                         contentBounds: rect(Rect {
                             x: origin.x,
@@ -1355,6 +1386,9 @@ impl Renderer {
                             h: m.height.value,
                         }),
                         geometricMask: std::mem::ManuallyDrop::new(Some(shape.cast()?)),
+                        opacityBrush: std::mem::ManuallyDrop::new(Some(
+                            self.glass_tint_brush.cast()?,
+                        )),
                         maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                         maskTransform: Matrix3x2 {
                             M11: 1.,
@@ -1366,6 +1400,9 @@ impl Renderer {
                     };
                     self.ctx.PushLayer(&layer, None);
                     std::mem::ManuallyDrop::drop(&mut layer.geometricMask);
+                    std::mem::ManuallyDrop::drop(&mut layer.opacityBrush);
+                    // Artwork only colors the lower transition, leaving the core
+                    // black and the final transparent tail free of album tint.
                     self.ctx.DrawBitmap(
                         bitmap,
                         Some(&rect(Rect {
@@ -1381,17 +1418,13 @@ impl Renderer {
                     self.ctx.PopLayer();
                 }
             }
-            self.glass_brush.SetStartPoint(point(origin.x, origin.y));
-            self.glass_brush
-                .SetEndPoint(point(origin.x, origin.y + m.height.value));
-            self.ctx.FillGeometry(&shape, &self.glass_brush, None);
         } else {
             self.ink(background_color);
             self.ctx.FillGeometry(&shape, &self.brush, None);
         }
         if dynamic_glass_active {
             // A dark inner edge gives the transparent fill a refractive boundary
-            // without tinting the desktop visible through the lower half.
+            // without tinting the desktop visible through the transparent tail.
             self.ink(color(0., 0., 0., 0.42));
             self.ctx.DrawGeometry(&shape, &self.brush, 3.5, None);
         }
@@ -1420,9 +1453,34 @@ impl Renderer {
             let origin = m.origin();
             if self.refraction_capture_ready {
                 if let Some((width, height, bitmap)) = &self.refraction_bitmap {
+                    // The captured desktop contributes only inside a narrow
+                    // stroke of the live outline, never across the controls.
+                    let edge_mask = self.factory.CreatePathGeometry()?;
+                    let edge_sink = edge_mask.Open()?;
+                    shape.Widen(DYNAMIC_GLASS_REFRACTION_WIDTH, None, None, 0.25, &edge_sink)?;
+                    edge_sink.Close()?;
+                    let mut edge_layer = D2D1_LAYER_PARAMETERS {
+                        contentBounds: rect(Rect {
+                            x: origin.x,
+                            y: origin.y,
+                            w: m.width.value,
+                            h: m.height.value,
+                        }),
+                        geometricMask: std::mem::ManuallyDrop::new(Some(edge_mask.cast()?)),
+                        maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                        maskTransform: Matrix3x2 {
+                            M11: 1.,
+                            M22: 1.,
+                            ..Default::default()
+                        },
+                        opacity: 1.,
+                        ..Default::default()
+                    };
+                    self.ctx.PushLayer(&edge_layer, None);
+                    std::mem::ManuallyDrop::drop(&mut edge_layer.geometricMask);
                     let destination = rect(Rect {
                         x: origin.x,
-                        y: origin.y + m.height.value * DYNAMIC_GLASS_REFRACTION_START,
+                        y: origin.y + m.height.value - DYNAMIC_GLASS_REFRACTION_WIDTH,
                         w: *width as f32 / self.scale,
                         h: *height as f32 / self.scale,
                     });
@@ -1433,14 +1491,15 @@ impl Renderer {
                         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                         None,
                     );
+                    self.ctx.PopLayer();
                 }
             }
             let end_y = origin.y + m.height.value.max(1.);
             self.glass_rim_brush
                 .SetStartPoint(point(origin.x, origin.y));
             self.glass_rim_brush.SetEndPoint(point(origin.x, end_y));
-            // The wide translucent band is clipped to the island outline, so
-            // it occupies roughly 9 px inward and reads as a refractive edge.
+            // Both edge strokes share the live surface clip; the wider stroke
+            // occupies at most 2.5 DIP inward.
             self.ctx.DrawGeometry(
                 &shape,
                 &self.glass_rim_brush,
@@ -2367,8 +2426,9 @@ mod tests {
         assert_eq!(glass_opacity_at(0.), 1.);
         assert_eq!(glass_opacity_at(0.69), 1.);
         assert_eq!(glass_opacity_at(DYNAMIC_GLASS_FADE_START), 1.);
-        assert!(glass_opacity_at(0.82) <= 0.62);
-        assert!(glass_opacity_at(0.91) <= 0.22);
+        assert!(glass_opacity_at(0.82) >= 0.97);
+        assert!(glass_opacity_at(0.91) >= 0.92);
+        assert!(glass_opacity_at(0.99) <= 0.08);
         assert_eq!(glass_opacity_at(1.), 0.);
 
         let mut previous = 1.;
@@ -2384,7 +2444,7 @@ mod tests {
 
     #[test]
     fn dynamic_glass_has_a_clipped_inner_refraction_band_and_fading_highlight() {
-        assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 10.0);
+        assert_eq!(DYNAMIC_GLASS_REFRACTION_WIDTH, 5.0);
         assert_eq!(DYNAMIC_GLASS_INNER_HIGHLIGHT_WIDTH, 0.75);
         assert!(glass_opacity_at(DYNAMIC_GLASS_REFRACTION_START) < 1.0);
         assert!(glass_opacity_at(DYNAMIC_GLASS_REFRACTION_START) > 0.0);
@@ -2504,10 +2564,10 @@ mod tests {
 
     #[test]
     fn cached_glass_blur_is_subtle_and_follows_the_artwork_crossfade() {
-        assert_eq!(DYNAMIC_GLASS_BLUR_OPACITY, 0.08);
+        assert_eq!(DYNAMIC_GLASS_BLUR_OPACITY, 0.06);
         assert_eq!(dynamic_glass_blur_opacity(false, 1.), 0.);
         assert_eq!(dynamic_glass_blur_opacity(true, 0.), 0.);
-        assert_eq!(dynamic_glass_blur_opacity(true, 0.5), 0.04);
+        assert_eq!(dynamic_glass_blur_opacity(true, 0.5), 0.03);
         assert_eq!(
             dynamic_glass_blur_opacity(true, 1.),
             DYNAMIC_GLASS_BLUR_OPACITY
@@ -2532,14 +2592,14 @@ mod tests {
 
     #[test]
     fn glass_dispersion_is_subpixel_balanced_and_vanishes_without_transparency() {
-        assert_eq!(DYNAMIC_GLASS_DISPERSION_MAX_PX, 0.28);
-        assert_eq!(dispersion_offset(0, 1., 1.), 0.28);
+        assert_eq!(DYNAMIC_GLASS_DISPERSION_MAX_PX, 0.14);
+        assert_eq!(dispersion_offset(0, 1., 1.), 0.14);
         assert_eq!(dispersion_offset(1, 1., 1.), 0.);
-        assert_eq!(dispersion_offset(2, 1., 1.), -0.28);
-        assert_eq!(dispersion_offset(0, 0.5, 1.), 0.14);
-        assert_eq!(dispersion_offset(2, 1., 2.), -0.56);
+        assert_eq!(dispersion_offset(2, 1., 1.), -0.14);
+        assert_eq!(dispersion_offset(0, 0.5, 1.), 0.07);
+        assert_eq!(dispersion_offset(2, 1., 2.), -0.28);
         assert_eq!(dispersion_offset(0, 0., 2.), 0.);
-        assert_eq!(dispersion_offset(2, 2., 1.), -0.28);
+        assert_eq!(dispersion_offset(2, 2., 1.), -0.14);
     }
 
     #[test]

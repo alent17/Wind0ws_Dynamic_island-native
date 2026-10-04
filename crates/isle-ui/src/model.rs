@@ -194,7 +194,15 @@ impl Model {
     pub fn set_ui_v2(&mut self, enabled: bool) {
         if self.ui_v2 != enabled {
             self.ui_v2 = enabled;
+            // The first visual snapshot is already at its destination. Bring
+            // its surface there too, including persisted compact dimensions,
+            // before enabling subsequent continuous morphs.
+            let reduced = self.reduced;
+            if enabled && !self.visual_state.initialized() {
+                self.reduced = true;
+            }
             self.retarget();
+            self.reduced = reduced;
         }
     }
     pub fn set_interaction(&mut self, interaction: crate::state::InteractionState) {
@@ -2525,6 +2533,80 @@ mod tests {
             }
             assert!(!m.visual_state.album.rect.active());
             assert!((m.shared_album_rect().w - compact_width).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn ui_v2_initial_surface_matches_persisted_compact_geometry() {
+        for compact_length in [80, 156, 240, 300] {
+            for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+                for attached in [true, false] {
+                    let mut m = Model {
+                        compact_length,
+                        edge,
+                        attached,
+                        reduced: false,
+                        show_spectrum: false,
+                        ..Default::default()
+                    };
+                    m.set_ui_v2(true);
+                    assert!(
+                        !m.reduced,
+                        "initialization changed the user motion preference"
+                    );
+                    let current = m.layout_snapshot();
+                    let target = m.target_layout();
+                    assert_eq!(current.surface, target.surface);
+                    assert_eq!(m.shared_album_rect(), target.album.unwrap().rect);
+                    assert!(!m.width.active() && !m.height.active());
+                    m.switch(Page::Music);
+                    assert!(m.width.active() && m.visual_state.album.rect.active());
+                    // Re-enabling an initialized visual state must preserve
+                    // a live trajectory, rather than repeat the startup snap.
+                    m.step(1. / 120., 1. / 120.);
+                    m.set_ui_v2(false);
+                    let width = m.width.value;
+                    let velocity = m.width.velocity;
+                    m.set_ui_v2(true);
+                    assert_eq!(m.width.value, width);
+                    assert_eq!(m.width.velocity, velocity);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ui_v2_shared_album_stays_inside_surface_during_four_edge_morphs() {
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            for attached in [true, false] {
+                let mut m = Model {
+                    edge,
+                    attached,
+                    show_spectrum: false,
+                    ..Default::default()
+                };
+                m.set_ui_v2(true);
+                m.reduced = false;
+                m.switch(Page::Music);
+                for frame in 1..=360 {
+                    // Exercise reversals as well as a fully settled expansion
+                    // and collapse, using the actual model clip coordinates.
+                    if [9, 16, 160].contains(&frame) {
+                        m.toggle();
+                    }
+                    m.step(1. / 120., frame as f64 / 120.);
+                    let layout = m.layout_snapshot();
+                    let album = m.shared_album_rect();
+                    let surface = layout.surface;
+                    assert!(
+                        album.x >= surface.x - 0.02
+                            && album.y >= surface.y - 0.02
+                            && album.x + album.w <= surface.x + surface.w + 0.02
+                            && album.y + album.h <= surface.y + surface.h + 0.02,
+                        "artwork escaped clip on {edge:?}, attached={attached}, frame={frame}: {album:?} / {surface:?}"
+                    );
+                }
+            }
         }
     }
 

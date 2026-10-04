@@ -107,6 +107,19 @@ for dpi in (96, 144, 192):
                 if state['continuous'] and height > 60:
                     screenshot = folder / f'{direction}-{dpi}-{len(samples):02d}.png'
                     save_test_screenshot(screenshot, bounds)
+                    after_capture = snapshot(hwnd, report)
+                    before_rect = state['surfaceRect']
+                    after_rect = after_capture['surfaceRect']
+                    # A screenshot and renderer diagnostics are separate calls.
+                    # Only probe the thin tail when its border stayed within
+                    # half a physical pixel throughout that capture interval.
+                    def edges(rect):
+                        x, y, width, height = rect
+                        return x, y, x + width, y + height
+
+                    border_motion = max(abs(before - after) for before, after in
+                                        zip(edges(before_rect), edges(after_rect)))
+                    tail_synchronized = border_motion * state['scale'] < .5
                     with Image.open(screenshot) as source:
                         image = source.convert('RGB')
                         x, y, width, live_height = state['surfaceRect']
@@ -116,13 +129,16 @@ for dpi in (96, 144, 192):
                         if max(black) > 24:
                             raise AssertionError((direction, dpi, 'black core leaked', black, state))
                         clear = None
-                        if live_height > 160:
-                            clear = image.getpixel((round((x + width * .15) * scale),
-                                                    round((y + live_height * .97) * scale)))
+                        if live_height > 160 and tail_synchronized:
+                            clear = image.getpixel((round((x + width * .44) * scale),
+                                                    round((y + live_height * .99) * scale)))
                             if max(clear) - min(clear) < 18:
                                 raise AssertionError((direction, dpi, 'clear tail lost desktop', clear, state))
                         samples.append({'state': state, 'blackCore': black,
-                                        'clearTail': clear, 'screenshot': str(screenshot)})
+                                        'clearTail': clear, 'tailSynchronized': tail_synchronized,
+                                        'captureBorderMotionDip': border_motion,
+                                        'afterCaptureSurfaceRect': after_rect,
+                                        'screenshot': str(screenshot)})
                 if state['expanded'] == expanded and not state['continuous']:
                     break
                 time.sleep(.025)
