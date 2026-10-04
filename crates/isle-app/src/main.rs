@@ -2234,8 +2234,24 @@ impl App {
             }
             if self.test_fixture {
                 text.push_str(&format!(
-                    ",\"testArtworkGeneration\":{}",
-                    self.test_artwork_generation
+                    ",\"testArtworkGeneration\":{},\"titleOverflow\":{}",
+                    self.test_artwork_generation,
+                    self.renderer
+                        .as_ref()
+                        .is_some_and(|renderer| renderer.title_overflow)
+                ));
+                let layout = self.model.layout_snapshot();
+                let title = layout.title.map_or(Rect::default(), |element| element.rect);
+                let artist = layout
+                    .artist
+                    .map_or(Rect::default(), |element| element.rect);
+                text.push_str(&format!(
+                    ",\"titleRect\":[{},{},{},{}],\"artistRect\":[{},{},{},{}],\"controlRects\":[{}]",
+                    title.x, title.y, title.w, title.h,
+                    artist.x, artist.y, artist.w, artist.h,
+                    layout.controls.iter().map(|control| format!(
+                        "[{},{},{},{}]", control.rect.x, control.rect.y, control.rect.w, control.rect.h
+                    )).collect::<Vec<_>>().join(",")
                 ));
             }
             text.push_str(&format!(",\"playerDialogAlive\":{},\"playerListReady\":{},\"playerListRows\":{},\"playerSelectionAutomatic\":{},\"playerAllowedCount\":{},\"playerOrderCount\":{}",self.player_dialog.is_some(),self.player_dialog.as_ref().is_some_and(|d|d.ready()),self.player_dialog.as_ref().map(|d|d.row_count()).unwrap_or(0),self.configuration.selection.allowed.is_none(),self.configuration.selection.allowed.as_ref().map(|ids|ids.len()).unwrap_or(0),self.configuration.selection.order.len()));
@@ -2632,9 +2648,15 @@ unsafe fn run() -> Result<()> {
         model.playing = false;
     }
     if test_fixture
-        && args
-            .iter()
-            .any(|a| a == "--test-cover" || a == "--test-artwork-upgrade")
+        && args.iter().any(|a| {
+            matches!(
+                a.as_str(),
+                "--test-cover"
+                    | "--test-artwork-upgrade"
+                    | "--test-long-text"
+                    | "--test-missing-artwork"
+            )
+        })
     {
         let artwork_side = if args.iter().any(|a| a == "--test-artwork-upgrade") {
             128
@@ -2642,9 +2664,19 @@ unsafe fn run() -> Result<()> {
             64
         };
         model.playing = !args.iter().any(|a| a == "--paused");
+        let long_text = args.iter().any(|a| a == "--test-long-text");
         model.media = Some(isle_core::MediaSnapshot {
-            title: "封面与弹簧测试".into(),
-            artist: "独立测试数据".into(),
+            session: u64::from(long_text),
+            title: if long_text {
+                "沿着银河尽头继续前进直到世界在黎明时分重新苏醒".into()
+            } else {
+                "封面与弹簧测试".into()
+            },
+            artist: if long_text {
+                "一位名字长到足以跨越海洋与所有漫长冬夜的独立音乐人".into()
+            } else {
+                "独立测试数据".into()
+            },
             playing: model.playing,
             previous: model.ui_v2,
             play_pause: model.ui_v2,
@@ -2656,9 +2688,11 @@ unsafe fn run() -> Result<()> {
                 received_at: 0.,
                 position_known: true,
             },
-            cover: Some(test_artwork(0, artwork_side)),
+            cover: (!args.iter().any(|a| a == "--test-missing-artwork"))
+                .then(|| test_artwork(0, artwork_side)),
             ..Default::default()
         });
+        model.retarget();
     }
     if let Some(ms) = value(&args, "--test-countdown-ms").and_then(|v| v.parse::<u32>().ok()) {
         model.timer_left = ms as f64 / 1000.;

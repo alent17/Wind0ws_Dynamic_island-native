@@ -53,6 +53,7 @@ pub struct Renderer {
     glass_brush: ID2D1LinearGradientBrush,
     glass_rim_brush: ID2D1LinearGradientBrush,
     formats: HashMap<(u32, i32), IDWriteTextFormat>,
+    ellipsis_formats: HashMap<(u32, i32), IDWriteTextFormat>,
     layouts: HashMap<String, (IDWriteTextLayout, f32)>,
     pub frames: u64,
     pub title_overflow: bool,
@@ -760,6 +761,7 @@ impl Renderer {
             glass_brush,
             glass_rim_brush,
             formats: HashMap::new(),
+            ellipsis_formats: HashMap::new(),
             cover: None,
             previous_cover: Vec::new(),
             glass_cover: None,
@@ -928,6 +930,56 @@ impl Renderer {
             DWRITE_FONT_WEIGHT_NORMAL
         };
         self.format_with_weight(size, weight)
+    }
+    unsafe fn ellipsis_format_with_weight(
+        &mut self,
+        size: u32,
+        weight: DWRITE_FONT_WEIGHT,
+    ) -> Result<IDWriteTextFormat> {
+        let key = (size, weight.0);
+        if let Some(format) = self.ellipsis_formats.get(&key) {
+            return Ok(format.clone());
+        }
+        let format = self.write.CreateTextFormat(
+            &HSTRING::from(self.font_family),
+            self.fonts.as_ref(),
+            weight,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size as f32,
+            w!("zh-CN"),
+        )?;
+        format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+        let trimming = DWRITE_TRIMMING {
+            granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+            delimiter: 0,
+            delimiterCount: 0,
+        };
+        let sign = self.write.CreateEllipsisTrimmingSign(&format)?;
+        format.SetTrimming(&trimming, &sign)?;
+        self.ellipsis_formats.insert(key, format.clone());
+        Ok(format)
+    }
+    unsafe fn text_with_ellipsis(
+        &mut self,
+        text: &str,
+        r: Rect,
+        size: u32,
+        weight: DWRITE_FONT_WEIGHT,
+        c: D2D1_COLOR_F,
+    ) -> Result<()> {
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let format = self.ellipsis_format_with_weight(size, weight)?;
+        self.ink(c);
+        self.ctx.DrawText(
+            &wide,
+            &format,
+            &rect(r),
+            &self.brush,
+            D2D1_DRAW_TEXT_OPTIONS_CLIP,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+        Ok(())
     }
     unsafe fn text_with_weight(
         &mut self,
@@ -1645,33 +1697,46 @@ impl Renderer {
                             h: 18.,
                         }
                     };
-                    self.text_with_weight(
-                        m.media
-                            .as_ref()
-                            .map(|media| {
-                                if m.media_failed {
-                                    "媒体暂不可用"
-                                } else if media.session == 0 {
-                                    "等待播放器"
-                                } else {
-                                    media.artist.as_str()
-                                }
-                            })
-                            .unwrap_or("M83 · 原生渲染预览"),
-                        artist_rect,
-                        11,
-                        DWRITE_FONT_WEIGHT_MEDIUM,
-                        color(
-                            0.68,
-                            0.68,
-                            0.68,
-                            if m.ui_v2 {
-                                m.visual_state.artist.opacity.value.clamp(0., 1.)
+                    let artist = m
+                        .media
+                        .as_ref()
+                        .map(|media| {
+                            if m.media_failed {
+                                "媒体暂不可用"
+                            } else if media.session == 0 {
+                                "等待播放器"
                             } else {
-                                1.
-                            },
-                        ),
-                    )?;
+                                media.artist.as_str()
+                            }
+                        })
+                        .unwrap_or("M83 · 原生渲染预览");
+                    let artist_color = color(
+                        0.68,
+                        0.68,
+                        0.68,
+                        if m.ui_v2 {
+                            m.visual_state.artist.opacity.value.clamp(0., 1.)
+                        } else {
+                            1.
+                        },
+                    );
+                    if m.ui_v2 {
+                        self.text_with_ellipsis(
+                            artist,
+                            artist_rect,
+                            11,
+                            DWRITE_FONT_WEIGHT_MEDIUM,
+                            artist_color,
+                        )?;
+                    } else {
+                        self.text_with_weight(
+                            artist,
+                            artist_rect,
+                            11,
+                            DWRITE_FONT_WEIGHT_MEDIUM,
+                            artist_color,
+                        )?;
+                    }
                     self.spectrum(c.x + c.w - 28., c.y + 30., m);
                     let (elapsed_ms, duration_ms, position_known) = m
                         .media
