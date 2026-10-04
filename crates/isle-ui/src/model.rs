@@ -9,6 +9,8 @@ use crate::{
 pub const HOST: f32 = 480.;
 const TIMER_ACTIVITY_ID: &str = "isle.timer";
 const TIMER_COMPLETION_TTL: f64 = 3.;
+const VOLUME_ACTIVITY_ID: &str = "isle.volume";
+const VOLUME_ACTIVITY_TTL: f64 = 2.5;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Page {
     Music,
@@ -100,6 +102,7 @@ pub struct Model {
     pub timer_active: bool,
     pub timer_finished: bool,
     pub timer_completed_at: Option<f64>,
+    pub audio_activity_changed_at: Option<f64>,
     pub now: f64,
     pub track: usize,
     pub title_started: f64,
@@ -157,6 +160,7 @@ impl Default for Model {
             timer_active: false,
             timer_finished: false,
             timer_completed_at: None,
+            audio_activity_changed_at: None,
             now: 0.,
             track: 0,
             title_started: 0.,
@@ -213,25 +217,43 @@ impl Model {
     pub fn set_activities(&mut self, activities: Vec<crate::state::LiveActivity>) {
         self.ui_state.activities = activities
             .into_iter()
-            .filter(|activity| activity.valid() && activity.id != TIMER_ACTIVITY_ID)
+            .filter(|activity| {
+                activity.valid()
+                    && activity.id != TIMER_ACTIVITY_ID
+                    && activity.id != VOLUME_ACTIVITY_ID
+            })
             .take(2)
             .collect();
-        self.sync_timer_activity();
+        self.sync_local_activities();
         if self.ui_v2 {
             self.retarget();
         }
     }
-    fn sync_timer_activity(&mut self) {
-        self.ui_state
-            .activities
-            .retain(|activity| activity.id != TIMER_ACTIVITY_ID);
+    pub fn set_audio_snapshot(&mut self, audio: isle_core::AudioSnapshot) {
+        let changed = self.audio.as_ref().is_some_and(|previous| {
+            !previous.device.id.is_empty()
+                && (previous.volume != audio.volume || previous.muted != audio.muted)
+        });
+        if changed {
+            self.audio_activity_changed_at = Some(self.now);
+        }
+        self.audio = Some(audio);
+        self.sync_local_activities();
+    }
+    fn sync_local_activities(&mut self) {
+        self.ui_state.activities.retain(|activity| {
+            activity.id != TIMER_ACTIVITY_ID && activity.id != VOLUME_ACTIVITY_ID
+        });
         if let Some(activity) = self.timer_activity() {
             self.ui_state.activities.push(activity);
-            self.ui_state
-                .activities
-                .sort_by_key(|activity| std::cmp::Reverse(activity.priority));
-            self.ui_state.activities.truncate(2);
         }
+        if let Some(activity) = self.volume_activity() {
+            self.ui_state.activities.push(activity);
+        }
+        self.ui_state
+            .activities
+            .sort_by_key(|activity| std::cmp::Reverse(activity.priority));
+        self.ui_state.activities.truncate(2);
     }
     fn timer_activity(&self) -> Option<crate::state::LiveActivity> {
         use crate::state::{ActivityKind, LiveActivity};
@@ -286,6 +308,33 @@ impl Model {
             priority: 100,
             expires_at,
             completed: self.timer_finished,
+        })
+    }
+    fn volume_activity(&self) -> Option<crate::state::LiveActivity> {
+        use crate::state::{ActivityKind, LiveActivity};
+
+        let audio = self.audio.as_ref()?;
+        if audio.failed {
+            return None;
+        }
+        let changed_at = self.audio_activity_changed_at?;
+        let expires_at = changed_at + VOLUME_ACTIVITY_TTL;
+        if self.now >= expires_at {
+            return None;
+        }
+        Some(LiveActivity {
+            id: VOLUME_ACTIVITY_ID.into(),
+            kind: ActivityKind::Volume,
+            title: "音量".into(),
+            value: format!(
+                "{}% · {}",
+                audio.volume,
+                if audio.muted { "静音" } else { "未静音" }
+            ),
+            progress: Some(f32::from(audio.volume) / 100.),
+            priority: 90,
+            expires_at: Some(expires_at),
+            completed: false,
         })
     }
     pub fn progress_tick(&self) -> bool {
@@ -541,7 +590,7 @@ impl Model {
                 self.switch(Page::Timer);
             }
         }
-        self.sync_timer_activity();
+        self.sync_local_activities();
     }
     pub fn moving(&self) -> bool {
         self.width.active()
@@ -1239,7 +1288,7 @@ impl Model {
             | Hit::WeatherSettings
             | Hit::Seek => {}
         }
-        self.sync_timer_activity();
+        self.sync_local_activities();
     }
 }
 #[derive(Default)]
@@ -1693,6 +1742,100 @@ mod tests {
         assert_eq!(m.ui_state.activities.len(), 2);
         assert_eq!(m.ui_state.activities[0].id, "important");
         assert_eq!(m.ui_state.activities[1].id, TIMER_ACTIVITY_ID);
+    }
+    #[test]
+    fn volume_activity_tracks_observed_volume_and_mute_changes_until_ttl() {
+        let mut m = Model {
+            now: 8.,
+            ..Model::default()
+        };
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 42,
+            muted: false,
+            ..Default::default()
+        });
+        assert!(
+            m.ui_state.activities.is_empty(),
+            "initial snapshot is not a change"
+        );
+
+        m.now = 9.;
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 67,
+            muted: false,
+            ..Default::default()
+        });
+        let activity = m.ui_state.activities.first().unwrap();
+        assert_eq!(activity.id, VOLUME_ACTIVITY_ID);
+        assert_eq!(activity.kind, crate::state::ActivityKind::Volume);
+        assert_eq!(activity.value, "67% · 未静音");
+        assert!((activity.progress.unwrap() - 0.67).abs() < 0.001);
+        assert_eq!(activity.expires_at, Some(11.5));
+        assert!(!activity.completed);
+
+        m.now = 10.;
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 67,
+            muted: false,
+            ..Default::default()
+        });
+        assert_eq!(m.ui_state.activities[0].expires_at, Some(11.5));
+
+        m.now = 10.25;
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 67,
+            muted: true,
+            ..Default::default()
+        });
+        let activity = m.ui_state.activities.first().unwrap();
+        assert_eq!(activity.value, "67% · 静音");
+        assert_eq!(activity.progress, Some(0.67));
+        assert_eq!(activity.expires_at, Some(12.75));
+
+        m.step(0., 12.75);
+        assert!(m.ui_state.activities.is_empty());
+    }
+    #[test]
+    fn failed_audio_snapshot_does_not_publish_volume_activity() {
+        let mut m = Model {
+            now: 1.,
+            ..Model::default()
+        };
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 40,
+            ..Default::default()
+        });
+        m.now = 2.;
+        m.set_audio_snapshot(isle_core::AudioSnapshot {
+            device: isle_core::AudioDevice {
+                id: "primary-output".into(),
+                name: "Primary output".into(),
+            },
+            volume: 90,
+            failed: true,
+            ..Default::default()
+        });
+        assert!(m.ui_state.activities.is_empty());
     }
     #[test]
     fn timer_ruler_bounds_pause_resume_and_reset_survive_page_switches() {

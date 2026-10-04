@@ -73,6 +73,7 @@ enum Event {
     PlayersUpdated,
     ConfigSaved,
     ConfigTick,
+    ActivityExpired,
     HoverExpired,
     Weather,
     City(usize, isize),
@@ -108,6 +109,7 @@ impl Event {
             Self::PlayersUpdated => "event.players_updated",
             Self::ConfigSaved => "event.configuration_saved",
             Self::ConfigTick => "event.configuration_tick",
+            Self::ActivityExpired => "event.activity_expired",
             Self::HoverExpired => "event.hover_expired",
             Self::Weather => "event.weather_updated",
             Self::City(..) => "event.city_command",
@@ -286,6 +288,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             enqueue(match wp.0 {
                 2 => Event::ConfigTick,
                 3 => Event::HoverExpired,
+                4 => Event::ActivityExpired,
                 _ => Event::Tick,
             });
             LRESULT(0)
@@ -826,6 +829,7 @@ impl App {
     }
     unsafe fn sync_timer(&mut self) -> Result<()> {
         let _ = KillTimer(self.window, 2);
+        let _ = KillTimer(self.window, 4);
         if let Some(delay) = self.configuration.next_save_delay() {
             SetTimer(
                 self.window,
@@ -864,6 +868,21 @@ impl App {
                     || !self.suspended
                         && (!self.model.expanded || self.model.page() == Page::Music),
             );
+        }
+        if !self.suspended && !self.model.continuous() {
+            if let Some(deadline) = self
+                .model
+                .ui_state
+                .activities
+                .iter()
+                .filter_map(|activity| activity.expires_at)
+                .min_by(f64::total_cmp)
+            {
+                let delay = ((deadline - self.model.now).max(0.001) * 1000.)
+                    .ceil()
+                    .clamp(1., u32::MAX as f64) as u32;
+                SetTimer(self.window, 4, delay, None);
+            }
         }
         let desired = if self.suspended {
             if self.model.timer_deadline.is_some() || self.exit_after.is_some() {
@@ -1213,6 +1232,7 @@ impl App {
                     | Event::PlayersUpdated
                     | Event::ConfigSaved
                     | Event::ConfigTick
+                    | Event::ActivityExpired
                     | Event::HoverExpired
                     | Event::City(_, _)
                     | Event::Diagnostic
@@ -1538,6 +1558,15 @@ impl App {
                 self.sync_timer()?;
                 changed = false;
             }
+            Event::ActivityExpired => {
+                let _ = KillTimer(self.window, 4);
+                if self.suspended {
+                    let now = self.model.now;
+                    self.model.step(0., now);
+                    self.sync_timer()?;
+                    changed = false;
+                }
+            }
             Event::HoverExpired => {
                 let _ = KillTimer(self.window, 3);
                 if let Some(deadline) = self
@@ -1730,8 +1759,10 @@ impl App {
                 changed = self.spectrum_visible() && self.model.reduced;
             }
             Event::Audio => {
+                let mut activity_changed = false;
                 if let Some(service) = &self.audio {
                     let audio = service.take();
+                    let previous_audio_activity = self.model.audio_activity_changed_at;
                     if self
                         .model
                         .audio
@@ -1754,10 +1785,13 @@ impl App {
                         self.model.device_scroll = 0.;
                         self.model.focus = None;
                     }
-                    self.model.audio = Some(audio);
+                    self.model.set_audio_snapshot(audio);
+                    activity_changed =
+                        self.model.audio_activity_changed_at != previous_audio_activity;
                 }
-                changed =
-                    !self.suspended && self.model.expanded && self.model.page() == Page::Volume;
+                changed = !self.suspended
+                    && (activity_changed
+                        || self.model.expanded && self.model.page() == Page::Volume);
             }
             Event::Media => {
                 if let Some(service) = &self.media {
@@ -1875,6 +1909,11 @@ impl App {
                 changed = self.model.continuous()
                     || self.model.progress_tick()
                     || self.model.timer_deadline.is_some()
+                    || self.model.ui_state.activities.iter().any(|activity| {
+                        activity
+                            .expires_at
+                            .is_some_and(|deadline| deadline <= elapsed)
+                    })
                     || self.scripted
                     || (self.model.expanded
                         && matches!(self.model.page(), Page::Clock | Page::Weather));
@@ -2193,6 +2232,35 @@ impl App {
                 })
                 .unwrap_or(serde_json::Value::Null);
             text.push_str(&format!(",\"timerActivity\":{timer_activity}"));
+            let volume_activity = self
+                .model
+                .ui_state
+                .activities
+                .iter()
+                .find(|activity| activity.id == "isle.volume")
+                .map(|activity| {
+                    serde_json::json!({
+                        "id": activity.id,
+                        "title": activity.title,
+                        "value": activity.value,
+                        "progress": activity.progress,
+                        "priority": activity.priority,
+                        "expiresAt": activity.expires_at,
+                        "completed": activity.completed,
+                    })
+                })
+                .unwrap_or(serde_json::Value::Null);
+            text.push_str(&format!(",\"volumeActivity\":{volume_activity}"));
+            let volume_rect = self
+                .model
+                .visual_controls()
+                .into_iter()
+                .find(|(hit, _)| *hit == Hit::Volume)
+                .map(|(_, rect)| [rect.x, rect.y, rect.w, rect.h]);
+            text.push_str(&format!(
+                ",\"volumeControlRect\":{}",
+                serde_json::to_string(&volume_rect).unwrap_or_else(|_| "null".into())
+            ));
             let p95_of = |values: &[f64]| {
                 let mut sorted = values.to_vec();
                 sorted.sort_by(f64::total_cmp);
