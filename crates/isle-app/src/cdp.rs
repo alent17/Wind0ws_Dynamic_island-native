@@ -1,5 +1,6 @@
 //! Bounded discovery of a Chromium DevTools endpoint on IPv4 loopback.
 
+use isle_core::player_extension::PlaybackMode;
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
@@ -17,6 +18,7 @@ const LOOPBACK: Ipv4Addr = Ipv4Addr::LOCALHOST;
 const DEFAULT_REMOTE_DEBUGGING_PORT: u16 = 9223;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const MAX_BODY_BYTES: usize = 32 * 1024;
+const MAX_PAGE_TARGETS: usize = 64;
 const MAX_COMMAND_BYTES: usize = 16 * 1024;
 const MAX_UNMATCHED_MESSAGES: usize = 16;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
@@ -35,6 +37,8 @@ pub enum CdpError {
     Io(std::io::Error),
     InvalidResponse,
     UnsafeWebSocketEndpoint,
+    NoInitializedPage,
+    AmbiguousPage,
     InvalidCommand,
     TimedOut,
     Protocol,
@@ -48,6 +52,8 @@ impl std::fmt::Display for CdpError {
             Self::Io(_) => formatter.write_str("本机 CDP 服务不可用"),
             Self::InvalidResponse => formatter.write_str("本机 CDP 响应无效"),
             Self::UnsafeWebSocketEndpoint => formatter.write_str("CDP 返回了非本机 WebSocket 地址"),
+            Self::NoInitializedPage => formatter.write_str("未找到已初始化的网易云播放页面"),
+            Self::AmbiguousPage => formatter.write_str("发现多个已初始化的网易云播放页面"),
             Self::InvalidCommand => formatter.write_str("CDP 命令无效或超出长度限制"),
             Self::TimedOut => formatter.write_str("本机 CDP 命令超时"),
             Self::Protocol => formatter.write_str("本机 CDP 返回了错误响应"),
@@ -144,6 +150,107 @@ impl LocalCdpClient {
     pub fn connect(self) -> Result<CdpConnection, CdpError> {
         let version = self.version()?;
         let path = validate_websocket_endpoint(&version.websocket_debugger_url, self.port())?;
+        self.connect_path(path)
+    }
+
+    /// Reads the current ordinary playback mode from the single initialized
+    /// NetEase Cloud Music page. Unknown provider modes remain `None`.
+    /// The expression is fixed and only reads the initialized store.
+    pub fn cloud_music_playback_mode(self) -> Result<Option<PlaybackMode>, CdpError> {
+        let targets = self.page_targets()?;
+        let mut initialized_modes = Vec::new();
+        for target in targets {
+            let Ok(mut connection) = self.connect_page(&target.websocket_url) else {
+                continue;
+            };
+            let Ok(response) = connection.request(
+                "Runtime.evaluate",
+                &serde_json::json!({
+                    "expression": CLOUD_MUSIC_MODE_EXPRESSION,
+                    "returnByValue": true,
+                    "awaitPromise": true
+                }),
+            ) else {
+                continue;
+            };
+            if response.get("exceptionDetails").is_some() {
+                continue;
+            }
+            if let Some(mode) = response
+                .pointer("/result/value/mode")
+                .and_then(serde_json::Value::as_str)
+                .filter(|mode| !mode.is_empty() && mode.len() <= 64)
+            {
+                initialized_modes.push(mode.to_owned());
+            }
+        }
+
+        let [mode] = initialized_modes.as_slice() else {
+            return Err(if initialized_modes.is_empty() {
+                CdpError::NoInitializedPage
+            } else {
+                CdpError::AmbiguousPage
+            });
+        };
+        Ok(cloud_music_mode(mode))
+    }
+
+    fn page_targets(self) -> Result<Vec<PageTarget>, CdpError> {
+        let body = self.get_json("/json/list")?;
+        let targets: serde_json::Value =
+            serde_json::from_slice(&body).map_err(|_| CdpError::InvalidResponse)?;
+        let targets = targets.as_array().ok_or(CdpError::InvalidResponse)?;
+        if targets.len() > MAX_PAGE_TARGETS {
+            return Err(CdpError::InvalidResponse);
+        }
+        let mut pages = Vec::new();
+        for target in targets {
+            if target.get("type").and_then(serde_json::Value::as_str) != Some("page") {
+                continue;
+            }
+            let Some(url) = target.get("url").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if !is_cloud_music_page_url(url) {
+                continue;
+            }
+            let Some(endpoint) = target
+                .get("webSocketDebuggerUrl")
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            validate_page_websocket_endpoint(endpoint, self.port())?;
+            pages.push(PageTarget {
+                websocket_url: endpoint.to_owned(),
+            });
+        }
+        Ok(pages)
+    }
+
+    fn get_json(self, path: &str) -> Result<Vec<u8>, CdpError> {
+        let address = SocketAddr::V4(SocketAddrV4::new(LOOPBACK, self.port()));
+        let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
+        stream.set_read_timeout(Some(IO_TIMEOUT))?;
+        stream.set_write_timeout(Some(IO_TIMEOUT))?;
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\nAccept: application/json\r\n\r\n",
+            self.port()
+        )?;
+        let mut response = Vec::with_capacity(1024);
+        stream
+            .take((MAX_HEADER_BYTES + MAX_BODY_BYTES + 1) as u64)
+            .read_to_end(&mut response)?;
+        Ok(parse_http_json_body(&response)?.to_vec())
+    }
+
+    fn connect_page(self, endpoint: &str) -> Result<CdpConnection, CdpError> {
+        let path = validate_page_websocket_endpoint(endpoint, self.port())?;
+        self.connect_path(path)
+    }
+
+    fn connect_path(self, path: &str) -> Result<CdpConnection, CdpError> {
         let address = SocketAddr::V4(SocketAddrV4::new(LOOPBACK, self.port()));
         let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
@@ -166,6 +273,49 @@ impl LocalCdpClient {
         Ok(CdpConnection { socket, next_id: 1 })
     }
 }
+
+fn cloud_music_mode(mode: &str) -> Option<PlaybackMode> {
+    match mode {
+        "playOrder" => Some(PlaybackMode::Sequential),
+        "playCycle" => Some(PlaybackMode::RepeatList),
+        "playOneCycle" => Some(PlaybackMode::RepeatOne),
+        "playRandom" => Some(PlaybackMode::Shuffle),
+        // AI / FM / newly introduced provider modes must not be guessed.
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+struct PageTarget {
+    websocket_url: String,
+}
+
+const CLOUD_MUSIC_MODE_EXPRESSION: &str = r#"(() => {
+  const queue = globalThis.webpackJsonp;
+  if (!Array.isArray(queue) || queue.push === Array.prototype.push) return {};
+  const main = queue.find(chunk => chunk && chunk[1] && chunk[1][8] &&
+    chunk[2] && chunk[2].some(entry => entry[0] === 1424));
+  if (!main || !String(main[1][8]).includes('this.app._store.getState()')) return {};
+  const entries = queue.flatMap(chunk => chunk && Array.isArray(chunk[2]) ? chunk[2] : []);
+  const previousEntry = entries.length ? entries[entries.length - 1][0] : 1424;
+  const id = '__isle_mode_read_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  let req;
+  const chunk = [[], { [id]: (_module, _exports, runtime) => { req = runtime; } }, [[id]]];
+  try {
+    queue.push(chunk);
+    if (!req || !req.c || !req.c[8] || !req.c[previousEntry]) return {};
+    const tool = req.c[8].exports.a;
+    if (!tool || !tool.inited || !tool.app || !tool.app._store || typeof tool.getStore !== 'function') return {};
+    const playing = tool.getStore().playing;
+    return playing && typeof playing.playingMode === 'string' ? { mode: playing.playingMode } : {};
+  } catch (_) {
+    return {};
+  } finally {
+    if (req) { delete req.m[id]; delete req.c[id]; req.s = previousEntry; }
+    const index = queue.indexOf(chunk);
+    if (index >= 0) queue.splice(index, 1);
+  }
+})()"#;
 
 pub struct CdpConnection {
     socket: WebSocket<TcpStream>,
@@ -283,7 +433,19 @@ fn parse_http_json_body(response: &[u8]) -> Result<&[u8], CdpError> {
 }
 
 fn validate_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<&str, CdpError> {
-    let prefix = format!("ws://127.0.0.1:{expected_port}/devtools/browser/");
+    validate_endpoint_kind(endpoint, expected_port, "browser")
+}
+
+fn validate_page_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<&str, CdpError> {
+    validate_endpoint_kind(endpoint, expected_port, "page")
+}
+
+fn validate_endpoint_kind<'a>(
+    endpoint: &'a str,
+    expected_port: u16,
+    kind: &str,
+) -> Result<&'a str, CdpError> {
+    let prefix = format!("ws://127.0.0.1:{expected_port}/devtools/{kind}/");
     let Some(id) = endpoint.strip_prefix(&prefix) else {
         return Err(CdpError::UnsafeWebSocketEndpoint);
     };
@@ -296,6 +458,20 @@ fn validate_websocket_endpoint(endpoint: &str, expected_port: u16) -> Result<&st
         return Err(CdpError::UnsafeWebSocketEndpoint);
     }
     Ok(&endpoint[prefix.len() - 1..])
+}
+
+fn is_cloud_music_page_url(url: &str) -> bool {
+    let normalized = url.to_ascii_lowercase();
+    normalized.starts_with("orpheus:")
+        || normalized.starts_with("file:")
+        || [
+            "http://orpheus/",
+            "http://orpheus.",
+            "https://orpheus/",
+            "https://orpheus.",
+        ]
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix))
 }
 
 #[cfg(test)]
@@ -350,6 +526,105 @@ mod tests {
                 "endpoint should be rejected: {endpoint}"
             );
         }
+    }
+
+    #[test]
+    fn accepts_only_local_page_websocket_urls_and_netease_pages() {
+        assert!(validate_page_websocket_endpoint(
+            "ws://127.0.0.1:9223/devtools/page/abc_123",
+            9223
+        )
+        .is_ok());
+        for endpoint in [
+            "ws://localhost:9223/devtools/page/id",
+            "ws://127.0.0.1:9223/devtools/browser/id",
+            "ws://127.0.0.1:9224/devtools/page/id",
+            "ws://127.0.0.1:9223/devtools/page/id?host=evil",
+            "ws://192.168.1.2:9223/devtools/page/id",
+        ] {
+            assert!(validate_page_websocket_endpoint(endpoint, 9223).is_err());
+        }
+        for url in [
+            "orpheus://orpheus/pub/app.html",
+            "https://orpheus.example/app.html",
+            "file:///C:/Program Files/NetEase/app.html",
+        ] {
+            assert!(is_cloud_music_page_url(url), "expected NetEase URL: {url}");
+        }
+        for url in ["https://example.com/", "https://notorpheus.example/", ""] {
+            assert!(
+                !is_cloud_music_page_url(url),
+                "unexpected NetEase URL: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn maps_only_known_ordinary_cloud_music_modes() {
+        assert_eq!(
+            cloud_music_mode("playOrder"),
+            Some(PlaybackMode::Sequential)
+        );
+        assert_eq!(
+            cloud_music_mode("playCycle"),
+            Some(PlaybackMode::RepeatList)
+        );
+        assert_eq!(
+            cloud_music_mode("playOneCycle"),
+            Some(PlaybackMode::RepeatOne)
+        );
+        assert_eq!(cloud_music_mode("playRandom"), Some(PlaybackMode::Shuffle));
+        assert_eq!(cloud_music_mode("playAi"), None);
+        assert_eq!(cloud_music_mode("playFm"), None);
+        assert_eq!(cloud_music_mode("futureMode"), None);
+    }
+
+    #[test]
+    fn reads_mode_from_a_single_local_netease_page_without_mutating_playback() {
+        let listener = TcpListener::bind(SocketAddrV4::new(LOOPBACK, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut http, peer) = listener.accept().unwrap();
+            assert!(peer.ip().is_loopback());
+            let request = read_request_headers(&mut http);
+            assert!(request.starts_with("GET /json/list HTTP/1.1\r\n"));
+            let body = format!(
+                "[{{\"type\":\"page\",\"url\":\"orpheus://orpheus/pub/app.html\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1:{port}/devtools/page/mock-page\"}},{{\"type\":\"page\",\"url\":\"https://example.com\",\"webSocketDebuggerUrl\":\"ws://127.0.0.1:{port}/devtools/page/ignored\"}}]"
+            );
+            write!(
+                http,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            drop(http);
+
+            let (stream, peer) = listener.accept().unwrap();
+            assert!(peer.ip().is_loopback());
+            let mut websocket = tungstenite::accept(stream).unwrap();
+            let request: serde_json::Value = match websocket.read().unwrap() {
+                Message::Text(message) => serde_json::from_str(message.as_str()).unwrap(),
+                message => panic!("expected CDP text request, received {message:?}"),
+            };
+            assert_eq!(request["method"], "Runtime.evaluate");
+            assert_eq!(request["params"]["returnByValue"], true);
+            assert!(request["params"]["expression"]
+                .as_str()
+                .unwrap()
+                .contains("playing.playingMode"));
+            websocket
+                .send(Message::text(
+                    r#"{"id":1,"result":{"result":{"type":"object","value":{"mode":"playCycle"}}}}"#,
+                ))
+                .unwrap();
+        });
+
+        let mode = LocalCdpClient::new(port)
+            .unwrap()
+            .cloud_music_playback_mode()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(mode, Some(PlaybackMode::RepeatList));
     }
 
     #[test]
