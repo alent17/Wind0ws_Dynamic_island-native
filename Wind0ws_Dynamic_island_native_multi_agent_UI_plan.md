@@ -633,19 +633,19 @@ misc changes
 
 # 11. 版本规划
 
-| Version | 内容 |
-|---|---|
-| 0.58 | UI 尺寸和比例 |
-| 0.59 | Music 元素布局 |
-| 0.60 | Playback Controls |
-| 0.61 | Compact UI |
-| 0.62 | Morph 动画 |
-| 0.63 | 动画打断 / 反向 |
-| 0.64 | Glass 简化 |
-| 0.65 | Refraction 精修 |
-| 0.66 | Live Activities 视觉 |
-| 0.67 | Playing Next |
-| 0.68 | UI 第一阶段 RC |
+| 规划版本 | 内容 | 状态 / 实际仓库依据 |
+|---|---|---|
+| 0.58 | UI 尺寸和比例 | 已完成：实际 0.58 |
+| 0.59 | Music 元素布局 | 已完成：实际 0.57–0.58 |
+| 0.60 | Playback Controls | 已完成：实际 0.57–0.58 |
+| 0.61 | Compact UI | 已完成：实际 0.58 |
+| 0.62 | Morph 动画 | 已完成：实际 0.51、0.59 |
+| 0.63 | 动画打断 / 反向 | 已完成：实际 0.59 |
+| 0.64 | Glass 简化 | 已完成：实际 0.60 |
+| 0.65 | Refraction 精修 | 已完成：实际 0.60 |
+| 0.66 | Live Activities 视觉 | 基础能力已完成：实际 0.52–0.56；后续可继续视觉精修 |
+| 0.67 | Playing Next | 后续阶段，待真实 Queue Provider；不属于 UI 第一阶段 DoD |
+| 0.68 | UI 第一阶段 RC | 已完成：实际验收版本 0.61 |
 
 ---
 
@@ -877,7 +877,7 @@ UI 第一阶段只有同时满足以下条件才完成：
 
 # 19. 后续阶段
 
-UI 第一阶段结束后再继续：
+UI 第一阶段结束后，可继续推进以下后续阶段。Live Activities 的基础能力已在 0.52–0.56 实现；Playing Next 仍待真实 Queue Provider。
 
 ```text
 Live Activities
