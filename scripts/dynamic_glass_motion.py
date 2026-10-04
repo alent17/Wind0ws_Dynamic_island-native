@@ -35,6 +35,26 @@ root.update()
 cases = []
 
 
+def contained(inner, outer):
+    if inner[2] <= 0 or inner[3] <= 0:
+        return True
+    return (inner[0] >= outer[0] - 0.1 and inner[1] >= outer[1] - 0.1
+            and inner[0] + inner[2] <= outer[0] + outer[2] + 0.1
+            and inner[1] + inner[3] <= outer[1] + outer[3] + 0.1)
+
+
+def verify_full_player_layout(state):
+    surface = state['surfaceRect']
+    album = state['albumRect']
+    if surface[2] < 300 or surface[3] < 180:
+        raise AssertionError(('expanded glass player did not reach its full layout', state))
+    if album[2] < 100 or abs(album[2] - album[3]) > 0.1 or not contained(album, surface):
+        raise AssertionError(('shared album escaped or changed shape during morph', state))
+    for rect in [state['titleRect'], state['artistRect'], *state['controlRects']]:
+        if not contained(rect, surface):
+            raise AssertionError(('player content escaped animated glass surface', rect, surface, state))
+
+
 def snapshot(hwnd, report):
     previous = report.stat().st_mtime_ns if report.exists() else 0
     if not u.PostMessageW(hwnd, 0x803C, 0, 0):
@@ -101,6 +121,10 @@ for dpi in (96, 192):
                 time.sleep(.025)
             if state['expanded'] != expanded or state['continuous']:
                 raise AssertionError((direction, dpi, 'spring did not settle', state))
+            if expanded:
+                verify_full_player_layout(state)
+            elif state['surfaceRect'][2] > 100 or state['surfaceRect'][3] > 40:
+                raise AssertionError(('collapsed player retained expanded geometry', state))
             if len(samples) < 2:
                 raise AssertionError((direction, dpi, 'insufficient intermediate captures', len(samples)))
             cases.append({'dpi': dpi, 'direction': direction, 'frames': samples,
