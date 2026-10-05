@@ -228,7 +228,7 @@ impl ControlPainter {
         Ok((
             target.CreateSolidColorBrush(&color(model::CARD), None)?,
             target.CreateSolidColorBrush(&color(model::CARD), None)?,
-            target.CreateSolidColorBrush(&color((35, 77, 137)), None)?,
+            target.CreateSolidColorBrush(&color((72, 74, 82)), None)?,
             target.CreateSolidColorBrush(&color(model::PRIMARY_TEXT), None)?,
             target.CreateSolidColorBrush(&color(model::SECONDARY_TEXT), None)?,
             target.CreateSolidColorBrush(&color(model::CARD_HOVER), None)?,
@@ -302,7 +302,7 @@ impl ControlPainter {
         } else {
             self.background.SetColor(&color(model::CARD));
             self.surface.SetColor(&color(model::CARD));
-            self.selected.SetColor(&color((35, 77, 137)));
+            self.selected.SetColor(&color((72, 74, 82)));
             self.text.SetColor(&color(model::PRIMARY_TEXT));
             self.muted.SetColor(&color(model::SECONDARY_TEXT));
             self.border.SetColor(&color(model::CARD_HOVER));
