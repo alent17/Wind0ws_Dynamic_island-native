@@ -510,7 +510,7 @@ unsafe fn position_controls(hwnd: HWND, theme_ptr: *mut Theme) {
             .iter()
             .filter(|placement| placement.page == Some(theme.page))
             .map(|placement| placement.x + placement.width)
-            .fold(super::model::WINDOW_WIDTH - 28.0, f32::max);
+            .fold(super::model::CONTENT_LEFT + 280.0, f32::max);
         let extent = (content_right - super::model::CONTENT_LEFT).ceil().max(0.0) as i32;
         let viewport = (client_width - super::model::CONTENT_LEFT - 16.0)
             .floor()
@@ -603,6 +603,82 @@ unsafe fn position_controls(hwnd: HWND, theme_ptr: *mut Theme) {
         let _ = InvalidateRect(button, None, false);
     }
     let _ = InvalidateRect(hwnd, None, false);
+}
+
+unsafe fn recover_shell_renderer(hwnd: HWND, theme_ptr: *mut Theme) -> bool {
+    if theme_ptr.is_null() {
+        return false;
+    }
+    let scale = (*theme_ptr).scale;
+    match ShellRender::new(hwnd, scale) {
+        Ok(shell) => {
+            (*theme_ptr).shell = shell;
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+unsafe fn frameless_hit_test(hwnd: HWND, lp: LPARAM, scale: f32) -> LRESULT {
+    let mut window = RECT::default();
+    if GetWindowRect(hwnd, &mut window).is_err() {
+        return LRESULT(HTCLIENT as isize);
+    }
+    let raw = lp.0 as u32;
+    let screen_x = (raw as u16 as i16) as i32;
+    let screen_y = ((raw >> 16) as u16 as i16) as i32;
+    let x = screen_x - window.left;
+    let y = screen_y - window.top;
+    let width = (window.right - window.left).max(1);
+    let height = (window.bottom - window.top).max(1);
+    let border = (super::model::RESIZE_BORDER * scale).round().max(4.0) as i32;
+
+    if !IsZoomed(hwnd).as_bool() {
+        let left = x < border;
+        let right = x >= width - border;
+        let top = y < border;
+        let bottom = y >= height - border;
+        if top && left {
+            return LRESULT(HTTOPLEFT as isize);
+        }
+        if top && right {
+            return LRESULT(HTTOPRIGHT as isize);
+        }
+        if bottom && left {
+            return LRESULT(HTBOTTOMLEFT as isize);
+        }
+        if bottom && right {
+            return LRESULT(HTBOTTOMRIGHT as isize);
+        }
+        if left {
+            return LRESULT(HTLEFT as isize);
+        }
+        if right {
+            return LRESULT(HTRIGHT as isize);
+        }
+        if top {
+            return LRESULT(HTTOP as isize);
+        }
+        if bottom {
+            return LRESULT(HTBOTTOM as isize);
+        }
+    }
+
+    let titlebar = (super::model::TITLEBAR_HEIGHT * scale).round() as i32;
+    if y >= 0 && y < titlebar {
+        let button = (super::model::CAPTION_BUTTON_WIDTH * scale).round().max(1.0) as i32;
+        if x >= width - button {
+            return LRESULT(HTCLOSE as isize);
+        }
+        if x >= width - button * 2 {
+            return LRESULT(HTMAXBUTTON as isize);
+        }
+        if x >= width - button * 3 {
+            return LRESULT(HTMINBUTTON as isize);
+        }
+        return LRESULT(HTCAPTION as isize);
+    }
+    LRESULT(HTCLIENT as isize)
 }
 
 unsafe fn set_horizontal_scroll(hwnd: HWND, theme_ptr: *mut Theme, position: i32) {
@@ -1255,11 +1331,18 @@ unsafe fn handle_reentrant_message(
 ) -> Option<LRESULT> {
     match msg {
         WM_SIZE => {
-            {
+            if wp.0 == SIZE_MINIMIZED as usize {
+                return Some(LRESULT(0));
+            }
+            let resized = {
                 let theme = &mut *theme_ptr;
-                let _ = theme
+                theme
                     .shell
-                    .resize((lp.0 & 0xffff) as i32, ((lp.0 >> 16) & 0xffff) as i32);
+                    .resize((lp.0 & 0xffff) as i32, ((lp.0 >> 16) & 0xffff) as i32)
+                    .is_ok()
+            };
+            if !resized {
+                let _ = recover_shell_renderer(hwnd, theme_ptr);
             }
             position_controls(hwnd, theme_ptr);
             Some(LRESULT(0))
@@ -1315,6 +1398,13 @@ unsafe fn handle_reentrant_message(
             for control in controls.iter().copied().chain(nav) {
                 SendMessageW(control, WM_SETFONT, WPARAM(font.0 as usize), LPARAM(0));
                 let _ = InvalidateRect(control, None, false);
+            }
+            let combo_height = (28.0 * new_scale).round().max(1.0) as isize;
+            for combo in [(*theme_ptr).zone, (*theme_ptr).style, (*theme_ptr).edge, (*theme_ptr).edge_position] {
+                if combo.0 != 0 {
+                    SendMessageW(combo, CB_SETITEMHEIGHT, WPARAM(0), LPARAM(combo_height));
+                    SendMessageW(combo, CB_SETITEMHEIGHT, WPARAM(usize::MAX), LPARAM(combo_height));
+                }
             }
             if old_font.0 != 0 {
                 let _ = DeleteObject(old_font);
@@ -1523,6 +1613,9 @@ unsafe fn handle_reentrant_message(
 }
 
 unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == WM_NCCALCSIZE || msg == WM_NCPAINT {
+        return LRESULT(0);
+    }
     let theme_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Theme;
     if theme_ptr.is_null() {
         return DefWindowProcW(hwnd, msg, wp, lp);
@@ -1555,6 +1648,23 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         return result;
     }
     match msg {
+        WM_NCHITTEST => return frameless_hit_test(hwnd, lp, (*theme_ptr).scale),
+        WM_NCLBUTTONUP if wp.0 as i32 == HTMINBUTTON => {
+            ShowWindow(hwnd, SW_MINIMIZE);
+            return LRESULT(0);
+        }
+        WM_NCLBUTTONUP if wp.0 as i32 == HTMAXBUTTON => {
+            ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
+            return LRESULT(0);
+        }
+        WM_NCLBUTTONUP if wp.0 as i32 == HTCLOSE => {
+            let _ = SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            return LRESULT(0);
+        }
+        WM_NCLBUTTONDBLCLK if wp.0 as i32 == HTCAPTION => {
+            ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
+            return LRESULT(0);
+        }
         WM_ERASEBKGND => return LRESULT(1),
         WM_PAINT => {
             let mut paint = PAINTSTRUCT::default();
@@ -1569,7 +1679,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                     theme.horizontal_scroll as f32,
                 )
             };
-            let _ = (*theme_ptr).shell.draw(
+            let first_draw = (*theme_ptr).shell.draw(
                 hwnd,
                 page,
                 &save_status,
@@ -1577,6 +1687,16 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 scroll,
                 horizontal_scroll,
             );
+            if first_draw.is_err() && recover_shell_renderer(hwnd, theme_ptr) {
+                let _ = (*theme_ptr).shell.draw(
+                    hwnd,
+                    page,
+                    &save_status,
+                    &notice,
+                    scroll,
+                    horizontal_scroll,
+                );
+            }
             let _ = EndPaint(hwnd, &paint);
             return LRESULT(0);
         }
@@ -1593,21 +1713,12 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             let limits = &mut *(lp.0 as *mut MINMAXINFO);
             let scale = (*theme_ptr).scale;
             let px = |n: f32| (n * scale).round() as i32;
-            let mut minimum = RECT {
+            let minimum = RECT {
                 left: 0,
                 top: 0,
                 right: px(super::model::MIN_WIDTH),
                 bottom: px(super::model::MIN_HEIGHT),
             };
-            let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
-            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-            let _ = AdjustWindowRectExForDpi(
-                &mut minimum,
-                WINDOW_STYLE(style),
-                false,
-                WINDOW_EX_STYLE(ex_style),
-                (96.0 * scale).round() as u32,
-            );
             let mut monitor_info = MONITORINFO {
                 cbSize: size_of::<MONITORINFO>() as u32,
                 ..Default::default()
@@ -1953,11 +2064,12 @@ impl Settings {
         let instance = HINSTANCE(GetModuleHandleW(None)?.0);
         let class = w!("IsleNativeSettingsV2");
         let wc = WNDCLASSW {
+            style: CS_DBLCLKS,
             lpfnWndProc: Some(procedure),
             hInstance: instance,
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW)?,
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize),
+            hbrBackground: HBRUSH(0),
             ..Default::default()
         };
         let _ = RegisterClassW(&wc);
@@ -1981,17 +2093,15 @@ impl Settings {
             actual_owner_dpi
         };
         let owner_scale = owner_dpi as f32 / 96.0;
-        let style =
-            WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_THICKFRAME | WS_CLIPCHILDREN | WS_HSCROLL;
-        let mut outer = RECT {
-            left: 0,
-            top: 0,
-            right: (super::model::WINDOW_WIDTH * owner_scale).round() as i32,
-            bottom: (super::model::WINDOW_HEIGHT * owner_scale).round() as i32,
-        };
-        AdjustWindowRectExForDpi(&mut outer, style, false, WS_EX_CONTROLPARENT, owner_dpi)?;
-        let default_width = outer.right - outer.left;
-        let default_height = outer.bottom - outer.top;
+        let style = WS_POPUP
+            | WS_SYSMENU
+            | WS_MINIMIZEBOX
+            | WS_MAXIMIZEBOX
+            | WS_THICKFRAME
+            | WS_CLIPCHILDREN
+            | WS_HSCROLL;
+        let default_width = (super::model::WINDOW_WIDTH * owner_scale).round().max(1.0) as i32;
+        let default_height = (super::model::WINDOW_HEIGHT * owner_scale).round().max(1.0) as i32;
         let work_areas = enumerate_work_areas();
         let restored = saved_placement
             .as_ref()
@@ -2072,7 +2182,7 @@ impl Settings {
             scale,
             instance,
             font,
-            card_brush: CreateSolidBrush(color_ref(23, 28, 35)),
+            card_brush: CreateSolidBrush(color_ref(17, 18, 21)),
             controls: Vec::new(),
             nav: [HWND(0); 6],
             query: HWND(0),
