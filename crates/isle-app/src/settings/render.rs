@@ -208,30 +208,70 @@ impl ShellRender {
         GetClientRect(hwnd, &mut client)?;
         let width = (client.right - client.left) as f32 / self.scale;
         let height = (client.bottom - client.top) as f32 / self.scale;
-        let card_width = (width - model::CONTENT_LEFT - 28.0)
-            .max(model::WINDOW_WIDTH - model::CONTENT_LEFT - 28.0)
-            .max(280.0);
+        let card_width = (width - model::CONTENT_LEFT - 28.0).max(280.0);
         let content_left = model::CONTENT_LEFT - horizontal_scroll;
         let navigation = model::navigation_layout(height);
 
         self.target.BeginDraw();
         self.target.Clear(Some(&color(model::WINDOW_BG, 1.0)));
         self.fill(
-            rect(0.0, 0.0, model::NAV_WIDTH, height),
+            rect(0.0, 0.0, width, model::TITLEBAR_HEIGHT),
             0.0,
             model::SURFACE,
             1.0,
         );
+        self.fill(
+            rect(0.0, model::TITLEBAR_HEIGHT, model::NAV_WIDTH, (height - model::TITLEBAR_HEIGHT).max(0.0)),
+            0.0,
+            model::SURFACE,
+            1.0,
+        );
+        self.fill(
+            rect(0.0, model::TITLEBAR_HEIGHT - 1.0, width, 1.0),
+            0.0,
+            model::DIVIDER,
+            1.0,
+        );
+        self.fill(
+            rect(model::NAV_WIDTH - 1.0, model::TITLEBAR_HEIGHT, 1.0, (height - model::TITLEBAR_HEIGHT).max(0.0)),
+            0.0,
+            model::DIVIDER,
+            1.0,
+        );
+        self.fill(rect(14.0, 12.0, 22.0, 22.0), 8.0, model::CARD_HOVER, 1.0);
+        self.fill(rect(19.0, 20.0, 12.0, 5.0), 3.0, model::ACCENT, 1.0);
+        self.text(
+            "Isle",
+            rect(44.0, 11.0, 80.0, 24.0),
+            &self.medium,
+            model::PRIMARY_TEXT,
+        );
+        self.text(
+            "设置",
+            rect(76.0, 12.0, 80.0, 22.0),
+            &self.regular,
+            model::MUTED_TEXT,
+        );
+        let caption_width = model::CAPTION_BUTTON_WIDTH;
+        let caption_left = (width - caption_width * 3.0).max(model::NAV_WIDTH);
+        for (index, glyph) in ["—", "□", "×"].iter().enumerate() {
+            self.text(
+                glyph,
+                rect(caption_left + caption_width * index as f32 + 16.0, 11.0, 22.0, 24.0),
+                &self.regular,
+                if index == 2 { model::PRIMARY_TEXT } else { model::SECONDARY_TEXT },
+            );
+        }
         if !model::navigation_is_compact(height) {
             self.text(
                 "ISLE",
-                rect(24.0, 28.0, 120.0, 25.0),
+                rect(24.0, 65.0, 120.0, 25.0),
                 &self.medium,
                 model::PRIMARY_TEXT,
             );
             self.text(
                 "设置中心",
-                rect(24.0, 57.0, 135.0, 20.0),
+                rect(24.0, 88.0, 135.0, 20.0),
                 &self.regular,
                 model::SECONDARY_TEXT,
             );
@@ -239,8 +279,14 @@ impl ShellRender {
         let active_nav = navigation[page.index()];
         self.fill(
             rect(active_nav.x, active_nav.y, active_nav.w, active_nav.h),
-            9.0,
+            10.0,
             model::CARD_HOVER,
+            1.0,
+        );
+        self.fill(
+            rect(active_nav.x, active_nav.y + 12.0, 3.0, (active_nav.h - 24.0).max(6.0)),
+            2.0,
+            model::ACCENT,
             1.0,
         );
         self.target.PushAxisAlignedClip(
@@ -254,19 +300,19 @@ impl ShellRender {
         );
         self.text(
             "ISLE  /  SETTINGS",
-            rect(content_left, 29.0, card_width, 18.0),
+            rect(content_left, 58.0, card_width, 18.0),
             &self.eyebrow,
             model::MUTED_TEXT,
         );
         self.text(
             page.title(),
-            rect(content_left, 51.0, card_width, 38.0),
+            rect(content_left, 78.0, card_width, 38.0),
             &self.title,
             model::PRIMARY_TEXT,
         );
         self.text(
             page.description(),
-            rect(content_left, 94.0, card_width, 23.0),
+            rect(content_left, 116.0, card_width, 23.0),
             &self.regular,
             model::SECONDARY_TEXT,
         );
@@ -285,7 +331,7 @@ impl ShellRender {
             Page::General => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     224.0,
                     card_width,
                     "系统行为",
@@ -293,7 +339,7 @@ impl ShellRender {
                 );
                 self.card(
                     horizontal_scroll,
-                    384.0 - scroll,
+                    390.0 - scroll,
                     246.0,
                     card_width,
                     "时钟与窗口",
@@ -303,7 +349,7 @@ impl ShellRender {
             Page::Appearance => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     270.0,
                     card_width,
                     "外观与位置",
@@ -311,7 +357,7 @@ impl ShellRender {
                 );
                 self.card(
                     horizontal_scroll,
-                    430.0 - scroll,
+                    436.0 - scroll,
                     280.0,
                     card_width,
                     "岛体几何",
@@ -321,7 +367,7 @@ impl ShellRender {
             Page::Modules => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     356.0,
                     card_width,
                     "工具栏模块",
@@ -331,7 +377,7 @@ impl ShellRender {
             Page::Media => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     230.0,
                     card_width,
                     "播放器",
@@ -341,7 +387,7 @@ impl ShellRender {
             Page::Weather => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     386.0,
                     card_width,
                     "天气城市",
@@ -351,7 +397,7 @@ impl ShellRender {
             Page::Advanced => {
                 self.card(
                     horizontal_scroll,
-                    144.0 - scroll,
+                    150.0 - scroll,
                     380.0,
                     card_width,
                     "配置保存",
@@ -361,11 +407,18 @@ impl ShellRender {
         }
         self.target.PopAxisAlignedClip();
         self.target.PopAxisAlignedClip();
+        self.fill(
+            rect(model::CONTENT_LEFT, height - 50.0, (width - model::CONTENT_LEFT).max(0.0), 1.0),
+            0.0,
+            model::DIVIDER,
+            1.0,
+        );
+        self.fill(rect(model::CONTENT_LEFT, height - 29.0, 7.0, 7.0), 4.0, (70, 201, 120), 1.0);
         let footer_width = (width - model::CONTENT_LEFT - 28.0).max(80.0);
         self.text(
             &format!("保存状态：{save_status}"),
             rect(
-                model::CONTENT_LEFT,
+                model::CONTENT_LEFT + 14.0,
                 height - 34.0,
                 footer_width * 0.42,
                 18.0,
