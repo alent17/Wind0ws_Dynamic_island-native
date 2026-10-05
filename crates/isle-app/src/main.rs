@@ -92,6 +92,7 @@ enum Event {
     Key(u32),
     Leave,
     Cancel,
+    DetachHold,
     Resize,
     Dpi(u32, RECT),
     Visibility(bool),
@@ -115,6 +116,7 @@ impl Event {
             Self::NetEase => "event.netease_updated",
             Self::ConfigTick => "event.configuration_tick",
             Self::ActivityExpired => "event.activity_expired",
+            Self::DetachHold => "event.detach_hold",
             Self::HoverExpired => "event.hover_expired",
             Self::Weather => "event.weather_updated",
             Self::City(..) => "event.city_command",
@@ -303,6 +305,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 2 => Event::ConfigTick,
                 3 => Event::HoverExpired,
                 4 => Event::ActivityExpired,
+                5 => Event::DetachHold,
                 _ => Event::Tick,
             });
             LRESULT(0)
@@ -405,6 +408,45 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }
+
+fn playback_mode_action(snapshot: &isle_core::MediaSnapshot) -> Option<media::Action> {
+    let mut modes = vec![(false, 0_u8)];
+    if snapshot.repeat_enabled {
+        modes.extend([(false, 1), (false, 2)]);
+    }
+    if snapshot.shuffle_enabled {
+        modes.push((true, 0));
+    }
+    if modes.len() < 2 {
+        return None;
+    }
+    let current = (snapshot.shuffle, snapshot.repeat_mode);
+    let next = modes
+        .iter()
+        .position(|mode| *mode == current)
+        .map(|index| modes[(index + 1) % modes.len()])
+        .unwrap_or(modes[0]);
+    Some(if next.0 {
+        media::Action::Shuffle(true)
+    } else if snapshot.shuffle {
+        media::Action::Shuffle(false)
+    } else {
+        media::Action::Repeat(next.1)
+    })
+}
+
+fn repeat_mode_action(snapshot: &isle_core::MediaSnapshot) -> Option<media::Action> {
+    if !snapshot.repeat_enabled {
+        return None;
+    }
+    let next = if snapshot.shuffle {
+        1
+    } else {
+        (snapshot.repeat_mode + 1) % 3
+    };
+    Some(media::Action::Repeat(next))
+}
+
 struct App {
     floating_player: Option<floating_player::FloatingPlayer>,
     timer_window: Option<timer_window::TimerWindow>,
@@ -444,6 +486,8 @@ struct App {
     hover: Option<Hit>,
     down: Option<(Point, Hit, f32)>,
     dragged: bool,
+    detach_candidate: bool,
+    dragging_detached: bool,
     interval: u32,
     region: Vec<POINT>,
     exit_after: Option<f64>,
@@ -920,7 +964,9 @@ impl App {
         }
         if let Some(audio) = &self.audio {
             audio.active(
-                !self.suspended && self.model.expanded && self.model.page() == Page::Volume,
+                !self.suspended
+                    && (self.model.expanded && self.model.page() == Page::Volume
+                        || self.floating_player.is_some()),
             );
         }
         if let Some(service) = &self.media {
@@ -1139,6 +1185,36 @@ impl App {
         }
         Ok(())
     }
+    unsafe fn apply_playback_action(&mut self, command: media::Action) {
+        let session = self.model.media.as_ref().map(|snapshot| snapshot.session);
+        if let Some(snapshot) = &mut self.model.media {
+            match command {
+                media::Action::Shuffle(enabled) => {
+                    snapshot.shuffle = enabled;
+                    if enabled {
+                        snapshot.repeat_mode = 0;
+                    }
+                }
+                media::Action::Repeat(mode) => {
+                    snapshot.shuffle = false;
+                    snapshot.repeat_mode = mode;
+                }
+                _ => {}
+            }
+        }
+        if let (Some(service), Some(session)) = (&self.media, session) {
+            service.control(session, command);
+        }
+        if let Some(player) = &self.floating_player {
+            player.update(
+                self.model.media.as_ref(),
+                self.model.audio.as_ref(),
+                self.model.liked,
+                self.start.elapsed().as_secs_f64(),
+            );
+        }
+    }
+
     unsafe fn action(&mut self, hit: Hit) {
         if self.inspection_previous.is_some() && matches!(hit, Hit::Blank | Hit::Tool(4)) {
             return;
@@ -1277,6 +1353,36 @@ impl App {
                 return;
             }
         }
+        if hit == Hit::Favorite {
+            self.model.activate(hit);
+            if let Some(player) = &self.floating_player {
+                player.update(
+                    self.model.media.as_ref(),
+                    self.model.audio.as_ref(),
+                    self.model.liked,
+                    self.start.elapsed().as_secs_f64(),
+                );
+            }
+            return;
+        }
+        if hit == Hit::Shuffle {
+            if let Some(command) = self
+                .model
+                .media
+                .as_ref()
+                .map(|snapshot| media::Action::Shuffle(!snapshot.shuffle))
+            {
+                self.apply_playback_action(command);
+            }
+            return;
+        }
+        if hit == Hit::Mode {
+            let command = self.model.media.as_ref().and_then(repeat_mode_action);
+            if let Some(command) = command {
+                self.apply_playback_action(command);
+            }
+            return;
+        }
         match hit {
             Hit::WidgetToggle(_) => {
                 self.model.activate(hit);
@@ -1292,6 +1398,8 @@ impl App {
                 } else if let Ok(player) = floating_player::FloatingPlayer::new(
                     self.window,
                     self.model.media.as_ref(),
+                    self.model.audio.as_ref(),
+                    self.model.liked,
                     self.start.elapsed().as_secs_f64(),
                     self.configuration.controls.floating_always_on_top,
                     self.test_fixture,
@@ -1314,6 +1422,28 @@ impl App {
         {
             self.timer_window = Some(window);
         }
+    }
+    unsafe fn floating_drop_over_island(&self, player: HWND) -> bool {
+        let mut floating = RECT::default();
+        let mut host = RECT::default();
+        if GetWindowRect(player, &mut floating).is_err()
+            || GetWindowRect(self.window, &mut host).is_err()
+        {
+            return false;
+        }
+        let origin = self.model.origin();
+        let scale = self.scale;
+        let island = RECT {
+            left: host.left + (origin.x * scale).round() as i32,
+            top: host.top + (origin.y * scale).round() as i32,
+            right: host.left + ((origin.x + self.model.width.value) * scale).round() as i32,
+            bottom: host.top + ((origin.y + self.model.height.value) * scale).round() as i32,
+        };
+        let overlap_width =
+            (floating.right.min(island.right) - floating.left.max(island.left)).max(0);
+        let overlap_height =
+            (floating.bottom.min(island.bottom) - floating.top.max(island.top)).max(0);
+        overlap_width >= 24 && overlap_height >= 10
     }
     unsafe fn handle(&mut self, event: Event) -> Result<bool> {
         if self.suspended
@@ -1405,15 +1535,43 @@ impl App {
                 }
             }
             Event::TimerWindow(_, _) => changed = false,
-            Event::Floating(action, sender)
+            Event::Floating(packed_action, sender)
                 if self
                     .floating_player
                     .as_ref()
                     .is_some_and(|p| p.hwnd.0 == sender) =>
             {
+                let action = packed_action & 0xff;
+                let value = ((packed_action >> 8) & 0xff) as u8;
                 if action == floating_player::CLOSE {
                     self.floating_player = None;
                     self.sync_timer()?;
+                } else if action == floating_player::REATTACH {
+                    if self.floating_drop_over_island(HWND(sender)) {
+                        self.floating_player = None;
+                        self.sync_timer()?;
+                    }
+                } else if action == floating_player::FAVORITE {
+                    self.action(Hit::Favorite);
+                } else if action == floating_player::MODE {
+                    if let Some(command) = self.model.media.as_ref().and_then(playback_mode_action)
+                    {
+                        self.apply_playback_action(command);
+                    }
+                } else if action == floating_player::SET_VOLUME {
+                    if let (Some(audio), Some(snapshot)) = (&self.audio, &self.model.audio) {
+                        audio.command(
+                            snapshot.device.id.clone(),
+                            system_audio::Action::Volume(value),
+                        );
+                    }
+                } else if action == floating_player::MUTE {
+                    if let (Some(audio), Some(snapshot)) = (&self.audio, &self.model.audio) {
+                        audio.command(
+                            snapshot.device.id.clone(),
+                            system_audio::Action::Mute(!snapshot.muted),
+                        );
+                    }
                 } else if let (Some(service), Some(snapshot)) = (&self.media, &self.model.media) {
                     let control = match action {
                         floating_player::PREVIOUS => Some(media::Action::Previous),
@@ -1916,9 +2074,18 @@ impl App {
                     activity_changed =
                         self.model.audio_activity_changed_at != previous_audio_activity;
                 }
+                if let Some(player) = &self.floating_player {
+                    player.update(
+                        self.model.media.as_ref(),
+                        self.model.audio.as_ref(),
+                        self.model.liked,
+                        self.start.elapsed().as_secs_f64(),
+                    );
+                }
                 changed = !self.suspended
                     && (activity_changed
-                        || self.model.expanded && self.model.page() == Page::Volume);
+                        || self.model.expanded && self.model.page() == Page::Volume
+                        || self.floating_player.is_some());
             }
             Event::Media => {
                 if let Some(service) = &self.media {
@@ -1928,6 +2095,7 @@ impl App {
                     }) {
                         self.model.title_started = self.start.elapsed().as_secs_f64();
                         self.model.disc_angle = 0.;
+                        self.model.liked = false;
                     }
                     self.model.playing = update.snapshot.playing;
                     self.model.media = Some(update.snapshot);
@@ -1940,6 +2108,8 @@ impl App {
                 if let Some(player) = &self.floating_player {
                     player.update(
                         self.model.media.as_ref(),
+                        self.model.audio.as_ref(),
+                        self.model.liked,
                         self.start.elapsed().as_secs_f64(),
                     );
                 }
@@ -2030,8 +2200,43 @@ impl App {
             Event::Cancel => {
                 self.down = None;
                 self.dragged = false;
+                self.detach_candidate = false;
+                self.dragging_detached = false;
+                let _ = KillTimer(self.window, 5);
                 if self.ui_v2 && self.hover_leave_at.is_some() {
                     SetTimer(self.window, 3, 1, None);
+                }
+            }
+            Event::DetachHold => {
+                if self.detach_candidate && self.down.is_some() && !self.dragged {
+                    self.detach_candidate = false;
+                    let _ = KillTimer(self.window, 5);
+                    if self.floating_player.is_none() {
+                        if let Ok(player) = floating_player::FloatingPlayer::new(
+                            self.window,
+                            self.model.media.as_ref(),
+                            self.model.audio.as_ref(),
+                            self.model.liked,
+                            self.start.elapsed().as_secs_f64(),
+                            self.configuration.controls.floating_always_on_top,
+                            self.test_fixture,
+                        ) {
+                            self.floating_player = Some(player);
+                            self.sync_timer()?;
+                        }
+                    }
+                    let mut cursor = POINT::default();
+                    if GetCursorPos(&mut cursor).is_ok() {
+                        if let Some(player) = &self.floating_player {
+                            player.move_to_center(cursor.x, cursor.y);
+                            SetForegroundWindow(player.hwnd);
+                            self.dragging_detached = true;
+                            self.dragged = true;
+                            changed = true;
+                        }
+                    }
+                } else {
+                    changed = false;
                 }
             }
             Event::Tick => {
@@ -2129,6 +2334,14 @@ impl App {
             }
             Event::Move(x, y) => {
                 let p = self.point(x, y);
+                if self.dragging_detached {
+                    if let Some(player) = &self.floating_player {
+                        let mut cursor = POINT::default();
+                        if GetCursorPos(&mut cursor).is_ok() {
+                            player.move_to_center(cursor.x, cursor.y);
+                        }
+                    }
+                }
                 let next = self.model.hit(p);
                 if next.is_some() {
                     self.hover_leave_at = None;
@@ -2145,6 +2358,10 @@ impl App {
                     let dx = p.x - start.x;
                     if dx.abs() > 5. || (p.y - start.y).abs() > 5. {
                         self.dragged = true;
+                        if self.detach_candidate && !self.dragging_detached {
+                            self.detach_candidate = false;
+                            let _ = KillTimer(self.window, 5);
+                        }
                     }
                     if self.dragged {
                         if self.model.bar().contains(start) {
@@ -2174,11 +2391,27 @@ impl App {
                     };
                     self.down = Some((p, hit, initial));
                     self.dragged = false;
+                    self.dragging_detached = false;
+                    self.detach_candidate = self.model.media.as_ref().is_some_and(|media| {
+                        !media.title.is_empty()
+                            && self
+                                .model
+                                .layout_snapshot()
+                                .album
+                                .is_some_and(|album| album.rect.contains(p))
+                    });
+                    if self.detach_candidate {
+                        let _ = SetTimer(self.window, 5, 430, None);
+                    } else {
+                        let _ = KillTimer(self.window, 5);
+                    }
                     self.model.focus = None;
                 }
             }
             Event::Up(x, y) => {
                 let p = self.point(x, y);
+                let _ = KillTimer(self.window, 5);
+                self.detach_candidate = false;
                 if self.down.is_some_and(|(_, hit, _)| hit == Hit::Seek) {
                     self.seek_at(p.x);
                 }
@@ -2201,6 +2434,16 @@ impl App {
                         }
                     }
                 }
+                let reattach = self.dragging_detached
+                    && self
+                        .floating_player
+                        .as_ref()
+                        .is_some_and(|player| self.floating_drop_over_island(player.hwnd));
+                if reattach {
+                    self.floating_player = None;
+                    self.sync_timer()?;
+                }
+                self.dragging_detached = false;
                 if self.ui_v2 && self.hover_leave_at.is_some() {
                     SetTimer(self.window, 3, 1, None);
                 }
@@ -2896,7 +3139,9 @@ unsafe fn run() -> Result<()> {
         ..Model::default()
     };
     model.widget_shelf = configuration.widgets.clone();
-    model.set_ui_v2(!args.iter().any(|arg| arg == "--legacy-ui"));
+    model.set_ui_v2(!args
+        .iter()
+        .any(|arg| arg == "--legacy-ui" || arg == "--ui-v1"));
     model.motion_time_scale = value(&args, "--motion-scale")
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| matches!(*value, 1.0 | 0.5 | 0.2))
@@ -2922,7 +3167,7 @@ unsafe fn run() -> Result<()> {
         let devices = vec![
             AudioDevice {
                 id: "speakers".into(),
-                name: "Speakers".into(),
+                name: "MacBook Pro Speakers".into(),
             },
             AudioDevice {
                 id: "headphones".into(),
@@ -3024,9 +3269,11 @@ unsafe fn run() -> Result<()> {
             seek: model.ui_v2,
             set_favorite: model.ui_v2,
             favorite_state: model.ui_v2.then_some(false),
+            shuffle_enabled: true,
+            repeat_enabled: true,
             timeline: isle_core::Timeline {
-                position_ms: 122_000,
-                duration_ms: 244_000,
+                position_ms: 82_000,
+                duration_ms: 215_000,
                 received_at: 0.,
                 position_known: true,
             },
@@ -3147,6 +3394,8 @@ unsafe fn run() -> Result<()> {
         hover: None,
         down: None,
         dragged: false,
+        detach_candidate: false,
+        dragging_detached: false,
         interval: 0,
         region: vec![],
         exit_after: value(&args, "--exit-after").and_then(|v| v.parse().ok()),

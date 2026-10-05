@@ -12,7 +12,7 @@ use std::{
 use windows::{
     core::*,
     Foundation::{AsyncStatus, EventRegistrationToken, IAsyncOperation, TypedEventHandler},
-    Media::Control::*,
+    Media::{Control::*, MediaPlaybackAutoRepeatMode},
     Win32::{Foundation::*, System::WinRT::*, UI::WindowsAndMessaging::*},
 };
 pub const UPDATED: u32 = WM_APP + 70;
@@ -22,6 +22,8 @@ pub enum Action {
     Previous,
     Next,
     Seek(u64),
+    Shuffle(bool),
+    Repeat(u8),
 }
 
 /// Standard playback controls are always gated by the capabilities reported
@@ -33,6 +35,8 @@ fn gsmtc_action_enabled(snapshot: &MediaSnapshot, action: Action) -> bool {
         Action::Previous => snapshot.previous,
         Action::Next => snapshot.next,
         Action::Seek(_) => snapshot.seek && snapshot.timeline.duration_ms > 0,
+        Action::Shuffle(_) => snapshot.shuffle_enabled,
+        Action::Repeat(mode) => snapshot.repeat_enabled && mode <= 2,
     }
 }
 
@@ -58,6 +62,7 @@ fn dispatch_gsmtc_action(
         Action::Previous => controller.previous(),
         Action::Next => controller.next(),
         Action::Seek(position) => controller.seek(position.min(snapshot.timeline.duration_ms)),
+        Action::Shuffle(_) | Action::Repeat(_) => return None,
     })
 }
 
@@ -498,6 +503,18 @@ fn poll(
     next.play_pause = controls.IsPlayPauseToggleEnabled()?;
     next.next = controls.IsNextEnabled()?;
     next.seek = controls.IsPlaybackPositionEnabled()?;
+    next.shuffle_enabled = controls.IsShuffleEnabled().unwrap_or(false);
+    next.repeat_enabled = controls.IsRepeatEnabled().unwrap_or(false);
+    next.shuffle = playback
+        .IsShuffleActive()
+        .ok()
+        .and_then(|value| value.Value().ok())
+        .unwrap_or(false);
+    next.repeat_mode = playback
+        .AutoRepeatMode()
+        .ok()
+        .and_then(|value| value.Value().ok())
+        .map_or(0, |mode| mode.0.clamp(0, 2) as u8);
     let timeline = selected.GetTimelineProperties().ok().and_then(|t| {
         Some((
             (t.Position().ok()?.Duration / 10000).max(0) as u64,
@@ -608,7 +625,20 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                     session: &s.value,
                     shared,
                 };
-                if let Some(result) = dispatch_gsmtc_action(&s.snapshot, action, &controller) {
+                let result = match action {
+                    Action::Shuffle(enabled) if s.snapshot.shuffle_enabled => Some(controller.finish(
+                        s.value.TryChangeShuffleActiveAsync(enabled),
+                    )),
+                    Action::Repeat(mode) if s.snapshot.repeat_enabled && mode <= 2 => {
+                        Some(controller.finish(s.value.TryChangeAutoRepeatModeAsync(match mode {
+                            1 => MediaPlaybackAutoRepeatMode::Track,
+                            2 => MediaPlaybackAutoRepeatMode::List,
+                            _ => MediaPlaybackAutoRepeatMode::None,
+                        })))
+                    }
+                    _ => dispatch_gsmtc_action(&s.snapshot, action, &controller),
+                };
+                if let Some(result) = result {
                     error = result.err();
                 }
             }

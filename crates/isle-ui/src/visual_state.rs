@@ -56,10 +56,9 @@ pub struct VisualState {
     pub title: VisualElement,
     pub artist: VisualElement,
     pub progress: VisualElement,
-    /// Previous, play/pause, and next button bounds. The fixed slots keep the
-    /// small Full Player control set bounded while allowing each button to be
-    /// retargeted without throwing away its current position or velocity.
-    pub control_rects: [AnimatedRect; 3],
+    /// Persistent slots preserve each Full Player control's position and
+    /// velocity while the surface expands, collapses, or is interrupted.
+    pub control_rects: [AnimatedRect; 7],
     pub content_opacity: Spring,
     pub controls_opacity: Spring,
     pub activity_slots: [AnimatedActivitySlot; 2],
@@ -96,7 +95,7 @@ impl VisualState {
         layout: &LayoutSnapshot,
         policy: MotionPolicy,
         expanded: bool,
-        control_targets: [Option<crate::geometry::Rect>; 3],
+        control_targets: [Option<crate::geometry::Rect>; 7],
         collapsed_control_anchor: crate::geometry::Rect,
         controls_visible: bool,
     ) {

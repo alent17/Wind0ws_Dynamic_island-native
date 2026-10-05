@@ -46,13 +46,21 @@ pub enum Hit {
     WidgetToggle(usize),
     Netease,
     CyclePlaybackMode,
+    Shuffle,
+    Favorite,
+    Mode,
+    Output,
 }
 
 const fn player_control_hit(index: usize) -> Hit {
     match index {
         0 => Hit::Previous,
         1 => Hit::Play,
-        _ => Hit::Next,
+        2 => Hit::Next,
+        3 => Hit::Shuffle,
+        4 => Hit::Favorite,
+        5 => Hit::Mode,
+        _ => Hit::Output,
     }
 }
 
@@ -61,6 +69,10 @@ fn player_control_index(hit: Hit) -> Option<usize> {
         Hit::Previous => Some(0),
         Hit::Play => Some(1),
         Hit::Next => Some(2),
+        Hit::Shuffle => Some(3),
+        Hit::Favorite => Some(4),
+        Hit::Mode => Some(5),
+        Hit::Output => Some(6),
         _ => None,
     }
 }
@@ -99,6 +111,7 @@ pub struct Model {
     pub generation: u64,
     pub scroll: f32,
     pub focus: Option<Hit>,
+    pub liked: bool,
     pub playing: bool,
     pub volume: f32,
     pub timer_deadline: Option<f64>,
@@ -162,6 +175,7 @@ impl Default for Model {
             generation: 0,
             scroll: 0.,
             focus: None,
+            liked: false,
             playing: true,
             volume: 42.,
             timer_deadline: None,
@@ -195,7 +209,7 @@ impl Default for Model {
 }
 impl Model {
     pub fn visible_tools(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.tool_count.min(7)).filter(|i| self.tool_mask[*i])
+        (0..self.tool_count.min(7)).filter(|i| self.page() != Page::Music && self.tool_mask[*i])
     }
     pub fn set_tool_mask(&mut self, mask: [bool; 7]) {
         self.tool_mask = mask;
@@ -406,6 +420,18 @@ impl Model {
         {
             return false;
         }
+        if hit == Hit::Shuffle {
+            return self
+                .media
+                .as_ref()
+                .is_some_and(|media| media.shuffle_enabled);
+        }
+        if hit == Hit::Mode {
+            return self
+                .media
+                .as_ref()
+                .is_some_and(|media| media.repeat_enabled);
+        }
         self.media.as_ref().is_none_or(|m| match hit {
             Hit::Play => m.capabilities().play_pause,
             Hit::Previous => m.capabilities().previous,
@@ -564,7 +590,7 @@ impl Model {
                 0.
             };
             let h = match self.page() {
-                Page::Music => 160.,
+                Page::Music => 164.,
                 Page::Weather => 240.,
                 _ => 188.,
             } + bar;
@@ -574,7 +600,9 @@ impl Model {
                 0.
             };
             (
-                if self.page() == Page::Music || vertical(self.edge) {
+                if self.page() == Page::Music {
+                    407.
+                } else if vertical(self.edge) {
                     300.
                 } else {
                     300. + inset * 2.
@@ -758,11 +786,15 @@ impl Model {
             previous: capabilities.previous,
             play_pause: capabilities.play_pause,
             next: capabilities.next,
+            show_transport_fallback: !self.ui_v2,
             seek: capabilities.seek
                 && media.is_some_and(|m| m.timeline.position_known && m.timeline.duration_ms > 0),
             favorite_state: capabilities
                 .favorite
                 .then(|| media.and_then(|m| m.favorite_state).unwrap_or(false)),
+            has_media: media.is_some_and(|media| media.session != 0),
+            shuffle_enabled: media.is_some_and(|media| media.shuffle_enabled),
+            repeat_enabled: media.is_some_and(|media| media.repeat_enabled),
         });
         if media.is_some_and(|media| {
             isle_core::player::PlayerKind::from_session_identity(&media.source)
@@ -888,10 +920,7 @@ impl Model {
                     // Keep fading button geometry available to the renderer,
                     // while the interactive API rejects controls in compact
                     // mode and the hit-region snapshot stays empty.
-                    layout.controls = player_controls
-                        .into_iter()
-                        .filter(|control| player_control_index(control.hit).is_some())
-                        .collect();
+                    layout.controls = player_controls;
                     layout.hit_regions.clear();
                 } else {
                     layout.controls.clear();
@@ -911,19 +940,9 @@ impl Model {
         layout
     }
     pub fn progress_rect(&self) -> Rect {
-        if self.ui_v2 {
-            return self
-                .layout_snapshot()
-                .progress
-                .map_or(Rect::default(), |p| p.rect);
-        }
-        let c = self.body();
-        Rect {
-            x: c.x + 34.,
-            y: c.y + 65.,
-            w: (c.w - 76.).max(24.),
-            h: 12.,
-        }
+        self.layout_snapshot()
+            .progress
+            .map_or(Rect::default(), |p| p.rect)
     }
     pub fn shared_album_rect(&self) -> Rect {
         if self.ui_v2 {
@@ -931,13 +950,9 @@ impl Model {
                 .album
                 .map_or_else(|| self.compact_cover(), |album| album.rect)
         } else if self.expanded && self.page() == Page::Music {
-            let c = self.body();
-            Rect {
-                x: c.x,
-                y: c.y + 4.,
-                w: 52.,
-                h: 52.,
-            }
+            self.layout_snapshot()
+                .album
+                .map_or_else(|| self.compact_cover(), |album| album.rect)
         } else {
             self.compact_cover()
         }
@@ -1157,29 +1172,13 @@ impl Model {
         let p = self.detail_content();
         match self.page() {
             Page::Music => {
-                if self.ui_v2 {
-                    v.extend(
-                        self.layout_snapshot()
-                            .controls
-                            .into_iter()
-                            .map(|c| (c.hit, c.rect)),
-                    );
-                    return v;
-                }
-                for (i, hit) in [Hit::Previous, Hit::Play, Hit::Next]
-                    .into_iter()
-                    .enumerate()
-                {
-                    v.push((
-                        hit,
-                        Rect {
-                            x: c.x + c.w / 2. - 80. + i as f32 * 56.,
-                            y: c.y + 82.,
-                            w: 48.,
-                            h: 48.,
-                        },
-                    ));
-                }
+                v.extend(
+                    self.layout_snapshot()
+                        .controls
+                        .into_iter()
+                        .map(|control| (control.hit, control.rect)),
+                );
+                return v;
             }
             Page::Volume => {
                 if self.device_menu {
@@ -1320,12 +1319,26 @@ impl Model {
         }
         let mut targets: Vec<Hit> = self.visible_tools().map(Hit::Tool).collect();
         if !tools_only {
-            targets.extend(
-                self.controls()
-                    .into_iter()
-                    .map(|(h, _)| h)
-                    .filter(|h| !matches!(h, Hit::Tool(_)) && self.enabled(*h)),
-            );
+            let mut controls: Vec<Hit> = self
+                .controls()
+                .into_iter()
+                .map(|(hit, _)| hit)
+                .filter(|hit| !matches!(hit, Hit::Tool(_)) && self.enabled(*hit))
+                .collect();
+            if self.page() == Page::Music {
+                controls.sort_by_key(|hit| match hit {
+                    Hit::Previous => 0,
+                    Hit::Play => 1,
+                    Hit::Next => 2,
+                    Hit::Shuffle => 3,
+                    Hit::Seek => 4,
+                    Hit::Favorite => 5,
+                    Hit::Mode => 6,
+                    Hit::Output => 7,
+                    _ => 8,
+                });
+            }
+            targets.extend(controls);
         }
         if targets.is_empty() {
             self.focus = None;
@@ -1388,6 +1401,9 @@ impl Model {
                 }
             }
             Hit::Play => self.playing = !self.playing,
+            Hit::Favorite => self.liked = !self.liked,
+            Hit::Output => self.navigate(Page::Volume),
+            Hit::Mode | Hit::Shuffle => {}
             Hit::Previous | Hit::Next => self.change_track(),
             Hit::Tool(i) => match i {
                 0 => self.navigate(Page::Timer),

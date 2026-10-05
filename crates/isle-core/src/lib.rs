@@ -35,6 +35,10 @@ pub struct MediaSnapshot {
     pub seek: bool,
     pub set_favorite: bool,
     pub favorite_state: Option<bool>,
+    pub shuffle: bool,
+    pub shuffle_enabled: bool,
+    pub repeat_mode: u8,
+    pub repeat_enabled: bool,
     pub timeline: Timeline,
 }
 
@@ -61,9 +65,8 @@ impl MediaSnapshot {
             play_pause: self.play_pause,
             next: self.next,
             seek: self.seek,
-            // GSMTC currently exposes no corresponding capabilities here.
-            shuffle: false,
-            repeat: false,
+            shuffle: self.shuffle_enabled,
+            repeat: self.repeat_enabled,
             queue: false,
             favorite: self.set_favorite && self.favorite_state.is_some(),
         }

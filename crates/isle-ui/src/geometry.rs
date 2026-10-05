@@ -68,7 +68,7 @@ pub fn offset(w: f32, h: f32, host: f32, edge: Edge, attached: bool) -> Point {
     match edge {
         Edge::Top => Point {
             x: (host - w) / 2.,
-            y: gap,
+            y: if attached { 0. } else { 47. },
         },
         Edge::Bottom => Point {
             x: (host - w) / 2.,

@@ -1724,85 +1724,7 @@ impl Renderer {
             });
             match m.page() {
                 Page::Music => {
-                    if m.ui_v2 {
-                        self.draw_shared_album(m, m.shared_album_rect())?;
-                    } else {
-                        self.fill(
-                            Rect {
-                                x: c.x,
-                                y: c.y + 4.,
-                                w: 52.,
-                                h: 52.,
-                            },
-                            12.,
-                            color(0.14, 0.22, 0.3, 1.),
-                        );
-                        self.ink(blue);
-                        self.ctx.DrawEllipse(
-                            &D2D1_ELLIPSE {
-                                point: point(c.x + 27., c.y + 31.),
-                                radiusX: 17.,
-                                radiusY: 17.,
-                            },
-                            &self.brush,
-                            1.5,
-                            None,
-                        );
-                        self.glyph(
-                            5,
-                            Rect {
-                                x: c.x + 13.,
-                                y: c.y + 17.,
-                                w: 28.,
-                                h: 28.,
-                            },
-                            white,
-                            16.,
-                        )?;
-                        if m.media.as_ref().is_some_and(|media| media.cover.is_some()) {
-                            self.fill(
-                                Rect {
-                                    x: c.x,
-                                    y: c.y + 4.,
-                                    w: 52.,
-                                    h: 52.,
-                                },
-                                12.,
-                                background_color,
-                            );
-                            let bitmap = &self.cover.as_ref().unwrap().1;
-                            let cover = &self.cover.as_ref().unwrap().0;
-                            let source = artwork_source(cover);
-                            self.ctx.DrawBitmap(
-                                bitmap,
-                                Some(&rect(Rect {
-                                    x: c.x,
-                                    y: c.y + 4.,
-                                    w: 52.,
-                                    h: 52.,
-                                })),
-                                1.,
-                                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                                Some(&source),
-                            );
-                        }
-                        self.ink(color(1., 1., 1., 0.1));
-                        self.ctx.DrawRoundedRectangle(
-                            &D2D1_ROUNDED_RECT {
-                                rect: rect(Rect {
-                                    x: c.x - 0.5,
-                                    y: c.y + 3.5,
-                                    w: 53.,
-                                    h: 53.,
-                                }),
-                                radiusX: 12.,
-                                radiusY: 12.,
-                            },
-                            &self.brush,
-                            1.,
-                            None,
-                        );
-                    }
+                    self.draw_shared_album(m, m.shared_album_rect())?;
                     let title = if let Some(media) = &m.media {
                         if media.title.is_empty() {
                             "暂无媒体"
@@ -1814,24 +1736,15 @@ impl Renderer {
                     } else {
                         "宇宙尽头的浪漫主义与一场不会结束的午夜公路旅行"
                     };
-                    let title_rect = if m.ui_v2 {
-                        m.layout_snapshot().title.map_or(
-                            Rect {
-                                x: c.x + 64.,
-                                y: c.y + 12.,
-                                w: (c.w - 100.).max(24.),
-                                h: 22.,
-                            },
-                            |element| element.rect,
-                        )
-                    } else {
+                    let title_rect = m.layout_snapshot().title.map_or(
                         Rect {
-                            x: c.x + 64.,
-                            y: c.y + 12.,
-                            w: (c.w - 100.).max(24.),
+                            x: c.x + 68.,
+                            y: c.y + 8.,
+                            w: (c.w - 86.).max(24.),
                             h: 22.,
-                        }
-                    };
+                        },
+                        |element| element.rect,
+                    );
                     let (layout, title_width) = if let Some(l) = self.layouts.get(title) {
                         l.clone()
                     } else {
@@ -1983,16 +1896,7 @@ impl Renderer {
                     } else {
                         (elapsed_ms as f32 / duration_ms as f32).clamp(0., 1.)
                     };
-                    let progress_rect = if m.ui_v2 {
-                        m.progress_rect()
-                    } else {
-                        Rect {
-                            x: c.x + 34.,
-                            y: c.y + 65.,
-                            w: (c.w - 76.).max(24.),
-                            h: 12.,
-                        }
-                    };
+                    let progress_rect = m.progress_rect();
                     let progress_y = progress_rect.y + progress_rect.h * 0.5;
                     let progress_x = progress_rect.x;
                     let progress_width = progress_rect.w;
@@ -2001,7 +1905,7 @@ impl Renderer {
                     } else {
                         1.
                     };
-                    let progress_color = color(1., 1., 1., 0.19 * progress_opacity);
+                    let progress_color = color(0.22, 0.23, 0.25, 1.);
                     let time_color = color(0.55, 0.55, 0.55, progress_opacity);
                     let mut elapsed_label = [0_u16; 24];
                     let elapsed_label_len =
@@ -2068,7 +1972,7 @@ impl Renderer {
                             x: progress_x,
                             y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
                             w: progress_width,
-                            h: if m.ui_v2 { 4. } else { 6. },
+                            h: 4.,
                         },
                         3.,
                         progress_color,
@@ -2078,7 +1982,7 @@ impl Renderer {
                             x: progress_x,
                             y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
                             w: progress_width * progress,
-                            h: if m.ui_v2 { 4. } else { 6. },
+                            h: 4.,
                         },
                         3.,
                         color(white.r, white.g, white.b, progress_opacity),
@@ -2157,33 +2061,144 @@ impl Renderer {
                                     white,
                                 );
                             } else {
-                                let direction = if hit == Hit::Previous { -1. } else { 1. };
                                 let triangle = self.factory.CreatePathGeometry()?;
                                 let sink = triangle.Open()?;
-                                sink.BeginFigure(
-                                    point(x - 8. * direction * icon_scale, y - 11. * icon_scale),
-                                    D2D1_FIGURE_BEGIN_FILLED,
-                                );
-                                sink.AddLines(&[
-                                    point(x + 8. * direction * icon_scale, y),
-                                    point(x - 8. * direction * icon_scale, y + 11. * icon_scale),
-                                ]);
-                                sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                                if hit == Hit::Play {
+                                    sink.BeginFigure(
+                                        point(x - 8. * icon_scale, y - 9. * icon_scale),
+                                        D2D1_FIGURE_BEGIN_FILLED,
+                                    );
+                                    sink.AddLines(&[
+                                        point(x + 9. * icon_scale, y),
+                                        point(x - 8. * icon_scale, y + 9. * icon_scale),
+                                    ]);
+                                    sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                                } else {
+                                    let backward = hit == Hit::Previous;
+                                    let direction = if backward { -1. } else { 1. };
+                                    for offset in [-7., 5.] {
+                                        let edge = offset * direction;
+                                        sink.BeginFigure(
+                                            point(
+                                                x + (edge - 5.) * icon_scale,
+                                                y - 9. * icon_scale,
+                                            ),
+                                            D2D1_FIGURE_BEGIN_FILLED,
+                                        );
+                                        sink.AddLines(&[
+                                            point(x + (edge + 6.) * icon_scale, y),
+                                            point(
+                                                x + (edge - 5.) * icon_scale,
+                                                y + 9. * icon_scale,
+                                            ),
+                                        ]);
+                                        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                                    }
+                                }
                                 sink.Close()?;
                                 self.ink(white);
                                 self.ctx.FillGeometry(&triangle, &self.brush, None);
-                                if hit != Hit::Play {
-                                    self.fill(
-                                        Rect {
-                                            x: x + 10. * direction * icon_scale - 1.5 * icon_scale,
-                                            y: y - 11. * icon_scale,
-                                            w: 3. * icon_scale,
-                                            h: 22. * icon_scale,
-                                        },
-                                        1.,
-                                        white,
-                                    );
-                                }
+                            }
+                        }
+                    }
+                    for (hit, r) in m.visual_controls() {
+                        let icon = match hit {
+                            Hit::Shuffle => Some((
+                                Icon::Shuffle,
+                                if !m.enabled(hit) {
+                                    color(0.42, 0.45, 0.5, 1.)
+                                } else if m.media.as_ref().is_some_and(|media| media.shuffle) {
+                                    color(0.48, 0.73, 1., 1.)
+                                } else {
+                                    white
+                                },
+                            )),
+                            Hit::Favorite => {
+                                let media = m.media.as_ref();
+                                let liked = media
+                                    .and_then(|media| media.favorite_state)
+                                    .unwrap_or(m.liked);
+                                let icon = if media.is_some_and(|media| media.set_favorite) {
+                                    if liked { Icon::HeartFilled } else { Icon::Heart }
+                                } else if liked {
+                                    Icon::StarFill
+                                } else {
+                                    Icon::Star
+                                };
+                                Some((
+                                    icon,
+                                    if liked {
+                                        color(1., 0.55, 0.62, 1.)
+                                    } else {
+                                        white
+                                    },
+                                ))
+                            }
+                            Hit::Mode => {
+                                let media = m.media.as_ref();
+                                let icon = if media.is_some_and(|media| media.repeat_mode == 1) {
+                                    Icon::RepeatOne
+                                } else {
+                                    Icon::Repeat
+                                };
+                                Some((
+                                    icon,
+                                    if !m.enabled(hit) {
+                                        color(0.42, 0.45, 0.5, 1.)
+                                    } else if media.is_some_and(|media| media.repeat_mode > 0) {
+                                        color(0.48, 0.73, 1., 1.)
+                                    } else {
+                                        white
+                                    },
+                                ))
+                            }
+                            Hit::Output => Some((Icon::Airplay, color(0.62, 0.72, 0.88, 1.))),
+                            _ => None,
+                        };
+                        if let Some((icon, icon_color)) = icon {
+                            let control_opacity = if m.ui_v2 {
+                                m.visual_state.controls_opacity.value.clamp(0., 1.)
+                            } else {
+                                1.
+                            };
+                            let icon_color = color(
+                                icon_color.r,
+                                icon_color.g,
+                                icon_color.b,
+                                icon_color.a * control_opacity,
+                            );
+                            if hover == Some(hit) || m.focus == Some(hit) {
+                                self.fill(r, 10., color(0.08, 0.1, 0.16, control_opacity));
+                            }
+                            if pressed == Some(hit) {
+                                self.fill(
+                                    Rect {
+                                        x: r.x + 2.,
+                                        y: r.y + 2.,
+                                        w: r.w - 4.,
+                                        h: r.h - 4.,
+                                    },
+                                    9.,
+                                    color(0.13, 0.16, 0.24, control_opacity),
+                                );
+                            }
+                            let icon_size = if matches!(
+                                hit,
+                                Hit::Shuffle | Hit::Favorite | Hit::Mode | Hit::Output
+                            ) {
+                                r.w.min(r.h).min(18.)
+                            } else {
+                                r.w.min(r.h).min(24.)
+                            };
+                            if icon_size > 0.5 {
+                                self.icons.draw(
+                                    icon,
+                                    r.center().x - icon_size * 0.5,
+                                    r.center().y - icon_size * 0.5,
+                                    icon_size,
+                                    1.8 * icon_size / 24.,
+                                    icon_color,
+                                )?;
                             }
                         }
                     }

@@ -1,6 +1,6 @@
 //! A small, independently owned Win32 player. Its media snapshot shares the
 //! decoded cover with the island; closing the window drops that reference.
-use isle_core::MediaSnapshot;
+use isle_core::{AudioSnapshot, MediaSnapshot};
 use std::time::Instant;
 use windows::{
     core::*,
@@ -17,14 +17,31 @@ pub const CLOSE: usize = 0;
 pub const PREVIOUS: usize = 1;
 pub const PLAY_PAUSE: usize = 2;
 pub const NEXT: usize = 3;
-const WIDTH: i32 = 360;
-const HEIGHT: i32 = 430;
+pub const FAVORITE: usize = 4;
+pub const MODE: usize = 5;
+pub const REATTACH: usize = 6;
+pub const SET_VOLUME: usize = 7;
+pub const MUTE: usize = 8;
+pub const LYRICS: usize = 9;
+const WIDTH: i32 = 300;
+const HEIGHT: i32 = 540;
+const ART_BOTTOM: i32 = WIDTH + 23;
+
+fn ui_scale(height: i32) -> f32 {
+    height.max(1) as f32 / HEIGHT as f32
+}
+
+fn ui_px(value: i32, scale: f32) -> i32 {
+    (value as f32 * scale).round() as i32
+}
 
 struct State {
     owner: HWND,
     media: Option<MediaSnapshot>,
+    audio: Option<AudioSnapshot>,
     now: f64,
     updated: Instant,
+    liked: bool,
     hover: bool,
     down: Option<usize>,
     font: HFONT,
@@ -33,20 +50,38 @@ struct State {
 }
 
 fn control_at(x: i32, y: i32, width: i32, height: i32) -> Option<usize> {
-    if x >= width - 46 && y < 44 {
+    let scale = ui_scale(height);
+    let px = |value| ui_px(value, scale);
+    let art_bottom = px(ART_BOTTOM).min(height);
+    if x >= width - px(46) && y < px(44) {
         return Some(CLOSE);
     }
-    if y >= height - 143 && y < height - 67 {
+    if y >= art_bottom - px(23) && y < art_bottom + px(19) && x >= width - px(68) {
+        return Some(FAVORITE);
+    }
+    if y >= art_bottom + px(70) && y < art_bottom + px(112) {
         let center = width / 2;
-        if (x - center).abs() < 34 {
+        if (x - center).abs() < px(28) {
             return Some(PLAY_PAUSE);
         }
-        if (x - (center - 70)).abs() < 27 {
+        if (x - (center - px(44))).abs() < px(24) {
             return Some(PREVIOUS);
         }
-        if (x - (center + 70)).abs() < 27 {
+        if (x - (center + px(44))).abs() < px(24) {
             return Some(NEXT);
         }
+    }
+    if (height - px(67)..height - px(31)).contains(&y) && x >= width - px(42) {
+        return Some(MODE);
+    }
+    if (height - px(55)..height - px(25)).contains(&y) && x < px(42) {
+        return Some(LYRICS);
+    }
+    if (height - px(99)..height - px(69)).contains(&y) && (px(24)..width - px(20)).contains(&x) {
+        return Some(SET_VOLUME);
+    }
+    if (height - px(99)..height - px(69)).contains(&y) && x < px(24) {
+        return Some(MUTE);
     }
     None
 }
@@ -87,119 +122,257 @@ unsafe fn label(
     let _ = SelectObject(dc, previous);
 }
 
+fn media_time(milliseconds: u64) -> String {
+    let seconds = milliseconds / 1000;
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+
+unsafe fn rounded_bar(dc: HDC, left: i32, top: i32, right: i32, bottom: i32, color: COLORREF) {
+    let brush = CreateSolidBrush(color);
+    let old_brush = SelectObject(dc, brush);
+    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    let _ = RoundRect(dc, left, top, right, bottom, bottom - top, bottom - top);
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(brush);
+}
+
+unsafe fn speaker_symbol(dc: HDC, center_x: i32, center_y: i32, waves: bool) {
+    let color = COLORREF(0x00b8b8c0);
+    let brush = CreateSolidBrush(color);
+    let old_brush = SelectObject(dc, brush);
+    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    let _ = Polygon(
+        dc,
+        &[
+            POINT {
+                x: center_x - 6,
+                y: center_y - 3,
+            },
+            POINT {
+                x: center_x - 2,
+                y: center_y - 3,
+            },
+            POINT {
+                x: center_x + 3,
+                y: center_y - 7,
+            },
+            POINT {
+                x: center_x + 3,
+                y: center_y + 7,
+            },
+            POINT {
+                x: center_x - 2,
+                y: center_y + 3,
+            },
+            POINT {
+                x: center_x - 6,
+                y: center_y + 3,
+            },
+        ],
+    );
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(brush);
+    if waves {
+        let pen = CreatePen(PS_SOLID, 1, color);
+        let old_pen = SelectObject(dc, pen);
+        let _ = Polyline(
+            dc,
+            &[
+                POINT {
+                    x: center_x + 5,
+                    y: center_y - 4,
+                },
+                POINT {
+                    x: center_x + 8,
+                    y: center_y,
+                },
+                POINT {
+                    x: center_x + 5,
+                    y: center_y + 4,
+                },
+            ],
+        );
+        let _ = Polyline(
+            dc,
+            &[
+                POINT {
+                    x: center_x + 8,
+                    y: center_y - 7,
+                },
+                POINT {
+                    x: center_x + 12,
+                    y: center_y,
+                },
+                POINT {
+                    x: center_x + 8,
+                    y: center_y + 7,
+                },
+            ],
+        );
+        let _ = SelectObject(dc, old_pen);
+        let _ = DeleteObject(pen);
+    }
+}
+
+unsafe fn monitor_symbol(dc: HDC, center_x: i32, center_y: i32) {
+    let pen = CreatePen(PS_SOLID, 1, COLORREF(0x00a0a0a8));
+    let old_pen = SelectObject(dc, pen);
+    let old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    let _ = Rectangle(dc, center_x - 8, center_y - 7, center_x + 8, center_y + 4);
+    let _ = Rectangle(dc, center_x - 2, center_y + 4, center_x + 2, center_y + 7);
+    let _ = Rectangle(dc, center_x - 7, center_y + 7, center_x + 7, center_y + 9);
+    let _ = SelectObject(dc, old_brush);
+    let _ = SelectObject(dc, old_pen);
+    let _ = DeleteObject(pen);
+}
+
+unsafe fn lyrics_symbol(dc: HDC, center_x: i32, center_y: i32) {
+    let fill = CreateSolidBrush(COLORREF(0x00b8b8c0));
+    let old_brush = SelectObject(dc, fill);
+    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    let _ = RoundRect(
+        dc,
+        center_x - 9,
+        center_y - 7,
+        center_x + 9,
+        center_y + 5,
+        5,
+        5,
+    );
+    let _ = Polygon(
+        dc,
+        &[
+            POINT {
+                x: center_x - 2,
+                y: center_y + 3,
+            },
+            POINT {
+                x: center_x - 2,
+                y: center_y + 8,
+            },
+            POINT {
+                x: center_x + 4,
+                y: center_y + 3,
+            },
+        ],
+    );
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(fill);
+    let dots = CreateSolidBrush(COLORREF(0x00303038));
+    let old_brush = SelectObject(dc, dots);
+    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+    let _ = Ellipse(dc, center_x - 5, center_y - 2, center_x - 2, center_y + 1);
+    let _ = Ellipse(dc, center_x + 1, center_y - 2, center_x + 4, center_y + 1);
+    let _ = SelectObject(dc, old_pen);
+    let _ = SelectObject(dc, old_brush);
+    let _ = DeleteObject(dots);
+}
+
 unsafe fn media_symbol(dc: HDC, action: usize, center_x: i32, center_y: i32, playing: bool) {
     let white = CreateSolidBrush(COLORREF(0x00ffffff));
     let old_brush = SelectObject(dc, white);
     let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
     match action {
         PLAY_PAUSE if playing => {
-            let _ = Rectangle(dc, center_x - 8, center_y - 11, center_x - 3, center_y + 11);
-            let _ = Rectangle(dc, center_x + 3, center_y - 11, center_x + 8, center_y + 11);
+            let _ = Rectangle(dc, center_x - 9, center_y - 13, center_x - 3, center_y + 13);
+            let _ = Rectangle(dc, center_x + 3, center_y - 13, center_x + 9, center_y + 13);
         }
         PLAY_PAUSE => {
             let _ = Polygon(
                 dc,
                 &[
                     POINT {
-                        x: center_x - 8,
-                        y: center_y - 12,
+                        x: center_x - 9,
+                        y: center_y - 13,
                     },
                     POINT {
-                        x: center_x - 8,
-                        y: center_y + 12,
+                        x: center_x - 9,
+                        y: center_y + 13,
                     },
                     POINT {
-                        x: center_x + 11,
+                        x: center_x + 12,
                         y: center_y,
                     },
                 ],
             );
         }
-        PREVIOUS => {
-            let _ = Rectangle(
-                dc,
-                center_x - 12,
-                center_y - 10,
-                center_x - 9,
-                center_y + 10,
-            );
-            let _ = Polygon(
-                dc,
-                &[
-                    POINT {
-                        x: center_x + 9,
-                        y: center_y - 10,
-                    },
-                    POINT {
-                        x: center_x + 9,
-                        y: center_y + 10,
-                    },
-                    POINT {
-                        x: center_x - 8,
-                        y: center_y,
-                    },
-                ],
-            );
-        }
-        NEXT => {
-            let _ = Rectangle(
-                dc,
-                center_x + 9,
-                center_y - 10,
-                center_x + 12,
-                center_y + 10,
-            );
-            let _ = Polygon(
-                dc,
-                &[
-                    POINT {
-                        x: center_x - 9,
-                        y: center_y - 10,
-                    },
-                    POINT {
-                        x: center_x - 9,
-                        y: center_y + 10,
-                    },
-                    POINT {
-                        x: center_x + 8,
-                        y: center_y,
-                    },
-                ],
-            );
+        PREVIOUS | NEXT => {
+            let backward = action == PREVIOUS;
+            let wedges = if backward {
+                [
+                    [
+                        POINT {
+                            x: center_x + 20,
+                            y: center_y - 12,
+                        },
+                        POINT {
+                            x: center_x + 1,
+                            y: center_y,
+                        },
+                        POINT {
+                            x: center_x + 20,
+                            y: center_y + 12,
+                        },
+                    ],
+                    [
+                        POINT {
+                            x: center_x - 1,
+                            y: center_y - 12,
+                        },
+                        POINT {
+                            x: center_x - 20,
+                            y: center_y,
+                        },
+                        POINT {
+                            x: center_x - 1,
+                            y: center_y + 12,
+                        },
+                    ],
+                ]
+            } else {
+                [
+                    [
+                        POINT {
+                            x: center_x - 20,
+                            y: center_y - 12,
+                        },
+                        POINT {
+                            x: center_x - 1,
+                            y: center_y,
+                        },
+                        POINT {
+                            x: center_x - 20,
+                            y: center_y + 12,
+                        },
+                    ],
+                    [
+                        POINT {
+                            x: center_x + 1,
+                            y: center_y - 12,
+                        },
+                        POINT {
+                            x: center_x + 20,
+                            y: center_y,
+                        },
+                        POINT {
+                            x: center_x + 1,
+                            y: center_y + 12,
+                        },
+                    ],
+                ]
+            };
+            for wedge in wedges {
+                let _ = Polygon(dc, &wedge);
+            }
         }
         _ => {}
     }
     let _ = SelectObject(dc, old_pen);
     let _ = SelectObject(dc, old_brush);
     let _ = DeleteObject(white);
-}
-
-unsafe fn dim_artwork(dc: HDC, width: i32, art_bottom: i32) {
-    let source = CreateCompatibleDC(dc);
-    let bitmap = CreateCompatibleBitmap(dc, 1, 1);
-    let previous = SelectObject(source, bitmap);
-    let _ = SetPixel(source, 0, 0, COLORREF(0));
-    let _ = AlphaBlend(
-        dc,
-        0,
-        0,
-        width,
-        art_bottom,
-        source,
-        0,
-        0,
-        1,
-        1,
-        BLENDFUNCTION {
-            BlendOp: AC_SRC_OVER as u8,
-            BlendFlags: 0,
-            SourceConstantAlpha: 90,
-            AlphaFormat: 0,
-        },
-    );
-    let _ = SelectObject(source, previous);
-    let _ = DeleteObject(bitmap);
-    let _ = DeleteDC(source);
 }
 
 unsafe fn paint(hwnd: HWND, state: &State) {
@@ -209,10 +382,12 @@ unsafe fn paint(hwnd: HWND, state: &State) {
     let _ = GetClientRect(hwnd, &mut rect);
     let width = rect.right;
     let height = rect.bottom;
+    let scale = ui_scale(height);
+    let px = |value| ui_px(value, scale);
     let dc = CreateCompatibleDC(window_dc);
     let bitmap = CreateCompatibleBitmap(window_dc, width, height);
     let old_bitmap = SelectObject(dc, bitmap);
-    let background = CreateSolidBrush(COLORREF(0x001c1c1c));
+    let background = CreateSolidBrush(COLORREF(0x00000000));
     FillRect(dc, &rect, background);
     let _ = DeleteObject(background);
 
@@ -220,8 +395,25 @@ unsafe fn paint(hwnd: HWND, state: &State) {
         .media
         .as_ref()
         .is_some_and(|media| !media.title.is_empty());
-    let art_bottom = if has_track { height - 64 } else { height };
+    let art_bottom = if has_track {
+        px(ART_BOTTOM).min(height)
+    } else {
+        height
+    };
     if let Some(cover) = state.media.as_ref().and_then(|media| media.cover.as_ref()) {
+        let mut cover_pixels = cover.pixels.clone();
+        let fade_start = cover.height as usize * 2 / 3;
+        let fade_span = (cover.height as usize - fade_start).max(1);
+        for y in fade_start..cover.height as usize {
+            let progress = (y - fade_start) as f32 / fade_span as f32;
+            let brightness = 1. - progress * 0.55;
+            for x in 0..cover.width as usize {
+                let at = (y * cover.width as usize + x) * 4;
+                for channel in &mut cover_pixels[at..at + 3] {
+                    *channel = (*channel as f32 * brightness).round() as u8;
+                }
+            }
+        }
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -235,17 +427,22 @@ unsafe fn paint(hwnd: HWND, state: &State) {
             ..Default::default()
         };
         SetStretchBltMode(dc, HALFTONE);
+        let source_width = cover.width as f32;
+        let source_height = cover.height as f32;
+        let scale = (width as f32 / source_width).max(art_bottom as f32 / source_height);
+        let crop_width = (width as f32 / scale).min(source_width).round() as i32;
+        let crop_height = (art_bottom as f32 / scale).min(source_height).round() as i32;
         let _ = StretchDIBits(
             dc,
             0,
             0,
             width,
             art_bottom,
-            0,
-            0,
-            cover.width as i32,
-            cover.height as i32,
-            Some(cover.pixels.as_ptr().cast()),
+            (cover.width as i32 - crop_width) / 2,
+            (cover.height as i32 - crop_height) / 2,
+            crop_width,
+            crop_height,
+            Some(cover_pixels.as_ptr().cast()),
             &info,
             DIB_RGB_COLORS,
             SRCCOPY,
@@ -256,11 +453,11 @@ unsafe fn paint(hwnd: HWND, state: &State) {
             "♪",
             RECT {
                 left: 0,
-                top: art_bottom / 2 - 34,
+                top: art_bottom / 2 - px(34),
                 right: width,
-                bottom: art_bottom / 2 + 34,
+                bottom: art_bottom / 2 + px(34),
             },
-            COLORREF(0x00444444),
+            COLORREF(0x009090a0),
             state.placeholder_font,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
@@ -291,10 +488,10 @@ unsafe fn paint(hwnd: HWND, state: &State) {
             dc,
             title,
             RECT {
-                left: 16,
-                top: art_bottom + 9,
-                right: width - 16,
-                bottom: art_bottom + 33,
+                left: px(18),
+                top: art_bottom - px(20),
+                right: width - px(62),
+                bottom: art_bottom + px(5),
             },
             COLORREF(0x00ffffff),
             state.font,
@@ -304,10 +501,10 @@ unsafe fn paint(hwnd: HWND, state: &State) {
             dc,
             artist,
             RECT {
-                left: 16,
-                top: art_bottom + 34,
-                right: width - 16,
-                bottom: art_bottom + 52,
+                left: px(18),
+                top: art_bottom + px(1),
+                right: width - px(62),
+                bottom: art_bottom + px(22),
             },
             COLORREF(0x00aaaaaa),
             state.small_font,
@@ -319,61 +516,181 @@ unsafe fn paint(hwnd: HWND, state: &State) {
         if duration > 0 {
             let now = state.now + state.updated.elapsed().as_secs_f64();
             let position = media.timeline.position(now, media.playing).min(duration);
-            let track = CreateSolidBrush(COLORREF(0x00525252));
+            let elapsed = media_time(position);
+            let remaining = format!("-{}", media_time(duration.saturating_sub(position)));
+            let time_y = art_bottom + px(46);
+            label(
+                dc,
+                &elapsed,
+                RECT {
+                    left: px(18),
+                    top: time_y,
+                    right: px(78),
+                    bottom: time_y + px(20),
+                },
+                COLORREF(0x00aaaaaa),
+                state.small_font,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            );
+            label(
+                dc,
+                &remaining,
+                RECT {
+                    left: width - px(78),
+                    top: time_y,
+                    right: width - px(18),
+                    bottom: time_y + px(20),
+                },
+                COLORREF(0x00aaaaaa),
+                state.small_font,
+                DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+            );
+            let x = px(18);
+            let y = art_bottom + px(34);
+            let right = width - px(18);
+            rounded_bar(dc, x, y - px(2), right, y + px(2), COLORREF(0x00404040));
+            let position_x =
+                x + ((right - x) as f64 * position as f64 / duration as f64).round() as i32;
+            rounded_bar(
+                dc,
+                x,
+                y - px(2),
+                position_x.max(x + px(2)),
+                y + px(2),
+                COLORREF(0x00ffffff),
+            );
             let progress = CreateSolidBrush(COLORREF(0x00ffffff));
-            let y = height - 3;
-            FillRect(
+            let previous = SelectObject(dc, progress);
+            let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+            let _ = Ellipse(
                 dc,
-                &RECT {
-                    left: 0,
-                    top: y,
-                    right: width,
-                    bottom: height,
-                },
-                track,
+                position_x - px(4),
+                y - px(4),
+                position_x + px(4),
+                y + px(4),
             );
-            FillRect(
-                dc,
-                &RECT {
-                    left: 0,
-                    top: y,
-                    right: (position as f64 / duration as f64 * width as f64).round() as i32,
-                    bottom: height,
-                },
-                progress,
-            );
-            let _ = DeleteObject(track);
+            let _ = SelectObject(dc, old_pen);
+            let _ = SelectObject(dc, previous);
             let _ = DeleteObject(progress);
         }
     }
-    if state.hover {
-        if has_track {
-            dim_artwork(dc, width, art_bottom);
+    if let Some(media) = state.media.as_ref().filter(|_| has_track) {
+        let favorite = if state.liked { "♥" } else { "♡" };
+        label(
+            dc,
+            favorite,
+            RECT {
+                left: width - px(54),
+                top: art_bottom - px(23),
+                right: width - px(14),
+                bottom: art_bottom + px(19),
+            },
+            if state.liked {
+                COLORREF(0x00734fff)
+            } else {
+                COLORREF(0x00bdbdbd)
+            },
+            state.font,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+        let center_y = art_bottom + px(91);
+        for (index, action) in [PREVIOUS, PLAY_PAUSE, NEXT].into_iter().enumerate() {
+            let center_x = width / 2 + (index as i32 - 1) * px(44);
+            media_symbol(dc, action, center_x, center_y, media.playing);
         }
+        let audio = state.audio.as_ref();
+        let volume = audio.map_or(0, |snapshot| snapshot.volume) as i32;
+        let volume_y = height - px(84);
+        speaker_symbol(dc, px(15), volume_y, false);
+        speaker_symbol(dc, width - px(17), volume_y, true);
+        let volume_left = px(32);
+        let volume_right = width - px(34);
+        rounded_bar(
+            dc,
+            volume_left,
+            volume_y - px(2),
+            volume_right,
+            volume_y + px(2),
+            COLORREF(0x00404040),
+        );
+        let volume_x = volume_left + (volume_right - volume_left) * volume / 100;
+        rounded_bar(
+            dc,
+            volume_left,
+            volume_y - px(2),
+            volume_x.max(volume_left + px(2)),
+            volume_y + px(2),
+            COLORREF(0x00ffffff),
+        );
+        let progress = CreateSolidBrush(COLORREF(0x00ffffff));
+        let previous = SelectObject(dc, progress);
+        let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+        let _ = Ellipse(
+            dc,
+            volume_x - px(4),
+            volume_y - px(4),
+            volume_x + px(4),
+            volume_y + px(4),
+        );
+        let _ = SelectObject(dc, old_pen);
+        let _ = SelectObject(dc, previous);
+        let _ = DeleteObject(progress);
+        let output = audio.map_or("默认输出", |snapshot| snapshot.device.name.as_str());
+        let output_y = height - px(40);
+        lyrics_symbol(dc, px(20), output_y);
+        monitor_symbol(dc, px(66), output_y);
+        label(
+            dc,
+            output,
+            RECT {
+                left: px(78),
+                top: height - px(59),
+                right: width - px(28),
+                bottom: height - px(31),
+            },
+            COLORREF(0x00a0a0a8),
+            state.small_font,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        );
+        let mode = if media.shuffle {
+            "⇄"
+        } else if media.repeat_mode == 1 {
+            "↻¹"
+        } else {
+            "↻"
+        };
+        label(
+            dc,
+            mode,
+            RECT {
+                left: width - px(30),
+                top: height - px(64),
+                right: width - px(2),
+                bottom: height - px(32),
+            },
+            if media.shuffle || media.repeat_mode > 0 {
+                COLORREF(0x00e6e6e6)
+            } else {
+                COLORREF(0x007f7f86)
+            },
+            state.font,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+    }
+    if state.hover {
         label(
             dc,
             "×",
             RECT {
-                left: width - 46,
-                top: 8,
-                right: width - 8,
-                bottom: 44,
+                left: width - px(46),
+                top: px(8),
+                right: width - px(8),
+                bottom: px(44),
             },
             COLORREF(0x00ffffff),
             state.font,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
         );
-        if has_track {
-            for (index, action) in [PREVIOUS, PLAY_PAUSE, NEXT].into_iter().enumerate() {
-                media_symbol(
-                    dc,
-                    action,
-                    width / 2 + (index as i32 - 1) * 70,
-                    height - 106,
-                    state.media.as_ref().is_some_and(|media| media.playing),
-                );
-            }
-        }
     }
     let _ = BitBlt(window_dc, 0, 0, width, height, dc, 0, 0, SRCCOPY);
     let _ = SelectObject(dc, old_bitmap);
@@ -471,9 +788,23 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LP
                 if let Some(action) = state.down.take() {
                     let _ = ReleaseCapture();
                     if control_at(x, y, rect.right, rect.bottom) == Some(action) {
-                        let _ = PostMessageW(state.owner, COMMAND, WPARAM(action), LPARAM(hwnd.0));
+                        let packed = if action == SET_VOLUME {
+                            let scale = ui_scale(rect.bottom);
+                            let left = ui_px(32, scale);
+                            let right = rect.right - ui_px(34, scale);
+                            let value =
+                                ((x - left) * 100 / (right - left).max(1)).clamp(0, 100) as usize;
+                            action | (value << 8)
+                        } else {
+                            action
+                        };
+                        let _ = PostMessageW(state.owner, COMMAND, WPARAM(packed), LPARAM(hwnd.0));
                     }
                 }
+                return LRESULT(0);
+            }
+            WM_EXITSIZEMOVE => {
+                let _ = PostMessageW(state.owner, COMMAND, WPARAM(REATTACH), LPARAM(hwnd.0));
                 return LRESULT(0);
             }
             WM_KEYDOWN => {
@@ -521,6 +852,8 @@ impl FloatingPlayer {
     pub unsafe fn new(
         owner: HWND,
         media: Option<&MediaSnapshot>,
+        audio: Option<&AudioSnapshot>,
+        liked: bool,
         now: f64,
         topmost: bool,
         show_in_taskbar: bool,
@@ -594,8 +927,10 @@ impl FloatingPlayer {
         let state = Box::new(State {
             owner,
             media: media.cloned(),
+            audio: audio.cloned(),
             now,
             updated: Instant::now(),
+            liked,
             hover: false,
             down: None,
             font: make_font(18, 600),
@@ -609,15 +944,39 @@ impl FloatingPlayer {
         Ok(Self { hwnd })
     }
 
-    pub unsafe fn update(&self, media: Option<&MediaSnapshot>, now: f64) {
+    pub unsafe fn update(
+        &self,
+        media: Option<&MediaSnapshot>,
+        audio: Option<&AudioSnapshot>,
+        liked: bool,
+        now: f64,
+    ) {
         let pointer = GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) as *mut State;
         if let Some(state) = pointer.as_mut() {
             state.media = media.cloned();
+            state.audio = audio.cloned();
+            state.liked = liked;
             state.now = now;
             state.updated = Instant::now();
             sync_progress_timer(self.hwnd, media);
             let _ = InvalidateRect(self.hwnd, None, false);
         }
+    }
+
+    pub unsafe fn move_to_center(&self, x: i32, y: i32) {
+        let mut rect = RECT::default();
+        let _ = GetWindowRect(self.hwnd, &mut rect);
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        let _ = SetWindowPos(
+            self.hwnd,
+            HWND_TOPMOST,
+            x - width / 2,
+            y - height / 2,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE,
+        );
     }
 
     pub unsafe fn set_topmost(&self, enabled: bool) -> Result<()> {
@@ -651,10 +1010,10 @@ mod tests {
 
     #[test]
     fn control_hit_targets_do_not_capture_the_drag_surface() {
-        assert_eq!(control_at(338, 20, 360, 430), Some(CLOSE));
-        assert_eq!(control_at(180, 325, 360, 430), Some(PLAY_PAUSE));
-        assert_eq!(control_at(110, 325, 360, 430), Some(PREVIOUS));
-        assert_eq!(control_at(250, 325, 360, 430), Some(NEXT));
-        assert_eq!(control_at(80, 80, 360, 430), None);
+        assert_eq!(control_at(278, 20, WIDTH, HEIGHT), Some(CLOSE));
+        assert_eq!(control_at(150, 414, WIDTH, HEIGHT), Some(PLAY_PAUSE));
+        assert_eq!(control_at(106, 414, WIDTH, HEIGHT), Some(PREVIOUS));
+        assert_eq!(control_at(194, 414, WIDTH, HEIGHT), Some(NEXT));
+        assert_eq!(control_at(80, 80, WIDTH, HEIGHT), None);
     }
 }

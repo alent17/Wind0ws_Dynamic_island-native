@@ -60,8 +60,12 @@ pub struct LayoutInput {
     pub previous: bool,
     pub play_pause: bool,
     pub next: bool,
+    pub show_transport_fallback: bool,
     pub seek: bool,
     pub favorite_state: Option<bool>,
+    pub has_media: bool,
+    pub shuffle_enabled: bool,
+    pub repeat_enabled: bool,
 }
 
 /// Places the highest-priority compact activities beside the single island
@@ -179,13 +183,8 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
 
     let compact_album = compact_album_rect(surface, input.edge, input.attached, shoulder);
     if expanded && input.page == Page::Music {
-        let (body_x, body_y, body_w, body_h) = music_body(
-            surface,
-            input.edge,
-            input.attached,
-            shoulder,
-            input.tool_ids.iter().any(|v| *v),
-        );
+        let (body_x, body_y, body_w, body_h) =
+            music_body(surface, input.edge, input.attached, shoulder, false);
         let album = Rect {
             x: body_x,
             y: body_y,
@@ -200,7 +199,7 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
         };
         let artist = Rect {
             x: title.x,
-            y: title.y + 26.,
+            y: title.y + 17.,
             w: title.w,
             h: 20.,
         };
@@ -211,16 +210,33 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
             h: 20.,
         };
         let visible_controls: Vec<Hit> = [
-            input.previous.then_some(Hit::Previous),
-            input.play_pause.then_some(Hit::Play),
-            input.next.then_some(Hit::Next),
+            input.has_media.then_some(Hit::Shuffle),
+            input.has_media.then_some(Hit::Favorite),
+            (input.previous || input.show_transport_fallback).then_some(Hit::Previous),
+            (input.play_pause || input.show_transport_fallback).then_some(Hit::Play),
+            (input.next || input.show_transport_fallback).then_some(Hit::Next),
+            input.has_media.then_some(Hit::Mode),
+            input.has_media.then_some(Hit::Output),
         ]
         .into_iter()
         .flatten()
         .collect();
-        let control_width = 168.;
-        let controls_left = body_x + (body_w - control_width) * 0.5;
+        let control_center = |hit: Hit| {
+            let x = match hit {
+                Hit::Shuffle => 40.,
+                Hit::Favorite => 73.,
+                Hit::Previous => 147.,
+                Hit::Play => 202.,
+                Hit::Next => 257.,
+                Hit::Mode => 332.,
+                Hit::Output => 367.,
+                _ => surface.w * 0.5,
+            };
+            surface.x + x * surface.w / 407.
+        };
         let mut controls = Vec::new();
+        let has_transport =
+            input.previous || input.play_pause || input.next || input.show_transport_fallback;
         if input.seek {
             controls.push(ControlLayout {
                 hit: Hit::Seek,
@@ -233,30 +249,38 @@ pub fn compute(input: LayoutInput) -> LayoutSnapshot {
             });
         }
         for hit in visible_controls {
-            let i = match hit {
-                Hit::Previous => 0,
-                Hit::Play => 1,
-                _ => 2,
-            };
-            let button_size = if hit == Hit::Play {
-                (48., 46.)
-            } else {
-                (40., 40.)
+            let button_size = match hit {
+                Hit::Play => (48., 46.),
+                Hit::Previous | Hit::Next => (40., 40.),
+                _ => (34., 34.),
             };
             let rect = Rect {
-                x: controls_left + i as f32 * 56. + (56. - button_size.0) * 0.5,
-                y: body_y + 100.,
+                x: control_center(hit) - button_size.0 * 0.5,
+                y: body_y + 100. + (46. - button_size.1) * 0.5,
                 w: button_size.0,
                 h: button_size.1,
             };
+            if matches!(hit, Hit::Previous | Hit::Play | Hit::Next) && (!has_transport
+                || !input.show_transport_fallback && matches!(hit, Hit::Previous) && !input.previous
+                || !input.show_transport_fallback && matches!(hit, Hit::Play) && !input.play_pause
+                || !input.show_transport_fallback && matches!(hit, Hit::Next) && !input.next) {
+                continue;
+            }
             controls.push(ControlLayout {
                 hit,
                 rect,
-                enabled: true,
+                enabled: match hit {
+                    Hit::Shuffle => input.shuffle_enabled,
+                    Hit::Previous => input.previous,
+                    Hit::Play => input.play_pause,
+                    Hit::Next => input.next,
+                    Hit::Mode => input.repeat_enabled,
+                    _ => true,
+                },
             });
             snapshot.hit_regions.push(HitRegion { hit, rect });
         }
-        if let Some(liked) = input.favorite_state {
+        if let Some(liked) = input.favorite_state.filter(|_| !input.has_media) {
             snapshot.favorite = Some(ElementLayout {
                 rect: Rect {
                     x: body_x + 8.,
@@ -410,6 +434,9 @@ mod tests {
                         next: true,
                         seek: true,
                         favorite_state: Some(false),
+                        has_media: false,
+                        shuffle_enabled: false,
+                        repeat_enabled: false,
                     });
                     for rect in layout.controls.iter().map(|control| control.rect).chain([
                         layout.album.unwrap().rect,
@@ -471,6 +498,9 @@ mod tests {
             next: true,
             seek: true,
             favorite_state: Some(false),
+            has_media: false,
+            shuffle_enabled: false,
+            repeat_enabled: false,
         });
         assert!(layout.surface.w / layout.surface.h > 2.3);
         let album = layout.album.unwrap().rect;

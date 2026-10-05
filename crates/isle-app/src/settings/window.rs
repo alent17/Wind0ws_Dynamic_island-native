@@ -1649,19 +1649,19 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     }
     match msg {
         WM_NCHITTEST => return frameless_hit_test(hwnd, lp, (*theme_ptr).scale),
-        WM_NCLBUTTONUP if wp.0 as i32 == HTMINBUTTON => {
+        WM_NCLBUTTONUP if wp.0 as u32 == HTMINBUTTON => {
             ShowWindow(hwnd, SW_MINIMIZE);
             return LRESULT(0);
         }
-        WM_NCLBUTTONUP if wp.0 as i32 == HTMAXBUTTON => {
+        WM_NCLBUTTONUP if wp.0 as u32 == HTMAXBUTTON => {
             ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
             return LRESULT(0);
         }
-        WM_NCLBUTTONUP if wp.0 as i32 == HTCLOSE => {
+        WM_NCLBUTTONUP if wp.0 as u32 == HTCLOSE => {
             let _ = SendMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
             return LRESULT(0);
         }
-        WM_NCLBUTTONDBLCLK if wp.0 as i32 == HTCAPTION => {
+        WM_NCLBUTTONDBLCLK if wp.0 as u32 == HTCAPTION => {
             ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
             return LRESULT(0);
         }

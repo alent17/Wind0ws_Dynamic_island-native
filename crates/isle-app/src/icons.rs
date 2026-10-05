@@ -34,6 +34,12 @@ pub enum Icon {
     Heart,
     HeartFilled,
     Shelf,
+    Star,
+    StarFill,
+    Shuffle,
+    Repeat,
+    RepeatOne,
+    Airplay,
 }
 
 pub struct Icons {
@@ -73,6 +79,12 @@ impl Icons {
             asset!("heart"),
             asset!("heart-filled"),
             asset!("gallery-horizontal-end"),
+            asset!("star"),
+            asset!("star-fill"),
+            asset!("shuffle"),
+            asset!("repeat"),
+            asset!("repeat-1"),
+            asset!("airplay"),
         ];
         let documents = sources
             .into_iter()
