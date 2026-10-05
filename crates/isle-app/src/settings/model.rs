@@ -55,13 +55,16 @@ impl Page {
     }
 }
 
-pub const WINDOW_WIDTH: f32 = 820.0;
+pub const WINDOW_WIDTH: f32 = 920.0;
 pub const WINDOW_HEIGHT: f32 = 760.0;
-pub const MIN_WIDTH: f32 = 720.0;
-pub const MIN_HEIGHT: f32 = 640.0;
-pub const NAV_WIDTH: f32 = 184.0;
-pub const CONTENT_LEFT: f32 = 208.0;
-pub const PAGE_TOP: f32 = 144.0;
+pub const MIN_WIDTH: f32 = 820.0;
+pub const MIN_HEIGHT: f32 = 620.0;
+pub const TITLEBAR_HEIGHT: f32 = 46.0;
+pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
+pub const RESIZE_BORDER: f32 = 7.0;
+pub const NAV_WIDTH: f32 = 196.0;
+pub const CONTENT_LEFT: f32 = 220.0;
+pub const PAGE_TOP: f32 = 150.0;
 const NAV_NORMAL_HEIGHT: f32 = 426.0;
 const NAV_COMPACT_HEIGHT: f32 = 270.0;
 
@@ -74,7 +77,7 @@ pub fn navigation_layout(client_height: f32) -> [Rect; 6] {
         return std::array::from_fn(|index| Rect {
             x: 12.0,
             y: 118.0 + index as f32 * 50.0,
-            w: 160.0,
+            w: NAV_WIDTH - 24.0,
             h: 42.0,
         });
     }
@@ -90,7 +93,7 @@ pub fn navigation_layout(client_height: f32) -> [Rect; 6] {
         return std::array::from_fn(|index| Rect {
             x: 12.0,
             y: top + index as f32 * (row_height + GAP),
-            w: 160.0,
+            w: NAV_WIDTH - 24.0,
             h: row_height,
         });
     }
@@ -118,13 +121,15 @@ pub fn navigation_is_compact(client_height: f32) -> bool {
     client_height < NAV_COMPACT_HEIGHT
 }
 
-pub const WINDOW_BG: (u8, u8, u8) = (12, 15, 19);
-pub const SURFACE: (u8, u8, u8) = (18, 22, 28);
-pub const CARD: (u8, u8, u8) = (23, 28, 35);
-pub const CARD_HOVER: (u8, u8, u8) = (29, 36, 45);
-pub const PRIMARY_TEXT: (u8, u8, u8) = (245, 247, 250);
-pub const SECONDARY_TEXT: (u8, u8, u8) = (166, 175, 187);
-pub const MUTED_TEXT: (u8, u8, u8) = (113, 123, 136);
+pub const WINDOW_BG: (u8, u8, u8) = (7, 7, 8);
+pub const SURFACE: (u8, u8, u8) = (11, 12, 14);
+pub const CARD: (u8, u8, u8) = (17, 18, 21);
+pub const CARD_HOVER: (u8, u8, u8) = (25, 26, 31);
+pub const PRIMARY_TEXT: (u8, u8, u8) = (250, 250, 250);
+pub const SECONDARY_TEXT: (u8, u8, u8) = (166, 166, 170);
+pub const MUTED_TEXT: (u8, u8, u8) = (104, 104, 111);
+pub const ACCENT: (u8, u8, u8) = (238, 239, 242);
+pub const DIVIDER: (u8, u8, u8) = (31, 32, 37);
 
 #[cfg(test)]
 mod navigation_tests {
@@ -158,7 +163,7 @@ mod navigation_tests {
             Rect {
                 x: 12.0,
                 y: 118.0,
-                w: 160.0,
+                w: NAV_WIDTH - 24.0,
                 h: 42.0
             }
         );
@@ -167,7 +172,7 @@ mod navigation_tests {
             Rect {
                 x: 12.0,
                 y: 368.0,
-                w: 160.0,
+                w: NAV_WIDTH - 24.0,
                 h: 42.0
             }
         );
