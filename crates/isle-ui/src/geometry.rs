@@ -68,7 +68,7 @@ pub fn offset(w: f32, h: f32, host: f32, edge: Edge, attached: bool) -> Point {
     match edge {
         Edge::Top => Point {
             x: (host - w) / 2.,
-            y: if attached { 0. } else { 47. },
+            y: gap,
         },
         Edge::Bottom => Point {
             x: (host - w) / 2.,
@@ -220,9 +220,83 @@ pub fn inside(p: Point, poly: &[Point]) -> bool {
     }
     yes
 }
+/// Legacy navigationScaleForWorkArea, followed by App.svelte's 0.625 zoom.
+pub fn reference_expanded_scale(work: Rect, dpi: u32) -> f32 {
+    let dpr = dpi.max(1) as f32 / 96.;
+    (work.w / dpr / 2100.)
+        .min(work.h / dpr / 1180.)
+        .clamp(0.62, 1.)
+        * 0.625
+}
+
+/// Expanded zoom also determines the floating gap, including in compact mode.
+pub fn reference_offset(
+    w: f32,
+    h: f32,
+    host: f32,
+    edge: Edge,
+    attached: bool,
+    scale: f32,
+) -> Point {
+    let mut origin = offset(w, h, host, edge, attached);
+    if !attached {
+        let difference = 22. * (1. - scale);
+        match edge {
+            Edge::Top => origin.y -= difference,
+            Edge::Bottom => origin.y += difference,
+            Edge::Left => origin.x -= difference,
+            Edge::Right => origin.x += difference,
+        }
+    }
+    origin
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_zoom_uses_logical_work_area_and_the_original_bounds() {
+        let work = Rect {
+            w: 2100.,
+            h: 1180.,
+            ..Default::default()
+        };
+        assert_eq!(reference_expanded_scale(work, 96), 0.625);
+        assert_eq!(
+            reference_expanded_scale(
+                Rect {
+                    w: 4200.,
+                    h: 2360.,
+                    ..work
+                },
+                192
+            ),
+            0.625
+        );
+        assert_eq!(
+            reference_expanded_scale(
+                Rect {
+                    w: 320.,
+                    h: 240.,
+                    ..work
+                },
+                96
+            ),
+            0.3875
+        );
+        assert!(
+            (reference_expanded_scale(
+                Rect {
+                    w: 1920.,
+                    h: 1040.,
+                    ..work
+                },
+                96
+            ) - 0.5508475)
+                .abs()
+                < 0.00001
+        );
+    }
     #[test]
     fn host_fits_small_work_areas_at_all_dpis_and_keeps_its_edge() {
         for dpi in [96, 120, 144, 192] {

@@ -35,7 +35,7 @@ pub struct Forecast {
     pub observed: String,
     pub days: Vec<Day>,
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct View {
     pub city: Option<City>,
     pub data: Option<Forecast>,

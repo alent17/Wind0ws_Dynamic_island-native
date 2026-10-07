@@ -1,0 +1,356 @@
+[
+  {
+    "scale": 1,
+    "mode": "expanded",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 600,
+        "h": 249.09375,
+        "fontSize": "14px",
+        "radius": "45px"
+      },
+      ".expanded-cover": {
+        "x": 33,
+        "y": 25,
+        "w": 84,
+        "h": 84,
+        "fontSize": "13.3333px",
+        "radius": "20px"
+      },
+      ".metadata": {
+        "x": 141,
+        "y": 40.71875,
+        "w": 362,
+        "h": 52.5625,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".marquee-title": {
+        "x": 141,
+        "y": 40.71875,
+        "w": 362,
+        "h": 26.875,
+        "fontSize": "24px",
+        "radius": "0px"
+      },
+      ".metadata>span": {
+        "x": 141,
+        "y": 72.59375,
+        "w": 362,
+        "h": 20.6875,
+        "fontSize": "18px",
+        "radius": "0px"
+      },
+      ".progress-block.with-times": {
+        "x": 33,
+        "y": 129.546875,
+        "w": 536,
+        "h": 20,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".time": {
+        "x": 33,
+        "y": 129.546875,
+        "w": 42.859375,
+        "h": 20,
+        "fontSize": "20px",
+        "radius": "0px"
+      },
+      ".track": {
+        "x": 87.859375,
+        "y": 134.546875,
+        "w": 419.828125,
+        "h": 10,
+        "fontSize": "14px",
+        "radius": "999px"
+      },
+      ".control-row": {
+        "x": 33,
+        "y": 180.09375,
+        "w": 536,
+        "h": 60,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".transport-controls button": {
+        "x": 214,
+        "y": 186.09375,
+        "w": 38,
+        "h": 48,
+        "fontSize": "13.3333px",
+        "radius": "9px"
+      },
+      ".compact-cover": null
+    }
+  },
+  {
+    "scale": 1,
+    "mode": "compact",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 28,
+        "fontSize": "14px",
+        "radius": "14px"
+      },
+      ".expanded-cover": null,
+      ".metadata": null,
+      ".marquee-title": null,
+      ".metadata>span": null,
+      ".progress-block.with-times": null,
+      ".time": null,
+      ".track": null,
+      ".control-row": null,
+      ".transport-controls button": null,
+      ".compact-cover": {
+        "x": 5,
+        "y": 4,
+        "w": 20,
+        "h": 20,
+        "fontSize": "13.3333px",
+        "radius": "50%"
+      }
+    }
+  },
+  {
+    "scale": 0.625,
+    "mode": "expanded",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 375,
+        "h": 155.6875,
+        "fontSize": "14px",
+        "radius": "28.125px"
+      },
+      ".expanded-cover": {
+        "x": 21,
+        "y": 16,
+        "w": 52.5,
+        "h": 52.5,
+        "fontSize": "13.3333px",
+        "radius": "20px"
+      },
+      ".metadata": {
+        "x": 88.5,
+        "y": 25.8125,
+        "w": 226.25,
+        "h": 32.859375,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".marquee-title": {
+        "x": 88.5,
+        "y": 25.8125,
+        "w": 226.25,
+        "h": 16.796875,
+        "fontSize": "24px",
+        "radius": "0px"
+      },
+      ".metadata>span": {
+        "x": 88.5,
+        "y": 45.734375,
+        "w": 226.25,
+        "h": 12.9375,
+        "fontSize": "18px",
+        "radius": "0px"
+      },
+      ".progress-block.with-times": {
+        "x": 21,
+        "y": 81.34375,
+        "w": 335,
+        "h": 12.5,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".time": {
+        "x": 21,
+        "y": 81.34375,
+        "w": 26.8125,
+        "h": 12.5,
+        "fontSize": "20px",
+        "radius": "0px"
+      },
+      ".track": {
+        "x": 55.3125,
+        "y": 84.46875,
+        "w": 262.34375,
+        "h": 6.25,
+        "fontSize": "14px",
+        "radius": "999px"
+      },
+      ".control-row": {
+        "x": 21,
+        "y": 112.9375,
+        "w": 335,
+        "h": 37.5,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".transport-controls button": {
+        "x": 134.125,
+        "y": 116.6875,
+        "w": 23.75,
+        "h": 30,
+        "fontSize": "13.3333px",
+        "radius": "9px"
+      },
+      ".compact-cover": null
+    }
+  },
+  {
+    "scale": 0.625,
+    "mode": "compact",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 28,
+        "fontSize": "14px",
+        "radius": "14px"
+      },
+      ".expanded-cover": null,
+      ".metadata": null,
+      ".marquee-title": null,
+      ".metadata>span": null,
+      ".progress-block.with-times": null,
+      ".time": null,
+      ".track": null,
+      ".control-row": null,
+      ".transport-controls button": null,
+      ".compact-cover": {
+        "x": 5,
+        "y": 4,
+        "w": 20,
+        "h": 20,
+        "fontSize": "13.3333px",
+        "radius": "50%"
+      }
+    }
+  },
+  {
+    "scale": 0.5508474576271186,
+    "mode": "expanded",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 330.5,
+        "h": 137.203125,
+        "fontSize": "14px",
+        "radius": "24.7881px"
+      },
+      ".expanded-cover": {
+        "x": 18.625,
+        "y": 14.21875,
+        "w": 46.265625,
+        "h": 46.26563262939453,
+        "fontSize": "13.3333px",
+        "radius": "20px"
+      },
+      ".metadata": {
+        "x": 78.109375,
+        "y": 22.875,
+        "w": 199.421875,
+        "h": 28.95313262939453,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".marquee-title": {
+        "x": 78.109375,
+        "y": 22.875,
+        "w": 199.421875,
+        "h": 14.796882629394531,
+        "fontSize": "24px",
+        "radius": "0px"
+      },
+      ".metadata>span": {
+        "x": 78.109375,
+        "y": 40.42188262939453,
+        "w": 199.421875,
+        "h": 11.40625,
+        "fontSize": "18px",
+        "radius": "0px"
+      },
+      ".progress-block.with-times": {
+        "x": 18.625,
+        "y": 71.81250762939453,
+        "w": 295.25,
+        "h": 11.015625,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".time": {
+        "x": 18.625,
+        "y": 71.81250762939453,
+        "w": 23.59375,
+        "h": 11.015625,
+        "fontSize": "20px",
+        "radius": "0px"
+      },
+      ".track": {
+        "x": 48.828125,
+        "y": 74.56250762939453,
+        "w": 231.296875,
+        "h": 5.5,
+        "fontSize": "14px",
+        "radius": "999px"
+      },
+      ".control-row": {
+        "x": 18.625,
+        "y": 99.65625762939453,
+        "w": 295.25,
+        "h": 33.04685974121094,
+        "fontSize": "14px",
+        "radius": "0px"
+      },
+      ".transport-controls button": {
+        "x": 118.359375,
+        "y": 102.95313262939453,
+        "w": 20.921875,
+        "h": 26.437484741210938,
+        "fontSize": "13.3333px",
+        "radius": "9px"
+      },
+      ".compact-cover": null
+    }
+  },
+  {
+    "scale": 0.5508474576271186,
+    "mode": "compact",
+    "measure": {
+      ".island-surface": {
+        "x": 0,
+        "y": 0,
+        "w": 80,
+        "h": 28,
+        "fontSize": "14px",
+        "radius": "14px"
+      },
+      ".expanded-cover": null,
+      ".metadata": null,
+      ".marquee-title": null,
+      ".metadata>span": null,
+      ".progress-block.with-times": null,
+      ".time": null,
+      ".track": null,
+      ".control-row": null,
+      ".transport-controls button": null,
+      ".compact-cover": {
+        "x": 5,
+        "y": 4,
+        "w": 20,
+        "h": 20,
+        "fontSize": "13.3333px",
+        "radius": "50%"
+      }
+    }
+  }
+]

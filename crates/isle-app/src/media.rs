@@ -626,16 +626,16 @@ fn run(shared: &Shared, receiver: Receiver<Command>, hwnd: HWND, start: Instant)
                     shared,
                 };
                 let result = match action {
-                    Action::Shuffle(enabled) if s.snapshot.shuffle_enabled => Some(controller.finish(
-                        s.value.TryChangeShuffleActiveAsync(enabled),
-                    )),
-                    Action::Repeat(mode) if s.snapshot.repeat_enabled && mode <= 2 => {
-                        Some(controller.finish(s.value.TryChangeAutoRepeatModeAsync(match mode {
+                    Action::Shuffle(enabled) if s.snapshot.shuffle_enabled => {
+                        Some(controller.finish(s.value.TryChangeShuffleActiveAsync(enabled)))
+                    }
+                    Action::Repeat(mode) if s.snapshot.repeat_enabled && mode <= 2 => Some(
+                        controller.finish(s.value.TryChangeAutoRepeatModeAsync(match mode {
                             1 => MediaPlaybackAutoRepeatMode::Track,
                             2 => MediaPlaybackAutoRepeatMode::List,
                             _ => MediaPlaybackAutoRepeatMode::None,
-                        })))
-                    }
+                        })),
+                    ),
                     _ => dispatch_gsmtc_action(&s.snapshot, action, &controller),
                 };
                 if let Some(result) = result {

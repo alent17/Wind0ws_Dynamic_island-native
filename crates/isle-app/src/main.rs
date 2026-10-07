@@ -567,6 +567,10 @@ impl App {
             work.w = work.w.min(w as f32);
             work.h = work.h.min(h as f32);
         }
+        if self.model.ui_v2 {
+            self.model.expanded_scale = reference_expanded_scale(work, dpi);
+            self.model.retarget();
+        }
         let (mut bounds, scale) = window_placement(work, dpi, HOST, self.model.edge);
         let along = f32::from(self.edge_position.min(100)) / 100.;
         match self.model.edge {
@@ -3139,9 +3143,11 @@ unsafe fn run() -> Result<()> {
         ..Model::default()
     };
     model.widget_shelf = configuration.widgets.clone();
-    model.set_ui_v2(!args
-        .iter()
-        .any(|arg| arg == "--legacy-ui" || arg == "--ui-v1"));
+    model.set_ui_v2(
+        !args
+            .iter()
+            .any(|arg| arg == "--legacy-ui" || arg == "--ui-v1"),
+    );
     model.motion_time_scale = value(&args, "--motion-scale")
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| matches!(*value, 1.0 | 0.5 | 0.2))

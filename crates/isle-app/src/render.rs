@@ -35,6 +35,9 @@ pub struct Renderer {
     glass_cover: Option<(std::sync::Arc<isle_core::Cover>, ID2D1Bitmap)>,
     artwork_fade: isle_ui::spring::Spring,
     last_draw_now: Option<f64>,
+    reference_cover_last: Option<(Rect, f32)>,
+    reference_cover_motion: Option<(Rect, f32, f64)>,
+    reference_cover_expanded: bool,
     disc_brush: Option<ID2D1BitmapBrush>,
     pub ctx: ID2D1DeviceContext,
     factory: ID2D1Factory1,
@@ -358,8 +361,9 @@ fn artwork_source(cover: &isle_core::Cover) -> D2D_RECT_F {
     }
 }
 
-fn should_build_glass_blur(ui_v2: bool, artwork_visible: bool) -> bool {
-    ui_v2 && artwork_visible
+fn should_build_glass_blur(_ui_v2: bool, _artwork_visible: bool) -> bool {
+    // A pure-black island has no artwork background or desktop sampling.
+    false
 }
 
 fn dynamic_glass_blur_opacity(active: bool, artwork_fade: f32) -> f32 {
@@ -370,8 +374,13 @@ fn dynamic_glass_blur_opacity(active: bool, artwork_fade: f32) -> f32 {
     }
 }
 
-fn should_render_dynamic_glass(ui_v2: bool, width: f32, height: f32, opaque_preview: bool) -> bool {
-    ui_v2 && !opaque_preview && width > 120. && height > 40.
+fn should_render_dynamic_glass(
+    _ui_v2: bool,
+    _width: f32,
+    _height: f32,
+    _opaque_preview: bool,
+) -> bool {
+    false
 }
 
 /// Make a small, cached blur source when artwork changes. This is never run
@@ -871,6 +880,9 @@ impl Renderer {
             glass_cover: None,
             artwork_fade: isle_ui::spring::Spring::new(1.),
             last_draw_now: None,
+            reference_cover_last: None,
+            reference_cover_motion: None,
+            reference_cover_expanded: false,
             disc_brush: None,
             digits: Vec::new(),
             digits_page: (0, false),
@@ -904,7 +916,53 @@ impl Renderer {
             &self.brush,
         );
     }
+    fn reference_cover(&mut self, m: &Model) -> Option<(Rect, f32)> {
+        if !m.ui_v2 {
+            return None;
+        }
+        if m.expanded && !self.reference_cover_expanded && !m.reduced && m.cover_visible() {
+            if let Some((rect, radius)) = self.reference_cover_last {
+                self.reference_cover_motion = Some((rect, radius, m.now));
+            }
+        }
+        if !m.expanded || m.reduced || !m.cover_visible() {
+            self.reference_cover_motion = None;
+        }
+        self.reference_cover_expanded = m.expanded;
+        let layout = m.target_layout();
+        let mut target = layout.album?;
+        let origin = m.origin();
+        target.rect.x += origin.x - layout.surface.x;
+        target.rect.y += origin.y - layout.surface.y;
+        let (rect, radius) = if let Some((from, radius, started)) = self.reference_cover_motion {
+            let progress = ((m.now - started) / 0.250).clamp(0., 1.) as f32;
+            let eased = 1. - (1. - progress).powi(3);
+            let mix = |from: f32, to: f32| from + (to - from) * eased;
+            self.content_animating |= progress < 1.;
+            if progress >= 1. {
+                self.reference_cover_motion = None;
+            }
+            (
+                Rect {
+                    x: mix(from.x, target.rect.x),
+                    y: mix(from.y, target.rect.y),
+                    w: mix(from.w, target.rect.w),
+                    h: mix(from.h, target.rect.h),
+                },
+                mix(radius, target.radius),
+            )
+        } else {
+            (target.rect, target.radius)
+        };
+        self.reference_cover_last = Some((rect, radius));
+        Some((rect, radius))
+    }
+
     unsafe fn draw_shared_album(&self, m: &Model, r: Rect) -> Result<()> {
+        // IslandSurface hides both cover endpoints while the shell contracts.
+        if m.ui_v2 && !m.expanded && (m.width.active() || m.height.active()) {
+            return Ok(());
+        }
         let radius = m
             .layout_snapshot()
             .album
@@ -1027,14 +1085,6 @@ impl Renderer {
         f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
         self.formats.insert((size, weight.0), f.clone());
         Ok(f)
-    }
-    unsafe fn format(&mut self, size: u32) -> Result<IDWriteTextFormat> {
-        let weight = if size >= 26 || size == 13 {
-            DWRITE_FONT_WEIGHT_BOLD
-        } else {
-            DWRITE_FONT_WEIGHT_NORMAL
-        };
-        self.format_with_weight(size, weight)
     }
     unsafe fn ellipsis_format_with_weight(
         &mut self,
@@ -1516,12 +1566,63 @@ impl Renderer {
             self.ink(color(1., 1., 1., 0.1));
             self.ctx.DrawGeometry(&shape, &self.brush, 1., None);
         }
-        let c = m.body();
         let render_full_player = (m.expanded
-            && m.width.value > 250.
+            && m.width.value > 100.
             && (m.height.value - m.height.target).abs() < 35.)
             || (m.ui_v2 && m.page() == Page::Music && m.visual_state.content_opacity.value > 0.01);
+        let reference_cover = self.reference_cover(m);
         if render_full_player {
+            // Render CSS-size content through one transform, preserving fractional
+            // font sizes and using the same mapping as native hit testing.
+            let scale = m.content_scale();
+            let actual_origin = m.origin();
+            let mut content_model = m.unscaled_content_model();
+            if let Some((rect, radius)) = reference_cover {
+                let origin = content_model.origin();
+                content_model.visual_state.album.rect.set(
+                    Rect {
+                        x: origin.x + (rect.x - actual_origin.x) / scale,
+                        y: origin.y + (rect.y - actual_origin.y) / scale,
+                        w: rect.w / scale,
+                        h: rect.h / scale,
+                    },
+                    true,
+                );
+                content_model
+                    .visual_state
+                    .album
+                    .radius
+                    .set(radius / scale, true);
+            }
+            if m.ui_v2 && m.expanded {
+                let layout = m.target_layout();
+                let (value, end) = if vertical(m.edge) {
+                    (m.width.value, layout.surface.w)
+                } else {
+                    (m.height.value, layout.surface.h)
+                };
+                let outward = ((value - 30.) / (end - 30.)).clamp(0., 1.);
+                let opacity = ((outward - 0.18) / 0.42).clamp(0., 1.);
+                for spring in [
+                    &mut content_model.visual_state.title.opacity,
+                    &mut content_model.visual_state.artist.opacity,
+                    &mut content_model.visual_state.progress.opacity,
+                    &mut content_model.visual_state.controls_opacity,
+                ] {
+                    spring.set(opacity, true);
+                }
+            }
+            let m = if m.ui_v2 { &content_model } else { m };
+            let base_origin = m.origin();
+            let transform = Matrix3x2 {
+                M11: scale,
+                M22: scale,
+                M31: actual_origin.x - base_origin.x * scale,
+                M32: actual_origin.y - base_origin.y * scale,
+                ..Default::default()
+            };
+            self.ctx.SetTransform(&transform);
+            let c = m.body();
             // Focus and press feedback share the same hit rectangles as input.
             for (hit, r) in m.visual_controls() {
                 let feedback_opacity =
@@ -1717,10 +1818,8 @@ impl Renderer {
             };
             self.ctx.PushLayer(&page_layer, None);
             self.ctx.SetTransform(&Matrix3x2 {
-                M11: 1.,
-                M22: 1.,
-                M32: (1. - eased) * 4.,
-                ..Default::default()
+                M32: transform.M32 + (1. - eased) * 4. * scale,
+                ..transform
             });
             match m.page() {
                 Page::Music => {
@@ -1749,9 +1848,17 @@ impl Renderer {
                         l.clone()
                     } else {
                         self.layouts.clear(); // Only the currently displayed title owns a layout.
-                        let f = self.format(if m.ui_v2 { 16 } else { 13 })?;
+                        let f = self.format_with_weight(
+                            if m.ui_v2 { 24 } else { 13 },
+                            DWRITE_FONT_WEIGHT_BOLD,
+                        )?;
                         let wide: Vec<u16> = title.encode_utf16().collect();
-                        let l = self.write.CreateTextLayout(&wide, &f, 2000., 24.)?;
+                        let l = self.write.CreateTextLayout(
+                            &wide,
+                            &f,
+                            2000.,
+                            if m.ui_v2 { 26.88 } else { 24. },
+                        )?;
                         let mut metrics = DWRITE_TEXT_METRICS::default();
                         l.GetMetrics(&mut metrics)?;
                         let cached = (l, metrics.width);
@@ -1850,7 +1957,7 @@ impl Renderer {
                         self.text_with_ellipsis(
                             artist,
                             artist_rect,
-                            13,
+                            18,
                             DWRITE_FONT_WEIGHT_MEDIUM,
                             artist_color,
                         )?;
@@ -1866,8 +1973,8 @@ impl Renderer {
                     if m.ui_v2 {
                         if let Some(metadata) = m.layout_snapshot().title {
                             self.spectrum(
-                                metadata.rect.x + metadata.rect.w + 8.,
-                                metadata.rect.y + 14.,
+                                metadata.rect.x + metadata.rect.w + 24.,
+                                metadata.rect.y + 26.29,
                                 m,
                             );
                         }
@@ -1924,12 +2031,12 @@ impl Renderer {
                     self.text_utf16(
                         &elapsed_label[..elapsed_label_len],
                         Rect {
-                            x: if m.ui_v2 { progress_x - 31. } else { c.x },
-                            y: progress_y - 8.,
-                            w: if m.ui_v2 { 27. } else { 26. },
-                            h: 16.,
+                            x: if m.ui_v2 { progress_x - 54.9 } else { c.x },
+                            y: progress_y - if m.ui_v2 { 10. } else { 8. },
+                            w: if m.ui_v2 { 42.9 } else { 26. },
+                            h: if m.ui_v2 { 20. } else { 16. },
                         },
-                        11,
+                        if m.ui_v2 { 20 } else { 11 },
                         DWRITE_FONT_WEIGHT_SEMI_BOLD,
                         time_color,
                     )?;
@@ -1955,39 +2062,39 @@ impl Renderer {
                         &remaining_label[..remaining_label_len],
                         Rect {
                             x: if m.ui_v2 {
-                                progress_x + progress_width + 4.
+                                progress_x + progress_width + 12.
                             } else {
                                 c.x + c.w - 34.
                             },
-                            y: progress_y - 8.,
-                            w: 34.,
-                            h: 16.,
+                            y: progress_y - if m.ui_v2 { 10. } else { 8. },
+                            w: if m.ui_v2 { 50. } else { 34. },
+                            h: if m.ui_v2 { 20. } else { 16. },
                         },
-                        11,
+                        if m.ui_v2 { 20 } else { 11 },
                         DWRITE_FONT_WEIGHT_SEMI_BOLD,
                         time_color,
                     )?;
                     self.fill(
                         Rect {
                             x: progress_x,
-                            y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
+                            y: progress_y - if m.ui_v2 { 5. } else { 1.5 },
                             w: progress_width,
-                            h: 4.,
+                            h: if m.ui_v2 { 10. } else { 4. },
                         },
-                        3.,
+                        5.,
                         progress_color,
                     );
                     self.fill(
                         Rect {
                             x: progress_x,
-                            y: progress_y - if m.ui_v2 { 2. } else { 1.5 },
+                            y: progress_y - if m.ui_v2 { 5. } else { 1.5 },
                             w: progress_width * progress,
-                            h: 4.,
+                            h: if m.ui_v2 { 10. } else { 4. },
                         },
-                        3.,
+                        5.,
                         color(white.r, white.g, white.b, progress_opacity),
                     );
-                    if m.ui_v2 && position_known && duration_ms > 0 {
+                    if !m.ui_v2 && position_known && duration_ms > 0 {
                         self.fill(
                             Rect {
                                 x: progress_x + progress_width * progress - 4.,
@@ -2027,7 +2134,13 @@ impl Renderer {
                             let center = r.center();
                             let x = center.x;
                             let y = center.y;
-                            let nominal_width = if hit == Hit::Play { 48. } else { 40. };
+                            let nominal_width = if m.ui_v2 {
+                                38.
+                            } else if hit == Hit::Play {
+                                48.
+                            } else {
+                                40.
+                            };
                             let rect_scale = if m.ui_v2 {
                                 (r.w / nominal_width).clamp(0., 1.)
                             } else {
@@ -2039,7 +2152,23 @@ impl Renderer {
                                 1.
                             };
                             let icon_scale = press_scale * rect_scale;
-                            if hit == Hit::Play && m.playing {
+                            if m.ui_v2 {
+                                let icon = match hit {
+                                    Hit::Previous => Icon::Previous,
+                                    Hit::Next => Icon::Next,
+                                    _ if m.playing => Icon::Pause,
+                                    _ => Icon::Play,
+                                };
+                                let size = if hit == Hit::Play { 38. } else { 32. } * icon_scale;
+                                self.icons.draw(
+                                    icon,
+                                    x - size * 0.5,
+                                    y - size * 0.5,
+                                    size,
+                                    2.,
+                                    white,
+                                )?;
+                            } else if hit == Hit::Play && m.playing {
                                 self.fill(
                                     Rect {
                                         x: x - 8. * icon_scale,
@@ -2119,7 +2248,11 @@ impl Renderer {
                                     .and_then(|media| media.favorite_state)
                                     .unwrap_or(m.liked);
                                 let icon = if media.is_some_and(|media| media.set_favorite) {
-                                    if liked { Icon::HeartFilled } else { Icon::Heart }
+                                    if liked {
+                                        Icon::HeartFilled
+                                    } else {
+                                        Icon::Heart
+                                    }
                                 } else if liked {
                                     Icon::StarFill
                                 } else {
@@ -2186,7 +2319,13 @@ impl Renderer {
                                 hit,
                                 Hit::Shuffle | Hit::Favorite | Hit::Mode | Hit::Output
                             ) {
-                                r.w.min(r.h).min(18.)
+                                r.w.min(r.h).min(if hit == Hit::Favorite {
+                                    30.
+                                } else if hit == Hit::Output {
+                                    29.
+                                } else {
+                                    28.
+                                })
                             } else {
                                 r.w.min(r.h).min(24.)
                             };
@@ -2336,6 +2475,9 @@ impl Renderer {
             .as_ref()
             .map(|(_, _, palette)| *palette)
             .unwrap_or([[0.53; 3], [0.9; 3]]);
+        let visual_scale = if m.ui_v2 && m.expanded { 2.5 } else { 1. };
+        let bar_width = 2. * visual_scale;
+        let gap = 1.5 * (1. + (visual_scale - 1.) * 0.4);
         for i in 0..6 {
             let sample = palette[if i >= 3 { 1 } else { 0 }];
             let h = if m.spectrum_random {
@@ -2357,10 +2499,10 @@ impl Renderer {
             };
             self.fill(
                 Rect {
-                    x: x + i as f32 * 4.,
-                    y: y - h / 2.,
-                    w: 2.,
-                    h,
+                    x: x + i as f32 * (bar_width + gap),
+                    y: y - h * visual_scale / 2.,
+                    w: bar_width,
+                    h: h * visual_scale,
                 },
                 1.,
                 color(sample[0], sample[1], sample[2], 1.),
@@ -2512,14 +2654,14 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_glass_tracks_live_morph_dimensions_until_the_surface_collapses() {
+    fn pure_black_surface_disables_glass_at_every_morph_size() {
         assert!(!should_render_dynamic_glass(false, 300., 200., false));
         assert!(!should_render_dynamic_glass(true, 300., 200., true));
         assert!(!should_render_dynamic_glass(true, 100., 200., false));
         assert!(!should_render_dynamic_glass(true, 300., 32., false));
-        assert!(should_render_dynamic_glass(true, 299., 247., false));
-        assert!(should_render_dynamic_glass(true, 180., 80., false));
-        assert!(should_render_dynamic_glass(true, 121., 41., false));
+        assert!(!should_render_dynamic_glass(true, 299., 247., false));
+        assert!(!should_render_dynamic_glass(true, 180., 80., false));
+        assert!(!should_render_dynamic_glass(true, 121., 41., false));
         assert!(!should_render_dynamic_glass(true, 119., 41., false));
     }
 
@@ -2603,10 +2745,10 @@ mod tests {
     }
 
     #[test]
-    fn cached_glass_blur_is_gated_by_v2_and_visible_album_art() {
+    fn pure_black_surface_never_builds_background_artwork_blur() {
         assert!(!should_build_glass_blur(false, true));
         assert!(!should_build_glass_blur(true, false));
-        assert!(should_build_glass_blur(true, true));
+        assert!(!should_build_glass_blur(true, true));
     }
 
     #[test]

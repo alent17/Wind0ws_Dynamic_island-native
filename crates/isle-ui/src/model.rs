@@ -76,11 +76,12 @@ fn player_control_index(hit: Hit) -> Option<usize> {
         _ => None,
     }
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PageInstance {
     pub page: Page,
     pub generation: u64,
 }
+#[derive(Clone)]
 pub struct Model {
     pub weather: isle_core::weather::View,
     pub time_zone: String,
@@ -142,6 +143,8 @@ pub struct Model {
     pub activity_manager: isle_core::activity::ActivityManager,
     pub visual_state: VisualState,
     pub motion_time_scale: f32,
+    /// Reference App.svelte: work-area fit multiplied by 0.625.
+    pub expanded_scale: f32,
 }
 impl Default for Model {
     fn default() -> Self {
@@ -158,7 +161,7 @@ impl Default for Model {
             media_failed: false,
             edge: Edge::Top,
             attached: false,
-            compact_length: 156,
+            compact_length: 80,
             collapsed_shoulder_radius: 8,
             expanded_shoulder_radius: 32,
             expanded_corner_radius: 45,
@@ -204,6 +207,7 @@ impl Default for Model {
             activity_manager: isle_core::activity::ActivityManager::default(),
             visual_state: VisualState::default(),
             motion_time_scale: 1.,
+            expanded_scale: 0.625,
         }
     }
 }
@@ -779,6 +783,7 @@ impl Model {
             timer_active: self.timer_active,
             timer_finished: self.timer_finished,
             compact_length: self.compact_length as f32,
+            expanded_scale: if self.ui_v2 { self.expanded_scale } else { 1. },
             collapsed_shoulder: self.collapsed_shoulder_radius as f32,
             expanded_shoulder: self.expanded_shoulder_radius as f32,
             corner_radius: self.expanded_corner_radius as f32,
@@ -802,10 +807,10 @@ impl Model {
         }) {
             layout.netease_button = Some(crate::layout::ElementLayout {
                 rect: Rect {
-                    x: layout.surface.x + layout.surface.w - 110.,
-                    y: layout.surface.y + 6.,
-                    w: 28.,
-                    h: 28.,
+                    x: layout.surface.x + layout.surface.w - 110. * self.content_scale(),
+                    y: layout.surface.y + 6. * self.content_scale(),
+                    w: 28. * self.content_scale(),
+                    h: 28. * self.content_scale(),
                 },
                 radius: 12.,
                 opacity: 1.,
@@ -958,12 +963,13 @@ impl Model {
         }
     }
     pub fn origin(&self) -> Point {
-        offset(
+        reference_offset(
             self.width.value,
             self.height.value,
             HOST,
             self.edge,
             self.attached,
+            self.content_scale(),
         )
     }
     pub fn outline(&self) -> Vec<Point> {
@@ -983,7 +989,78 @@ impl Model {
         })
         .collect()
     }
+    pub fn content_scale(&self) -> f32 {
+        if self.ui_v2 {
+            self.expanded_scale.clamp(0.3875, 1.)
+        } else {
+            1.
+        }
+    }
+    /// Map the reference's CSS content coordinates and native input rectangles
+    /// through the same affine transform. The returned model is read-only.
+    pub fn unscaled_content_model(&self) -> Self {
+        let scale = self.content_scale();
+        let mut model = self.clone();
+        model.expanded_scale = 1.;
+        for spring in [&mut model.width, &mut model.height, &mut model.radius] {
+            spring.value /= scale;
+            spring.target /= scale;
+            spring.velocity /= scale;
+        }
+        // The attached silhouette keeps its shoulder in logical pixels.
+        // Native panel controls must retain that inset after content zoom.
+        if self.page() != Page::Music {
+            model.shoulder.value /= scale;
+            model.shoulder.target /= scale;
+            model.shoulder.velocity /= scale;
+        }
+        let from = self.origin();
+        let to = model.origin();
+        let map_rect = |rect: &mut crate::motion::AnimatedRect| {
+            for (spring, source, target) in
+                [(&mut rect.x, from.x, to.x), (&mut rect.y, from.y, to.y)]
+            {
+                spring.value = target + (spring.value - source) / scale;
+                spring.target = target + (spring.target - source) / scale;
+                spring.velocity /= scale;
+            }
+            for spring in [&mut rect.w, &mut rect.h] {
+                spring.value /= scale;
+                spring.target /= scale;
+                spring.velocity /= scale;
+            }
+        };
+        for element in [
+            &mut model.visual_state.album,
+            &mut model.visual_state.title,
+            &mut model.visual_state.artist,
+            &mut model.visual_state.progress,
+        ] {
+            map_rect(&mut element.rect);
+            element.radius.value /= scale;
+            element.radius.target /= scale;
+        }
+        for rect in &mut model.visual_state.control_rects {
+            map_rect(rect);
+        }
+        model
+    }
+    pub fn map_content_rect(&self, base: &Self, rect: Rect) -> Rect {
+        let scale = self.content_scale();
+        let from = base.origin();
+        let to = self.origin();
+        Rect {
+            x: to.x + (rect.x - from.x) * scale,
+            y: to.y + (rect.y - from.y) * scale,
+            w: rect.w * scale,
+            h: rect.h * scale,
+        }
+    }
     pub fn content(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.content());
+        }
         let o = self.origin();
         let inset = if self.attached && !vertical(self.edge) {
             self.shoulder.value
@@ -1003,16 +1080,24 @@ impl Model {
         }
     }
     pub fn bar(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.bar());
+        }
         let c = self.content();
         let width = (self.visible_tools().count().min(5) as f32 * 32. - 4.).max(0.);
         Rect {
             x: c.x + (c.w - width) / 2. + 1.,
-            y: c.y + 7.,
+            y: c.y + 6.,
             w: width,
             h: 28.,
         }
     }
     pub fn tool(&self, i: usize) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.tool(i));
+        }
         let b = self.bar();
         Rect {
             x: b.x + self.visible_tools().position(|id| id == i).unwrap_or(0) as f32 * 32.
@@ -1023,6 +1108,10 @@ impl Model {
         }
     }
     pub fn body(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.body());
+        }
         let mut c = self.content();
         let bar = if self.visible_tools().next().is_some() {
             40.
@@ -1047,6 +1136,10 @@ impl Model {
         c
     }
     pub fn detail_content(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.detail_content());
+        }
         let c = self.body();
         Rect {
             x: c.x,
@@ -1056,6 +1149,10 @@ impl Model {
         }
     }
     pub fn ruler(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.ruler());
+        }
         let c = self.detail_content();
         Rect {
             x: c.x - 6.,
@@ -1065,6 +1162,10 @@ impl Model {
         }
     }
     pub fn device_trigger(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.device_trigger());
+        }
         let c = self.detail_content();
         Rect {
             x: c.x,
@@ -1074,6 +1175,10 @@ impl Model {
         }
     }
     pub fn device_popup(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.device_popup());
+        }
         let trigger = self.device_trigger();
         let count = self.audio.as_ref().map_or(0, |a| a.devices.len());
         let h = (count as f32 * 28. + 10.).min(78.);
@@ -1091,6 +1196,10 @@ impl Model {
         }
     }
     pub fn device_viewport(&self) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.device_viewport());
+        }
         let p = self.device_popup();
         Rect {
             x: p.x + 5.,
@@ -1100,6 +1209,10 @@ impl Model {
         }
     }
     pub fn device_row(&self, index: usize) -> Rect {
+        if self.ui_v2 && self.expanded && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return self.map_content_rect(&base, base.device_row(index));
+        }
         let p = self.device_viewport();
         Rect {
             x: p.x,
@@ -1124,6 +1237,14 @@ impl Model {
             .collect()
     }
     pub fn visual_controls(&self) -> Vec<(Hit, Rect)> {
+        if self.ui_v2 && self.expanded && self.page() != Page::Music && self.content_scale() != 1. {
+            let base = self.unscaled_content_model();
+            return base
+                .visual_controls()
+                .into_iter()
+                .map(|(hit, rect)| (hit, self.map_content_rect(&base, rect)))
+                .collect();
+        }
         if !self.expanded
             && self.ui_v2
             && self.page() == Page::Music
@@ -1461,7 +1582,7 @@ impl Model {
         self.sync_local_activities();
     }
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SpectrumVisual {
     pub values: [f32; 6],
     pub target: [f32; 6],
@@ -1503,6 +1624,89 @@ pub fn marquee(distance: f32, seconds: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reference_music_geometry_matches_measured_css_zoom() {
+        let mut m = Model {
+            reduced: true,
+            ui_v2: true,
+            expanded_scale: 0.625,
+            show_spectrum: true,
+            ..Default::default()
+        };
+        m.retarget();
+        assert_eq!(
+            (m.width.value, m.height.value, m.radius.value),
+            (80., 28., 14.)
+        );
+        m.hovered = true;
+        m.retarget();
+        assert_eq!(
+            (m.width.value, m.height.value, m.radius.value),
+            (90., 30., 15.)
+        );
+        m.switch(Page::Music);
+        assert_eq!(m.width.value, 375.);
+        assert!((m.height.value - 155.6875).abs() < 0.01);
+        let layout = m.layout_snapshot();
+        let album = layout.album.unwrap().rect;
+        assert_eq!((album.w, album.h), (52.5, 52.5));
+        assert!((album.x - layout.surface.x - 21.).abs() < 0.01);
+        assert!((album.y - layout.surface.y - 16.).abs() < 0.01);
+        let title = layout.title.unwrap().rect;
+        assert!((title.x - layout.surface.x - 88.5).abs() < 0.01);
+        assert!((title.w - 226.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn scaled_panels_draw_and_hit_the_same_controls_on_every_edge() {
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            for attached in [false, true] {
+                for scale in [0.3875, 0.5508475, 0.625] {
+                    let mut m = Model {
+                        reduced: true,
+                        ui_v2: true,
+                        edge,
+                        attached,
+                        expanded_scale: scale,
+                        ..Default::default()
+                    };
+                    for page in [
+                        Page::Timer,
+                        Page::Volume,
+                        Page::Clock,
+                        Page::Weather,
+                        Page::Shelf,
+                        Page::NetEase,
+                    ] {
+                        m.switch(page);
+                        let base = m.unscaled_content_model();
+                        for ((hit, actual), (base_hit, rect)) in
+                            m.visual_controls().into_iter().zip(base.visual_controls())
+                        {
+                            assert_eq!(hit, base_hit);
+                            assert_eq!(actual, m.map_content_rect(&base, rect));
+                        }
+                        assert_eq!(m.ruler(), m.map_content_rect(&base, base.ruler()));
+                        assert_eq!(
+                            m.device_popup(),
+                            m.map_content_rect(&base, base.device_popup())
+                        );
+                        assert!(m
+                            .hit(
+                                m.controls()
+                                    .iter()
+                                    .find(|(h, _)| *h == Hit::Back)
+                                    .unwrap()
+                                    .1
+                                    .center()
+                            )
+                            .is_some());
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn widget_shelf_is_keyboard_and_pointer_reachable_and_preserves_future_entries() {
         let mut m = Model {
@@ -1559,7 +1763,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        m.switch(Page::Music);
+        m.switch(Page::Volume);
         assert!(m.controls().iter().any(|(hit, _)| *hit == Hit::Netease));
         m.media.as_mut().unwrap().source = "netease-game.exe".into();
         assert!(!m.controls().iter().any(|(hit, _)| *hit == Hit::Netease));
@@ -1660,8 +1864,8 @@ mod tests {
         assert_eq!(m.height.target, 28.);
         assert_eq!(m.shoulder.target, 12.);
         m.switch(Page::Music);
-        assert_eq!(m.width.target, 300.);
-        assert_eq!(m.height.target, 200.);
+        assert_eq!(m.width.target, 407.);
+        assert_eq!(m.height.target, 164.);
         assert_eq!(m.radius.target, 64.);
         assert_eq!(m.shoulder.target, 48.);
     }
@@ -1671,7 +1875,7 @@ mod tests {
             reduced: true,
             ..Default::default()
         };
-        m.switch(Page::Music);
+        m.switch(Page::Volume);
         m.set_tool_mask([true, false, false, false, false, true, true]);
         assert_eq!(m.visible_tools().collect::<Vec<_>>(), vec![0, 5, 6]);
         assert_eq!(m.tool(5).x - m.tool(0).x, 32.);
@@ -1814,9 +2018,9 @@ mod tests {
         };
         m.switch(Page::Music);
         m.move_focus(false, false);
-        assert_eq!(m.focus, Some(Hit::Shelf));
-        m.move_focus(false, false);
         assert_eq!(m.focus, Some(Hit::Previous));
+        m.move_focus(false, false);
+        assert_eq!(m.focus, Some(Hit::Play));
         m.tool_count = 7;
         m.scroll = 14.;
         let r = m.tool(0);
@@ -2324,6 +2528,7 @@ mod tests {
     #[test]
     fn scrolling_is_bounded() {
         let mut m = Model::default();
+        m.switch(Page::Volume);
         m.scroll_by(1000.);
         assert_eq!(m.scroll, 64.);
         m.scroll_by(-1000.);

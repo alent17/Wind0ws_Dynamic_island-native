@@ -666,7 +666,9 @@ unsafe fn frameless_hit_test(hwnd: HWND, lp: LPARAM, scale: f32) -> LRESULT {
 
     let titlebar = (super::model::TITLEBAR_HEIGHT * scale).round() as i32;
     if y >= 0 && y < titlebar {
-        let button = (super::model::CAPTION_BUTTON_WIDTH * scale).round().max(1.0) as i32;
+        let button = (super::model::CAPTION_BUTTON_WIDTH * scale)
+            .round()
+            .max(1.0) as i32;
         if x >= width - button {
             return LRESULT(HTCLOSE as isize);
         }
@@ -1400,10 +1402,20 @@ unsafe fn handle_reentrant_message(
                 let _ = InvalidateRect(control, None, false);
             }
             let combo_height = (28.0 * new_scale).round().max(1.0) as isize;
-            for combo in [(*theme_ptr).zone, (*theme_ptr).style, (*theme_ptr).edge, (*theme_ptr).edge_position] {
+            for combo in [
+                (*theme_ptr).zone,
+                (*theme_ptr).style,
+                (*theme_ptr).edge,
+                (*theme_ptr).edge_position,
+            ] {
                 if combo.0 != 0 {
                     SendMessageW(combo, CB_SETITEMHEIGHT, WPARAM(0), LPARAM(combo_height));
-                    SendMessageW(combo, CB_SETITEMHEIGHT, WPARAM(usize::MAX), LPARAM(combo_height));
+                    SendMessageW(
+                        combo,
+                        CB_SETITEMHEIGHT,
+                        WPARAM(usize::MAX),
+                        LPARAM(combo_height),
+                    );
                 }
             }
             if old_font.0 != 0 {
@@ -1654,7 +1666,14 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             return LRESULT(0);
         }
         WM_NCLBUTTONUP if wp.0 as u32 == HTMAXBUTTON => {
-            ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
+            ShowWindow(
+                hwnd,
+                if IsZoomed(hwnd).as_bool() {
+                    SW_RESTORE
+                } else {
+                    SW_MAXIMIZE
+                },
+            );
             return LRESULT(0);
         }
         WM_NCLBUTTONUP if wp.0 as u32 == HTCLOSE => {
@@ -1662,7 +1681,14 @@ unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             return LRESULT(0);
         }
         WM_NCLBUTTONDBLCLK if wp.0 as u32 == HTCAPTION => {
-            ShowWindow(hwnd, if IsZoomed(hwnd).as_bool() { SW_RESTORE } else { SW_MAXIMIZE });
+            ShowWindow(
+                hwnd,
+                if IsZoomed(hwnd).as_bool() {
+                    SW_RESTORE
+                } else {
+                    SW_MAXIMIZE
+                },
+            );
             return LRESULT(0);
         }
         WM_ERASEBKGND => return LRESULT(1),

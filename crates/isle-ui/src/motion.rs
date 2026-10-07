@@ -13,8 +13,8 @@ impl MotionProfile {
     /// small controls settle quickly without introducing a second spring law.
     pub const fn time_scale(self) -> f32 {
         match self {
-            Self::Surface => 0.88,
-            Self::Content => 1.15,
+            Self::Surface => 1.,
+            Self::Content => 1.,
             Self::Micro => 1.42,
         }
     }

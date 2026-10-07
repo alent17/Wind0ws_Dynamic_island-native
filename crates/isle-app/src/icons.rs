@@ -40,6 +40,8 @@ pub enum Icon {
     Repeat,
     RepeatOne,
     Airplay,
+    Previous,
+    Next,
 }
 
 pub struct Icons {
@@ -85,6 +87,8 @@ impl Icons {
             asset!("repeat"),
             asset!("repeat-1"),
             asset!("airplay"),
+            asset!("skip-back"),
+            asset!("skip-forward"),
         ];
         let documents = sources
             .into_iter()
@@ -134,12 +138,12 @@ impl Icons {
         let mut original = Matrix3x2::default();
         self.context.GetTransform(&mut original);
         self.context.SetTransform(&Matrix3x2 {
-            M11: size / 24.,
-            M12: 0.,
-            M21: 0.,
-            M22: size / 24.,
-            M31: x,
-            M32: y,
+            M11: size / 24. * original.M11,
+            M12: size / 24. * original.M12,
+            M21: size / 24. * original.M21,
+            M22: size / 24. * original.M22,
+            M31: x * original.M11 + y * original.M21 + original.M31,
+            M32: x * original.M12 + y * original.M22 + original.M32,
         });
         self.context.DrawSvgDocument(document);
         self.context.SetTransform(&original);

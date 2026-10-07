@@ -221,7 +221,12 @@ impl ShellRender {
             1.0,
         );
         self.fill(
-            rect(0.0, model::TITLEBAR_HEIGHT, model::NAV_WIDTH, (height - model::TITLEBAR_HEIGHT).max(0.0)),
+            rect(
+                0.0,
+                model::TITLEBAR_HEIGHT,
+                model::NAV_WIDTH,
+                (height - model::TITLEBAR_HEIGHT).max(0.0),
+            ),
             0.0,
             model::SURFACE,
             1.0,
@@ -233,7 +238,12 @@ impl ShellRender {
             1.0,
         );
         self.fill(
-            rect(model::NAV_WIDTH - 1.0, model::TITLEBAR_HEIGHT, 1.0, (height - model::TITLEBAR_HEIGHT).max(0.0)),
+            rect(
+                model::NAV_WIDTH - 1.0,
+                model::TITLEBAR_HEIGHT,
+                1.0,
+                (height - model::TITLEBAR_HEIGHT).max(0.0),
+            ),
             0.0,
             model::DIVIDER,
             1.0,
@@ -257,9 +267,18 @@ impl ShellRender {
         for (index, glyph) in ["—", "□", "×"].iter().enumerate() {
             self.text(
                 glyph,
-                rect(caption_left + caption_width * index as f32 + 16.0, 11.0, 22.0, 24.0),
+                rect(
+                    caption_left + caption_width * index as f32 + 16.0,
+                    11.0,
+                    22.0,
+                    24.0,
+                ),
                 &self.regular,
-                if index == 2 { model::PRIMARY_TEXT } else { model::SECONDARY_TEXT },
+                if index == 2 {
+                    model::PRIMARY_TEXT
+                } else {
+                    model::SECONDARY_TEXT
+                },
             );
         }
         if !model::navigation_is_compact(height) {
@@ -284,7 +303,12 @@ impl ShellRender {
             1.0,
         );
         self.fill(
-            rect(active_nav.x, active_nav.y + 12.0, 3.0, (active_nav.h - 24.0).max(6.0)),
+            rect(
+                active_nav.x,
+                active_nav.y + 12.0,
+                3.0,
+                (active_nav.h - 24.0).max(6.0),
+            ),
             2.0,
             model::ACCENT,
             1.0,
@@ -408,12 +432,22 @@ impl ShellRender {
         self.target.PopAxisAlignedClip();
         self.target.PopAxisAlignedClip();
         self.fill(
-            rect(model::CONTENT_LEFT, height - 50.0, (width - model::CONTENT_LEFT).max(0.0), 1.0),
+            rect(
+                model::CONTENT_LEFT,
+                height - 50.0,
+                (width - model::CONTENT_LEFT).max(0.0),
+                1.0,
+            ),
             0.0,
             model::DIVIDER,
             1.0,
         );
-        self.fill(rect(model::CONTENT_LEFT, height - 29.0, 7.0, 7.0), 4.0, (70, 201, 120), 1.0);
+        self.fill(
+            rect(model::CONTENT_LEFT, height - 29.0, 7.0, 7.0),
+            4.0,
+            (70, 201, 120),
+            1.0,
+        );
         let footer_width = (width - model::CONTENT_LEFT - 28.0).max(80.0);
         self.text(
             &format!("保存状态：{save_status}"),
